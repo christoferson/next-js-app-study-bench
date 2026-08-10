@@ -28,6 +28,9 @@ yarn-error.log*
 .env*.local
 .env
 
+# agent tooling — shared settings.json is committed, local overrides are not
+.claude/settings.local.json
+
 # vercel
 .vercel
 

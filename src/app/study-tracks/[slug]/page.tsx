@@ -9,6 +9,7 @@ import { CertificationMeta } from "@/modules/certifications/ui/certification-met
 import { ObjectiveTree } from "@/modules/certifications/ui/objective-tree";
 import { OriginBadge } from "@/modules/certifications/ui/origin-badge";
 import { getQuestionBankFacade } from "@/modules/question-bank/composition";
+import { getFlashcardFacade } from "@/modules/flashcards/composition";
 
 interface StudyTrackPageProps {
   readonly params: Promise<{ readonly slug: string }>;
@@ -24,9 +25,12 @@ export default async function StudyTrackPage({ params }: StudyTrackPageProps) {
 
   const { certification } = view;
   const isArchived = certification.status === "ARCHIVED";
-  // Two counts, not the whole bank: the track page summarises the bank and links
-  // to it (`spec/ARCHITECTURE.md` section 8).
-  const bank = await getQuestionBankFacade().countBank(certification.id);
+  // Counts, not the whole bank: the track page summarises each bank and links to
+  // it (`spec/ARCHITECTURE.md` section 8).
+  const [bank, cards] = await Promise.all([
+    getQuestionBankFacade().countBank(certification.id),
+    getFlashcardFacade().countBank(certification.id),
+  ]);
 
   return (
     <main className="page">
@@ -108,6 +112,33 @@ export default async function StudyTrackPage({ params }: StudyTrackPageProps) {
               href={`/study-tracks/${certification.slug}/questions`}
             >
               Open question bank
+            </Link>
+          </div>
+        </div>
+      </section>
+
+      <section aria-labelledby="flashcards-heading" className="section">
+        <div className="section-heading">
+          <h2 id="flashcards-heading">Flashcards</h2>
+          <p className="section-note">
+            {cards.total === 0
+              ? "No flashcards yet. Cards are for short recall practice between question sessions."
+              : `${cards.active} active of ${cards.total} card${cards.total === 1 ? "" : "s"}.${cards.due > 0 ? ` ${cards.due} due now.` : " Nothing due right now."}`}
+          </p>
+          <div className="section-actions">
+            {cards.due > 0 ? (
+              <Link
+                className="button"
+                href={`/study-tracks/${certification.slug}/review`}
+              >
+                Review {cards.due} due
+              </Link>
+            ) : null}
+            <Link
+              className={cards.due > 0 ? "button-quiet" : "button"}
+              href={`/study-tracks/${certification.slug}/flashcards`}
+            >
+              Open flashcards
             </Link>
           </div>
         </div>

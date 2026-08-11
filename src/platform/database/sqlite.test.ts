@@ -119,12 +119,20 @@ describe("runMigrations", () => {
         )
         .all() as { readonly name: string }[];
 
+      // The full list, so a migration that creates a table nobody expected is a
+      // failure rather than a silent addition. Extended in D4 with the flashcard
+      // tables from migration 0003.
       expect(tables.map((table) => table.name)).toEqual([
         "certification_objectives",
         "certifications",
+        "flashcard_objective_links",
+        "flashcard_reviews",
+        "flashcard_revisions",
+        "flashcards",
         "question_objective_links",
         "question_revisions",
         "questions",
+        "review_schedules",
         "schema_migrations",
       ]);
     } finally {

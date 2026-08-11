@@ -6,9 +6,10 @@ StudyBench is a personal, single-user, AI-assisted study workbench for technical
 certifications, language examinations, and other structured learning goals. It is
 built incrementally in small, independently verifiable milestones.
 
-## Current state — D3
+## Current state — D4
 
-Milestone D3 adds a **manual question bank** on top of the D2 study tracks:
+Milestone D4 adds **flashcards and spaced review** on top of the D3 question
+bank:
 
 - Study tracks (D2): a dashboard at `/` listing your active tracks with a "New
   study track" action and an archived-tracks toggle offering restore; create and
@@ -16,29 +17,44 @@ Milestone D3 adds a **manual question bank** on top of the D2 study tracks:
   `/study-tracks/[slug]` with metadata, edit, archive/restore, and a nested
   objective tree; objective management with add-child, edit, sibling reordering,
   reparenting, and archive/restore.
-- A per-track question bank at `/study-tracks/[slug]/questions`, listing
+- A per-track question bank (D3) at `/study-tracks/[slug]/questions`, listing
   questions with their type, lifecycle status, review state, and revision, and
   filtering by lifecycle, review state, type, objective, and question text.
-- Writing questions at `/study-tracks/[slug]/questions/new` in three types:
-  single choice, multiple response, and short answer. A new question starts as a
-  draft, and an unanswerable choice configuration is rejected.
-- A question page at `/study-tracks/[slug]/questions/[questionId]` showing how
-  the question will be studied, the answer and explanation behind a disclosure,
-  its objective mappings, and its revision history.
-- Editing at `.../[questionId]/edit` **appends a revision** rather than
-  overwriting one; every earlier revision stays readable at
-  `.../[questionId]/revisions/[revisionNumber]`.
-- Question lifecycle (activate, retire, restore) and review state (approve,
-  dispute with a reason, resolve a dispute) as two independent dimensions.
-- Objective mappings, restricted to objectives of the question's own track.
-- Permanent deletion of a question, its revisions, and its objective mappings —
-  offered only when nothing depends on the question.
+  Writing questions at `.../questions/new` in three types: single choice,
+  multiple response, and short answer. Editing at `.../[questionId]/edit`
+  **appends a revision** rather than overwriting one, and every earlier revision
+  stays readable at `.../[questionId]/revisions/[revisionNumber]`. Question
+  lifecycle and review state are two independent dimensions, and a question can
+  be deleted only when nothing depends on it.
+- A per-track flashcard bank at `/study-tracks/[slug]/flashcards`, listing cards
+  by prompt side only, and filtering by lifecycle, card type, objective, and card
+  text.
+- Writing cards at `/study-tracks/[slug]/flashcards/new` in five types: basic,
+  reversed, cloze, vocabulary, and scenario. A new card starts as a draft, and a
+  card that cannot be studied — a cloze sentence with no `{{deletion}}`, a blank
+  face — is rejected with a message next to the field.
+- A card page at `/study-tracks/[slug]/flashcards/[flashcardId]` showing how the
+  card is prompted, the answer behind a disclosure, its objective mappings, its
+  lifecycle controls, its review history, and its revision history.
+- Editing at `.../[flashcardId]/edit` **appends a revision**, keeps the card's
+  due date and review history, and can change the card's type. Earlier revisions
+  stay readable at `.../[flashcardId]/revisions/[revisionNumber]`.
+- Review at `/study-tracks/[slug]/review`: the next due card, answer hidden until
+  you ask for it, then four recall ratings. Due dates follow the schedule in
+  `SPEC.md` section 6.5 — again in 10 minutes, hard in a day, good in three days,
+  easy in a week, growing on each success. The queue is deterministically
+  ordered, so reloading offers the same card until you rate it, and only active
+  cards appear.
+- Turning an active question into a draft flashcard from the question page: the
+  card carries the wording, the answer, and the objective mappings, and is
+  independent of the question from then on.
 - A liveness endpoint at `/health` (unchanged from D1).
 
-Everything is stored in a local SQLite database and survives a restart. Tracks
-and objectives are still never hard-deleted; a question can be deleted, and the
-page says so before you confirm. There are no attempts, study sessions,
-flashcards, imports, or AI features yet — those arrive in later milestones.
+Everything is stored in a local SQLite database and survives a restart. Tracks,
+objectives, and flashcards are never hard-deleted — a card carries review
+history, so retirement is how it leaves the queue. A question can be deleted, but
+not while a flashcard made from it still exists. There are no attempts, study
+sessions, imports, or AI features yet — those arrive in later milestones.
 
 See `SPEC.md` for the full specification and `PROGRESS.md` for implementation
 state.
@@ -125,8 +141,19 @@ With `npm run seed` followed by `npm run dev`:
 - Activate the draft, then edit it: the revision history shows two revisions and
   revision 1 still reads as originally written
 - Filter the bank by status, dispute a question with a reason, and resolve it
+- Open the HSK track, choose "Open flashcards", and write a vocabulary card
+  (term `学习`, reading `xuéxí`, meaning `to study; to learn`); activate it
+- Choose "Review 1 due", press "Show answer", then "Good" — the card leaves the
+  queue and its next due date is three days out
+- Edit that card: the review history still names revision 1, and the due date is
+  unchanged
+- Retire the card and reload the review screen — it is no longer offered
+- On an active question, choose "Make a flashcard from this question", then try to
+  delete that question: the deletion is refused while the card exists
 - `http://localhost:3000/study-tracks/unknown` — not-found page
 - `http://localhost:3000/study-tracks/demo-cloud-practitioner/questions/nope` —
+  not-found page
+- `http://localhost:3000/study-tracks/demo-cloud-practitioner/flashcards/nope` —
   not-found page
 - `http://localhost:3000/health` — `{"status":"ok","application":"study-bench"}`
 
@@ -147,7 +174,8 @@ src/
 │                                     shared connection composition
 └── modules/
     ├── certifications/               study tracks and objectives
-    └── question-bank/                questions and their revisions
+    ├── question-bank/                questions and their revisions
+    └── flashcards/                   cards, revisions, review scheduling
 ```
 
 Each module has the same five layers plus a composition root:
@@ -165,12 +193,21 @@ Each module has the same five layers plus a composition root:
     └── composition.ts                server-only composition root
 ```
 
-Both modules share one database connection and one transaction runner from
+All three modules share one database connection and one transaction runner from
 `platform/database/composition.ts`, so migrations run once and writes serialise
 across modules.
 
-Question content is a discriminated union per question type, stored as validated
+Question and card content are discriminated unions per type, stored as validated
 JSON with the type in its own column. Revisions are append-only: the repository
-port has no update-revision method, so an edit can only add revision `n + 1`.
+port has no update-revision method, so an edit can only add revision `n + 1`. So
+are recorded reviews — each one names the card revision it was given against, so
+a later edit cannot rewrite what was studied.
+
+The review scheduling algorithm sits behind a strategy
+(`modules/flashcards/domain/review-scheduling.ts`) that takes a rating plus the
+card's current schedule and returns the next one. It reads no database and gets
+its time from the injected clock, so every rule in `SPEC.md` section 6.5 is unit
+tested without persistence, and replacing it is one line in the flashcard
+composition root.
 
 Detailed engineering rules live in `CLAUDE.md` and `spec/`.

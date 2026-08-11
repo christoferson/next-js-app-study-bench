@@ -16,3 +16,26 @@ export interface Clock {
 export const systemClock: Clock = {
   now: (): IsoTimestamp => new Date().toISOString(),
 };
+
+/** Minutes in one day, for interval arithmetic expressed in whole minutes. */
+export const MINUTES_PER_DAY = 24 * 60;
+
+/**
+ * `timestamp` moved forward by `minutes`, normalised to UTC ISO-8601 text.
+ *
+ * Pure and framework-free, so scheduling logic can compute a due date without
+ * reading the real clock. Because every stored timestamp is UTC in this one
+ * format, two of them can also be compared as strings.
+ */
+export function addMinutes(
+  timestamp: IsoTimestamp,
+  minutes: number,
+): IsoTimestamp {
+  const base = new Date(timestamp);
+
+  if (Number.isNaN(base.getTime())) {
+    throw new Error(`"${timestamp}" is not a valid UTC ISO-8601 timestamp.`);
+  }
+
+  return new Date(base.getTime() + minutes * 60_000).toISOString();
+}

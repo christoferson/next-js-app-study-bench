@@ -30,8 +30,20 @@ vi.mock("@/modules/certifications/composition", () => ({
   getCertificationFacade: () => ({ findDetailBySlug }),
 }));
 
+const countCards = vi.fn<
+  (certificationId: string) => Promise<{
+    readonly total: number;
+    readonly active: number;
+    readonly due: number;
+  }>
+>();
+
 vi.mock("@/modules/question-bank/composition", () => ({
   getQuestionBankFacade: () => ({ countBank }),
+}));
+
+vi.mock("@/modules/flashcards/composition", () => ({
+  getFlashcardFacade: () => ({ countBank: countCards }),
 }));
 
 vi.mock("next/navigation", () => ({
@@ -83,6 +95,8 @@ describe("Study-track detail page", () => {
     findDetailBySlug.mockReset();
     countBank.mockReset();
     countBank.mockResolvedValue({ total: 0, active: 0 });
+    countCards.mockReset();
+    countCards.mockResolvedValue({ total: 0, active: 0, due: 0 });
   });
 
   it("renders the track name and metadata", async () => {
@@ -196,6 +210,45 @@ describe("Study-track detail page", () => {
     expect(
       screen.getByRole("link", { name: "Open question bank" }),
     ).toBeInTheDocument();
+  });
+
+  it("links to the flashcards for this track", async () => {
+    stubDetail();
+    countCards.mockResolvedValue({ total: 9, active: 6, due: 0 });
+
+    await renderTrackPage("demo-cloud-practitioner");
+
+    expect(
+      screen.getByRole("link", { name: "Open flashcards" }),
+    ).toHaveAttribute(
+      "href",
+      "/study-tracks/demo-cloud-practitioner/flashcards",
+    );
+    expect(
+      screen.getByText("6 active of 9 cards. Nothing due right now."),
+    ).toBeVisible();
+    expect(screen.queryByRole("link", { name: /^Review/ })).toBeNull();
+  });
+
+  it("offers a review call to action only when cards are due", async () => {
+    stubDetail();
+    countCards.mockResolvedValue({ total: 9, active: 6, due: 3 });
+
+    await renderTrackPage("demo-cloud-practitioner");
+
+    expect(screen.getByRole("link", { name: "Review 3 due" })).toHaveAttribute(
+      "href",
+      "/study-tracks/demo-cloud-practitioner/review",
+    );
+    expect(screen.getByText("6 active of 9 cards. 3 due now.")).toBeVisible();
+  });
+
+  it("invites the owner to start the flashcards when there are none", async () => {
+    stubDetail();
+
+    await renderTrackPage("demo-cloud-practitioner");
+
+    expect(screen.getByText(/No flashcards yet/)).toBeVisible();
   });
 
   it("triggers the not-found path for an unknown slug", async () => {

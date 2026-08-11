@@ -7,9 +7,10 @@ import type { SqliteTransactionRunner } from "@/platform/database/sqlite-transac
 import { SqliteCertificationRepository } from "@/modules/certifications/infrastructure/sqlite-certification-repository";
 import { SqliteObjectiveRepository } from "@/modules/certifications/infrastructure/sqlite-objective-repository";
 import { QuestionBankFacade } from "@/modules/question-bank/application/question-bank-facade";
-import { NoDependencyChecker } from "@/modules/question-bank/infrastructure/no-dependency-checker";
 import { SqliteQuestionBankUnitOfWork } from "@/modules/question-bank/infrastructure/sqlite-question-bank-unit-of-work";
 import { SqliteQuestionRepository } from "@/modules/question-bank/infrastructure/sqlite-question-repository";
+import { FlashcardQuestionDependencyChecker } from "@/modules/flashcards/infrastructure/flashcard-question-dependency-checker";
+import { SqliteFlashcardRepository } from "@/modules/flashcards/infrastructure/sqlite-flashcard-repository";
 
 /**
  * Server-only composition root for the question bank.
@@ -18,8 +19,11 @@ import { SqliteQuestionRepository } from "@/modules/question-bank/infrastructure
  * certification writes cannot deadlock each other on the same SQLite write lock.
  *
  * The dependency checker is composed here rather than constructed inside the
- * facade: D5 replaces `NoDependencyChecker` with an attempt-aware checker by
- * changing this one line.
+ * facade, which is what lets D4 replace the D3 "nothing depends on a question yet"
+ * checker with one that reports converted flashcards, without touching the facade,
+ * the delete flow, or the error type. The cross-module import belongs here for the
+ * same reason: composition roots are where modules are wired together, and the
+ * question bank still depends only on its own port.
  */
 export function createQuestionBankFacade(
   database: SqliteDatabase,
@@ -30,7 +34,9 @@ export function createQuestionBankFacade(
     certifications: new SqliteCertificationRepository(database),
     objectives: new SqliteObjectiveRepository(database),
     unitOfWork: new SqliteQuestionBankUnitOfWork(database, runner),
-    dependencies: new NoDependencyChecker(),
+    dependencies: new FlashcardQuestionDependencyChecker(
+      new SqliteFlashcardRepository(database),
+    ),
     clock: systemClock,
     ids: cryptoIdGenerator,
   });

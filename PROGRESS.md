@@ -2,17 +2,18 @@
 
 ## Current milestone
 
-D3 — Manual Question Bank
+D4 — Flashcards and Review Scheduling
 
 ## Status
 
-Completed on 2026-08-11. Awaiting explicit authorization for D4.
+Completed on 2026-08-11. Awaiting explicit authorization for D5.
 
 ## Completed milestones
 
 - D1 — Foundation and Demo Study Catalog (2026-08-10)
 - D2 — Local Persistence and Certification Management (2026-08-11)
 - D3 — Manual Question Bank (2026-08-11)
+- D4 — Flashcards and Review Scheduling (2026-08-11)
 
 ## In progress
 
@@ -20,7 +21,7 @@ Completed on 2026-08-11. Awaiting explicit authorization for D4.
 
 ## Planned milestones
 
-- D4 — Flashcards and Review Scheduling (proposed next, not authorized)
+- D5 — Quick Study Sessions and Progress (proposed next, not authorized)
 - D4 — Flashcards and Review Scheduling
 - D5 — Quick Study Sessions and Progress
 - D6 — Bedrock AI Foundation and Raw-Knowledge Generation
@@ -148,12 +149,40 @@ Completed on 2026-08-11. Awaiting explicit authorization for D4.
   records content doubt, not availability). `ARCHIVED` exists in the lifecycle
   enum per SPEC but no D3 flow produces it; retire plus eligible deletion
   cover D3 needs, and archival becomes meaningful once attempts exist.
+- 2026-08-11 (D4): New `src/modules/flashcards/` module mirrors the
+  question-bank layering. Card content is a five-type discriminated union
+  (BASIC, REVERSED, CLOZE, VOCABULARY, SCENARIO) with the same validated-JSON
+  persistence pattern; revisions are append-only. Cards have lifecycle only —
+  no quality dimension (SPEC gives flashcards none).
+- 2026-08-11 (D4): Migration `0003` adds STRICT tables `flashcards`,
+  `flashcard_revisions`, `flashcard_objective_links`, `review_schedules`
+  (one row per card), `flashcard_reviews` (append-only history referencing
+  the reviewed revision id per DOMAIN-RULES 1.4). Migrations 0001/0002
+  unchanged.
+- 2026-08-11 (D4): Review scheduling is a strategy
+  (`ReviewSchedulingStrategy` port, `DeterministicReviewScheduler`
+  implementation) with the exact SPEC 6.5 interval rules, whole-minute
+  intervals, injected Clock, and DB-independent unit tests. "New card" means
+  no `review_schedules` row exists. Reviewing a card records the review row
+  and updates the schedule in one transaction.
+- 2026-08-11 (D4): Flashcards converted from a question record
+  `source_question_id` and are treated as blocking dependents of that
+  question: the D3 `NoDependencyChecker` was replaced by a real
+  `FlashcardQuestionDependencyChecker` (ON DELETE RESTRICT), so a question
+  with derived cards can be retired but not hard-deleted. Converted cards are
+  independent after creation; edits do not sync.
+- 2026-08-11 (D4): Due-card query is bounded and deterministically ordered
+  (due-at, then created-at, then id); DRAFT, RETIRED, and ARCHIVED cards are
+  excluded. The review screen reveals via minimal client state; a rating
+  posted with a stale revision id is attributed to the card's current
+  revision (last-write-wins, documented in `resolveReviewedRevision`).
 
 ## Deviations
 
-- None from `SPEC.md` D2/D3 requirements. D1 structural deviation (omitted
+- None from `SPEC.md` D2/D3/D4 requirements. D1 structural deviation (omitted
   empty directories) remains permitted by SPEC 19.4. "View attempt history"
-  from SPEC 6.3 waits for D5 (attempts do not exist before then).
+  from SPEC 6.3 waits for D5 (attempts do not exist before then). Flashcard
+  hard deletion is not in D4 scope (SPEC 22.2 lists none) and was not added.
 
 ## Known limitations
 
@@ -169,27 +198,29 @@ Completed on 2026-08-11. Awaiting explicit authorization for D4.
 - `better-sqlite3` native-module compilation on platforms without a prebuilt
   binary was not exercised.
 
-## Validation results (2026-08-11, after D3)
+## Validation results (2026-08-11, after D4)
 
 - `npm run format:check` — passed
 - `npm run lint` — passed
 - `npm run type-check` — passed
-- `npm test` — passed (22 files, 329 tests, including repository contract
-  suites for certifications and questions against SQLite on fresh in-memory
-  migrated databases)
-- `npm run build` — passed (13 routes)
-- Manual (D3): create → activate a SINGLE_CHOICE question; edit produced
-  revision 2 with revision 1 intact and inspectable at its own URL; all four
-  invalid content configurations rejected with field-associated errors;
-  RETIRED and DISPUTED filters work; delete removed root, revisions, and
-  links atomically and the id then 404s; independent banks on both demo
-  tracks; a question addressed under the wrong track slug 404s.
-- Manual (regression): D2 flows (track create/edit/archive/restore, objective
-  tree) unchanged; unknown slug 404s; `/health` returns
-  `{"status":"ok","application":"study-bench"}` unchanged; `npm run seed`
-  remains idempotent.
+- `npm test` — passed (32 files, 556 tests, including repository contract
+  suites for certifications, questions, and flashcards against SQLite on
+  fresh in-memory migrated databases, and DB-independent scheduling unit
+  tests with a fixed clock)
+- `npm run build` — passed (20 routes)
+- Manual (D4): all five card types created and activated; ratings verified
+  against the exact SPEC 6.5 intervals (new card AGAIN 10 min / HARD 1 d /
+  GOOD 3 d / EASY 7 d; existing card GOOD 4320→8640 min, HARD 8640→10368,
+  AGAIN back to 10 min with lapse increment); editing a reviewed card kept
+  review history and revision 1 intact; retiring removed a card from the due
+  queue and a forged rating on it was refused; question→card conversion
+  carried objective mappings and blocks hard deletion of the source question
+  with a clear message; cross-track card addressing 404s.
+- Manual (regression): D1–D3 flows unchanged (`/health`, dashboard, objective
+  tree, question bank, archive controls); review and flashcard-bank pages
+  render meaningful empty states on a database with no cards.
 
 ## Next proposed milestone
 
-D4 — Flashcards and Review Scheduling. Not authorized; waiting for explicit
+D5 — Quick Study Sessions and Progress. Not authorized; waiting for explicit
 user authorization.

@@ -19,7 +19,8 @@ import {
   QuestionObjectiveMismatchError,
 } from "@/modules/question-bank/domain/errors";
 import type { QuestionId } from "@/modules/question-bank/domain/question";
-import { NoDependencyChecker } from "@/modules/question-bank/infrastructure/no-dependency-checker";
+import { FlashcardQuestionDependencyChecker } from "@/modules/flashcards/infrastructure/flashcard-question-dependency-checker";
+import { SqliteFlashcardRepository } from "@/modules/flashcards/infrastructure/sqlite-flashcard-repository";
 import { SqliteQuestionBankUnitOfWork } from "@/modules/question-bank/infrastructure/sqlite-question-bank-unit-of-work";
 import { SqliteQuestionRepository } from "@/modules/question-bank/infrastructure/sqlite-question-repository";
 import type {
@@ -122,7 +123,14 @@ describe("QuestionBankFacade", () => {
   beforeEach(async () => {
     database = createMigratedDatabase();
     clock = new FixedClock();
-    facade = buildFacade(new NoDependencyChecker());
+    // The composed checker, so this suite exercises the same dependency source
+    // production does. D3 composed `NoDependencyChecker` here; D4 replaced it
+    // because converted flashcards are the first real dependents of a question.
+    facade = buildFacade(
+      new FlashcardQuestionDependencyChecker(
+        new SqliteFlashcardRepository(database),
+      ),
+    );
 
     const certifications = new SqliteCertificationRepository(database);
     const objectives = new SqliteObjectiveRepository(database);
@@ -756,7 +764,7 @@ describe("QuestionBankFacade", () => {
       expect(view?.blockingDependencies).toEqual(["answer attempts"]);
     });
 
-    it("reports a question with no dependents as deletable in D3", async () => {
+    it("reports a question with no dependents as deletable", async () => {
       const created = await facade.createQuestion(
         TRACK.id,
         singleChoiceInput(),
@@ -766,7 +774,7 @@ describe("QuestionBankFacade", () => {
         deletable: true,
         blockingDependencies: [],
       });
-      expect(dependencies).toBeInstanceOf(NoDependencyChecker);
+      expect(dependencies).toBeInstanceOf(FlashcardQuestionDependencyChecker);
     });
 
     it("reports not found when deleting an unknown question", async () => {

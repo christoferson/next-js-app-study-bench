@@ -18,6 +18,8 @@ import { ObjectiveLinkForm } from "@/modules/question-bank/ui/objective-link-for
 import { QuestionOwnerPanel } from "@/modules/question-bank/ui/question-owner-panel";
 import { QuestionPreview } from "@/modules/question-bank/ui/question-preview";
 import { RevisionHistory } from "@/modules/question-bank/ui/revision-history";
+import { convertQuestionAction } from "@/modules/flashcards/ui/actions";
+import { ConvertQuestionForm } from "@/modules/flashcards/ui/convert-question-form";
 
 interface QuestionDetailPageProps {
   readonly params: Promise<{
@@ -193,6 +195,28 @@ export default async function QuestionDetailPage({
             {view.linkedObjectives.length === 0
               ? "This track has no active objectives to map yet."
               : "Every active objective of this track is already mapped."}
+          </p>
+        )}
+      </section>
+
+      <section aria-labelledby="flashcard-heading" className="section">
+        <div className="section-heading">
+          <h2 id="flashcard-heading">Flashcards</h2>
+          <p className="section-note">
+            {question.lifecycleStatus === "ACTIVE"
+              ? "A card copies this question's wording, answer, and objectives, then becomes independent of it."
+              : "Only an active question can be turned into a flashcard."}
+          </p>
+        </div>
+        {question.lifecycleStatus === "ACTIVE" ? (
+          <ConvertQuestionForm
+            action={convertQuestionAction}
+            slug={certification.slug}
+            questionId={question.id}
+          />
+        ) : (
+          <p className="field-hint">
+            Activate this question to make a flashcard from it.
           </p>
         )}
       </section>

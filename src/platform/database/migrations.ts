@@ -138,4 +138,115 @@ CREATE INDEX question_objective_links_objective_idx
   ON question_objective_links (objective_id, question_id);
 `,
   },
+  {
+    id: "0003",
+    description:
+      "flashcards, flashcard_revisions, flashcard_objective_links, flashcard_reviews, review_schedules",
+    sql: `
+CREATE TABLE flashcards (
+  id TEXT PRIMARY KEY,
+  certification_id TEXT NOT NULL
+    REFERENCES certifications (id) ON DELETE CASCADE,
+  -- Nullable only to break the circular foreign key with flashcard_revisions,
+  -- exactly as questions.current_revision_id is: root, then revision, then
+  -- pointer, all in one transaction.
+  current_revision_id TEXT
+    REFERENCES flashcard_revisions (id) ON DELETE RESTRICT,
+  lifecycle_status TEXT NOT NULL
+    CHECK (lifecycle_status IN ('DRAFT', 'ACTIVE', 'RETIRED', 'ARCHIVED')),
+  -- Provenance for a card converted from a question. RESTRICT, not SET NULL:
+  -- the card is a dependent of the question, so deleting the question would
+  -- silently erase where the card came from. The question-bank dependency
+  -- checker reports the same thing before the owner reaches this constraint.
+  source_question_id TEXT REFERENCES questions (id) ON DELETE RESTRICT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+) STRICT;
+
+CREATE INDEX flashcards_bank_idx
+  ON flashcards (certification_id, lifecycle_status);
+
+CREATE INDEX flashcards_source_question_idx
+  ON flashcards (source_question_id);
+
+CREATE TABLE flashcard_revisions (
+  id TEXT PRIMARY KEY,
+  flashcard_id TEXT NOT NULL REFERENCES flashcards (id) ON DELETE CASCADE,
+  revision_number INTEGER NOT NULL CHECK (revision_number >= 1),
+  -- The discriminator lives in its own column as well as inside the JSON
+  -- payload, so the bank can filter by card type without parsing JSON.
+  card_type TEXT NOT NULL
+    CHECK (card_type IN ('BASIC', 'REVERSED', 'CLOZE', 'VOCABULARY',
+      'SCENARIO')),
+  -- Validated JSON: written only after the domain has checked the content and
+  -- re-validated with a zod schema when read back.
+  content_payload TEXT NOT NULL,
+  -- The card's text fields flattened by the domain, so the bank can search card
+  -- text without matching JSON keys or adding a full-text index.
+  search_text TEXT NOT NULL,
+  notes TEXT,
+  -- JSON array of tag strings; empty array when the owner set no tags.
+  tags TEXT NOT NULL,
+  language TEXT,
+  created_at TEXT NOT NULL,
+  UNIQUE (flashcard_id, revision_number)
+) STRICT;
+
+CREATE INDEX flashcard_revisions_card_idx
+  ON flashcard_revisions (flashcard_id, revision_number);
+
+CREATE TABLE flashcard_objective_links (
+  flashcard_id TEXT NOT NULL REFERENCES flashcards (id) ON DELETE CASCADE,
+  objective_id TEXT NOT NULL
+    REFERENCES certification_objectives (id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (flashcard_id, objective_id)
+) STRICT;
+
+CREATE INDEX flashcard_objective_links_objective_idx
+  ON flashcard_objective_links (objective_id, flashcard_id);
+
+CREATE TABLE flashcard_reviews (
+  id TEXT PRIMARY KEY,
+  flashcard_id TEXT NOT NULL REFERENCES flashcards (id) ON DELETE CASCADE,
+  -- Historical integrity (spec/DOMAIN-RULES.md section 1.4): a review records
+  -- the exact revision that was studied, and RESTRICT keeps that revision from
+  -- being removed while a review still refers to it.
+  flashcard_revision_id TEXT NOT NULL
+    REFERENCES flashcard_revisions (id) ON DELETE RESTRICT,
+  rating TEXT NOT NULL
+    CHECK (rating IN ('AGAIN', 'HARD', 'GOOD', 'EASY')),
+  reviewed_at TEXT NOT NULL,
+  -- The interval and due date this rating produced, so the history explains the
+  -- schedule even after the scheduling algorithm is replaced.
+  interval_minutes INTEGER NOT NULL CHECK (interval_minutes > 0),
+  due_at TEXT NOT NULL,
+  -- Which scheduling strategy produced them.
+  scheduler_id TEXT NOT NULL
+) STRICT;
+
+CREATE INDEX flashcard_reviews_card_idx
+  ON flashcard_reviews (flashcard_id, reviewed_at);
+
+CREATE TABLE review_schedules (
+  -- One row per flashcard, so the primary key is the card itself.
+  flashcard_id TEXT PRIMARY KEY
+    REFERENCES flashcards (id) ON DELETE CASCADE,
+  -- Intervals are whole minutes: the shortest interval the specified algorithm
+  -- produces is 10 minutes and the longest are whole days, so one integer unit
+  -- covers both without floating-point drift.
+  interval_minutes INTEGER NOT NULL CHECK (interval_minutes > 0),
+  due_at TEXT NOT NULL,
+  lapse_count INTEGER NOT NULL CHECK (lapse_count >= 0),
+  -- A schedule row exists only after a review, so the count starts at 1. A card
+  -- with no row is a new card.
+  review_count INTEGER NOT NULL CHECK (review_count >= 1),
+  last_reviewed_at TEXT NOT NULL,
+  scheduler_id TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+) STRICT;
+
+CREATE INDEX review_schedules_due_idx ON review_schedules (due_at);
+`,
+  },
 ];

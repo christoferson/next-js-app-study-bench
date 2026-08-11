@@ -1,43 +1,29 @@
+import { DomainError } from "@/shared/domain-error";
+
 /**
  * Domain errors for the certification module.
  *
  * Expected failures are explicit error types with stable codes. Callers must not
  * string-match error messages (`spec/ARCHITECTURE.md` section 6.5).
+ *
+ * `DomainError`, `ValidationError`, and `isDomainError` moved to
+ * `@/shared/domain-error` in D3 so the question-bank module raises errors that
+ * the same UI plumbing understands. They are re-exported here so existing
+ * imports keep working.
  */
 
-export type DomainErrorCode =
-  | "VALIDATION_FAILED"
+export {
+  DomainError,
+  ValidationError,
+  isDomainError,
+} from "@/shared/domain-error";
+
+export type CertificationDomainErrorCode =
   | "SLUG_CONFLICT"
   | "CERTIFICATION_NOT_FOUND"
   | "OBJECTIVE_NOT_FOUND"
   | "INVALID_PARENT_OBJECTIVE"
   | "CYCLIC_OBJECTIVE_PARENT";
-
-export abstract class DomainError extends Error {
-  abstract readonly code: DomainErrorCode;
-
-  /**
-   * Messages keyed by form field name. Every domain error carries field
-   * mappings so that a form can render the failure next to its cause; the empty
-   * string key holds messages that belong to the form as a whole.
-   */
-  abstract fieldMessages(): Readonly<Record<string, readonly string[]>>;
-}
-
-export class ValidationError extends DomainError {
-  readonly code = "VALIDATION_FAILED";
-
-  private readonly messages: Readonly<Record<string, readonly string[]>>;
-
-  constructor(messages: Readonly<Record<string, readonly string[]>>) {
-    super("The submitted values are not valid.");
-    this.messages = messages;
-  }
-
-  fieldMessages(): Readonly<Record<string, readonly string[]>> {
-    return this.messages;
-  }
-}
 
 export class SlugConflictError extends DomainError {
   readonly code = "SLUG_CONFLICT";
@@ -116,8 +102,4 @@ export class CyclicObjectiveParentError extends DomainError {
       ],
     };
   }
-}
-
-export function isDomainError(error: unknown): error is DomainError {
-  return error instanceof DomainError;
 }

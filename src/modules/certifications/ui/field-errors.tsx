@@ -1,25 +1,7 @@
-interface FieldErrorsProps {
-  readonly id: string;
-  readonly messages: readonly string[] | undefined;
-}
-
 /**
- * Validation messages for one field.
+ * Field-error list for the certification module.
  *
- * The element keeps its `id` stable so an input can reference it through
- * `aria-describedby` whether or not it currently has an error. `role="alert"`
- * announces a message that appears after submission.
+ * The implementation moved to `@/shared/ui/field-errors` in D3 so the
+ * question-bank forms render validation messages identically.
  */
-export function FieldErrors({ id, messages }: FieldErrorsProps) {
-  if (messages === undefined) {
-    return null;
-  }
-
-  return (
-    <ul className="field-errors" id={id} role="alert">
-      {messages.map((message) => (
-        <li key={message}>{message}</li>
-      ))}
-    </ul>
-  );
-}
+export { FieldErrors } from "@/shared/ui/field-errors";

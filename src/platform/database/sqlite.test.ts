@@ -122,6 +122,9 @@ describe("runMigrations", () => {
       expect(tables.map((table) => table.name)).toEqual([
         "certification_objectives",
         "certifications",
+        "question_objective_links",
+        "question_revisions",
+        "questions",
         "schema_migrations",
       ]);
     } finally {

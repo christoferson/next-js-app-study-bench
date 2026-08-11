@@ -2,16 +2,17 @@
 
 ## Current milestone
 
-D2 — Local Persistence and Certification Management
+D3 — Manual Question Bank
 
 ## Status
 
-Completed on 2026-08-11. Awaiting explicit authorization for D3.
+Completed on 2026-08-11. Awaiting explicit authorization for D4.
 
 ## Completed milestones
 
 - D1 — Foundation and Demo Study Catalog (2026-08-10)
 - D2 — Local Persistence and Certification Management (2026-08-11)
+- D3 — Manual Question Bank (2026-08-11)
 
 ## In progress
 
@@ -19,7 +20,7 @@ Completed on 2026-08-11. Awaiting explicit authorization for D3.
 
 ## Planned milestones
 
-- D3 — Manual Question Bank (proposed next, not authorized)
+- D4 — Flashcards and Review Scheduling (proposed next, not authorized)
 - D4 — Flashcards and Review Scheduling
 - D5 — Quick Study Sessions and Progress
 - D6 — Bedrock AI Foundation and Raw-Knowledge Generation
@@ -115,11 +116,44 @@ Completed on 2026-08-11. Awaiting explicit authorization for D3.
 - 2026-08-11 (D2): No hard deletion in D2; certifications and objectives are
   archived and restorable. Archived tracks are hidden by default behind a
   "Show archived" affordance.
+- 2026-08-11 (D3): New `src/modules/question-bank/` module mirrors the
+  certifications layering. Question content is a discriminated union
+  (SINGLE_CHOICE, MULTIPLE_RESPONSE, SHORT_ANSWER) persisted as validated JSON
+  in a TEXT column with the discriminator in its own column; JSON is
+  re-validated with zod on read. Exhaustive switches make a future question
+  type a compile-time error.
+- 2026-08-11 (D3): Migration `0002` adds STRICT tables `questions`,
+  `question_revisions` (UNIQUE question_id + revision_number),
+  `question_objective_links` (UNIQUE question_id + objective_id). Migration
+  `0001` unchanged. `questions.current_revision_id` is nullable in SQL only;
+  the invariant is enforced in the domain and repository.
+- 2026-08-11 (D3): Revisions are append-only — the repository port has no
+  update-revision method. Editing creates revision N+1 and bumps the current
+  pointer in one transaction.
+- 2026-08-11 (D3): Database composition was extracted to
+  `src/platform/database/composition.ts` so certifications and question-bank
+  share one connection, one migration run, and one transaction runner. Shared
+  form/error helpers moved to `src/shared/`; the D2 files re-export them.
+- 2026-08-11 (D3): Hard deletion goes through a `QuestionDependencyChecker`
+  port. D3 wires a `NoDependencyChecker` (truthfully: attempts, sessions,
+  artifacts, variants, and reviews do not exist yet); D5+ swap in real checks
+  in the composition root without facade changes.
+- 2026-08-11 (D3): Difficulty is a nullable integer 1–5 (ordering matters for
+  D5 session composition). Per-choice `choiceExplanations` deferred (SPEC 6.3
+  "may contain"); most valuable once D7 AI review produces them.
+- 2026-08-11 (D3): Bank list queries are bounded (page size 20); an unbounded
+  bank query is not expressible through the repository criteria. Stem search
+  uses LIKE with escaping; no FTS dependency.
+- 2026-08-11 (D3): Dispute is allowed from DRAFT as well as ACTIVE (a dispute
+  records content doubt, not availability). `ARCHIVED` exists in the lifecycle
+  enum per SPEC but no D3 flow produces it; retire plus eligible deletion
+  cover D3 needs, and archival becomes meaningful once attempts exist.
 
 ## Deviations
 
-- None from `SPEC.md` D2 requirements. D1 structural deviation (omitted empty
-  directories) remains permitted by SPEC 19.4.
+- None from `SPEC.md` D2/D3 requirements. D1 structural deviation (omitted
+  empty directories) remains permitted by SPEC 19.4. "View attempt history"
+  from SPEC 6.3 waits for D5 (attempts do not exist before then).
 
 ## Known limitations
 
@@ -135,22 +169,27 @@ Completed on 2026-08-11. Awaiting explicit authorization for D3.
 - `better-sqlite3` native-module compilation on platforms without a prebuilt
   binary was not exercised.
 
-## Validation results (2026-08-11)
+## Validation results (2026-08-11, after D3)
 
 - `npm run format:check` — passed
 - `npm run lint` — passed
 - `npm run type-check` — passed
-- `npm test` — passed (13 files, 178 tests, including the repository contract
-  suite against SQLite on fresh in-memory migrated databases)
-- `npm run build` — passed (8 routes)
-- Manual: tracks and objective hierarchies persist across a server restart;
-  invalid parent references and cyclic reparenting are rejected with
-  field-associated errors; archive hides a track from the default list and
-  restore returns it; unknown slug returns HTTP 404; `/health` returns
-  `{"status":"ok","application":"study-bench"}` unchanged; `npm run seed` is
-  idempotent (second run reports both demo tracks already present).
+- `npm test` — passed (22 files, 329 tests, including repository contract
+  suites for certifications and questions against SQLite on fresh in-memory
+  migrated databases)
+- `npm run build` — passed (13 routes)
+- Manual (D3): create → activate a SINGLE_CHOICE question; edit produced
+  revision 2 with revision 1 intact and inspectable at its own URL; all four
+  invalid content configurations rejected with field-associated errors;
+  RETIRED and DISPUTED filters work; delete removed root, revisions, and
+  links atomically and the id then 404s; independent banks on both demo
+  tracks; a question addressed under the wrong track slug 404s.
+- Manual (regression): D2 flows (track create/edit/archive/restore, objective
+  tree) unchanged; unknown slug 404s; `/health` returns
+  `{"status":"ok","application":"study-bench"}` unchanged; `npm run seed`
+  remains idempotent.
 
 ## Next proposed milestone
 
-D3 — Manual Question Bank. Not authorized; waiting for explicit user
-authorization.
+D4 — Flashcards and Review Scheduling. Not authorized; waiting for explicit
+user authorization.

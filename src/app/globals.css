@@ -460,6 +460,210 @@ a:hover {
   gap: var(--space-3);
 }
 
+/* Question bank */
+
+/* A disputed badge is outlined as well as labelled: the word "Disputed" carries
+   the meaning, and the border only reinforces it. */
+.badge-alert {
+  border-color: var(--color-error);
+  border-width: 2px;
+  color: var(--color-error);
+}
+
+.filter-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.filter-row {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.stacked-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  align-items: flex-start;
+  max-width: 40rem;
+}
+
+.pagination {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.question-row-meta {
+  font-size: 0.875rem;
+  color: var(--color-text-muted);
+}
+
+.question-preview {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  background-color: var(--color-panel);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.question-instruction {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+}
+
+.question-stem {
+  max-width: var(--measure);
+  white-space: pre-wrap;
+}
+
+.question-choices {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding-left: var(--space-5);
+}
+
+.question-choice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2) var(--space-3);
+  max-width: var(--measure);
+}
+
+.question-answer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--color-border);
+  max-width: var(--measure);
+}
+
+.question-concepts {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  padding-left: var(--space-5);
+}
+
+.choice-set {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin: 0;
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background-color: var(--color-panel);
+}
+
+.choice-set legend {
+  padding: 0 var(--space-2);
+  font-weight: 600;
+}
+
+.choice-list {
+  display: grid;
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.choice-row {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+}
+
+/* The tick or radio keeps its intrinsic size rather than the full-width field
+   sizing, and stays large enough to tap. */
+.choice-row input[type="checkbox"],
+.choice-row input[type="radio"] {
+  width: 1.25rem;
+  height: 1.25rem;
+  min-height: 0;
+}
+
+.choice-label {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+}
+
+.choice-row input[type="text"] {
+  grid-column: 1 / -1;
+  width: 100%;
+  min-height: 2.75rem;
+  padding: var(--space-2) var(--space-3);
+  background-color: var(--color-panel);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+  font-family: inherit;
+  font-size: 1rem;
+}
+
+.choice-row input[aria-invalid="true"] {
+  border-color: var(--color-error);
+  border-width: 2px;
+}
+
+.owner-panel {
+  display: grid;
+  gap: var(--space-5);
+}
+
+.owner-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.disclosure {
+  padding: var(--space-3) var(--space-4);
+  background-color: var(--color-panel);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  max-width: 40rem;
+}
+
+.disclosure summary {
+  cursor: pointer;
+  font-weight: 600;
+  padding: var(--space-1) 0;
+}
+
+.disclosure > *:not(summary) {
+  margin-top: var(--space-3);
+}
+
+.revision-list {
+  display: grid;
+  gap: var(--space-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.revision-row {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  background-color: var(--color-panel);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
 code {
   padding: 0.0625rem var(--space-1);
   background-color: var(--color-badge-bg);
@@ -482,5 +686,19 @@ code {
 
   .objective-tree .objective-tree {
     padding-left: var(--space-5);
+  }
+
+  .filter-row {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  /* Above 40rem the tick and the text fit on one line; below it the text input
+     takes the full width so a long choice stays readable at 360px. */
+  .choice-row {
+    grid-template-columns: auto auto 1fr;
+  }
+
+  .choice-row input[type="text"] {
+    grid-column: auto;
   }
 }

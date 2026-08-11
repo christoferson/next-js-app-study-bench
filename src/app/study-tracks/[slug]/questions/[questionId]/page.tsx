@@ -1,0 +1,229 @@
+import Link from "next/link";
+import { notFound } from "next/navigation";
+import {
+  describeDifficulty,
+  describeGenerationMode,
+} from "@/modules/question-bank/domain/question";
+import { getQuestionBankFacade } from "@/modules/question-bank/composition";
+import {
+  linkObjectiveAction,
+  unlinkObjectiveAction,
+} from "@/modules/question-bank/ui/actions";
+import {
+  LifecycleBadge,
+  QualityBadge,
+  QuestionTypeBadge,
+} from "@/modules/question-bank/ui/question-badges";
+import { ObjectiveLinkForm } from "@/modules/question-bank/ui/objective-link-form";
+import { QuestionOwnerPanel } from "@/modules/question-bank/ui/question-owner-panel";
+import { QuestionPreview } from "@/modules/question-bank/ui/question-preview";
+import { RevisionHistory } from "@/modules/question-bank/ui/revision-history";
+
+interface QuestionDetailPageProps {
+  readonly params: Promise<{
+    readonly slug: string;
+    readonly questionId: string;
+  }>;
+}
+
+/**
+ * One question: how it will be studied, plus everything the owner manages.
+ *
+ * The facade returns `null` both for an unknown id and for a question belonging
+ * to another track, so a guessed address is a 404 rather than a cross-track leak.
+ */
+export default async function QuestionDetailPage({
+  params,
+}: QuestionDetailPageProps) {
+  const { slug, questionId } = await params;
+  const view = await getQuestionBankFacade().findDetail(slug, questionId);
+
+  if (view === null) {
+    notFound();
+  }
+
+  const { certification, question, currentRevision } = view;
+  const bankPath = `/study-tracks/${certification.slug}/questions`;
+
+  return (
+    <main className="page">
+      <nav aria-label="Breadcrumb" className="breadcrumb">
+        <Link href={bankPath}>Back to the question bank</Link>
+      </nav>
+
+      <header className="page-header">
+        <p className="eyebrow">{certification.name}</p>
+        <div className="card-heading">
+          <h1>Question</h1>
+          <QuestionTypeBadge type={currentRevision.questionType} />
+          <LifecycleBadge status={question.lifecycleStatus} />
+          <QualityBadge status={question.qualityStatus} />
+          <span className="badge">
+            {describeGenerationMode(question.generationMode)}
+          </span>
+        </div>
+        {question.disputeReason !== null ? (
+          <p className="lede">Disputed: {question.disputeReason}</p>
+        ) : null}
+        <dl className="meta">
+          <div className="meta-item">
+            <dt>Revision</dt>
+            <dd>
+              {currentRevision.revisionNumber} of {view.revisions.length}
+            </dd>
+          </div>
+          <div className="meta-item">
+            <dt>Difficulty</dt>
+            <dd>
+              {currentRevision.difficulty === null
+                ? "Not graded"
+                : describeDifficulty(currentRevision.difficulty)}
+            </dd>
+          </div>
+          {currentRevision.language !== null ? (
+            <div className="meta-item">
+              <dt>Language</dt>
+              <dd>{currentRevision.language}</dd>
+            </div>
+          ) : null}
+          {currentRevision.tags.length > 0 ? (
+            <div className="meta-item">
+              <dt>Tags</dt>
+              <dd>{currentRevision.tags.join(", ")}</dd>
+            </div>
+          ) : null}
+          <div className="meta-item">
+            <dt>Updated</dt>
+            <dd>{question.updatedAt.slice(0, 10)}</dd>
+          </div>
+        </dl>
+        <div className="section-actions">
+          <Link className="button" href={`${bankPath}/${question.id}/edit`}>
+            Edit question
+          </Link>
+        </div>
+      </header>
+
+      <section aria-labelledby="preview-heading" className="section">
+        <div className="section-heading">
+          <h2 id="preview-heading">How it will be studied</h2>
+          <p className="section-note">
+            The question as it appears while studying, without the answer.
+          </p>
+        </div>
+        <QuestionPreview revision={currentRevision} revealAnswer={false} />
+      </section>
+
+      <section aria-labelledby="answer-heading" className="section">
+        <div className="section-heading">
+          <h2 id="answer-heading">Answer and explanation</h2>
+        </div>
+        {/* `details` keeps the answer off screen until the owner asks for it, so
+            reviewing the bank does not spoil a question by accident. */}
+        <details className="disclosure">
+          <summary>Reveal the answer</summary>
+          <QuestionPreview revision={currentRevision} revealAnswer />
+        </details>
+      </section>
+
+      <section aria-labelledby="objectives-heading" className="section">
+        <div className="section-heading">
+          <h2 id="objectives-heading">Objectives</h2>
+          <p className="section-note">
+            Mapping a question to objectives places it in this track&apos;s
+            study map. Only objectives of {certification.name} can be mapped.
+          </p>
+        </div>
+
+        {view.linkedObjectives.length === 0 ? (
+          <p className="empty-state">
+            This question is not mapped to any objective yet.
+          </p>
+        ) : (
+          <ul className="card-list">
+            {view.linkedObjectives.map((objective) => (
+              <li className="card" key={objective.id}>
+                <div className="card-heading">
+                  {objective.code !== null ? (
+                    <span className="badge">{objective.code}</span>
+                  ) : null}
+                  <p className="card-title">{objective.title}</p>
+                </div>
+                <form action={unlinkObjectiveAction}>
+                  <input
+                    type="hidden"
+                    name="slug"
+                    value={certification.slug}
+                    readOnly
+                  />
+                  <input
+                    type="hidden"
+                    name="questionId"
+                    value={question.id}
+                    readOnly
+                  />
+                  <input
+                    type="hidden"
+                    name="objectiveId"
+                    value={objective.id}
+                    readOnly
+                  />
+                  <button
+                    type="submit"
+                    className="button-quiet"
+                    aria-label={`Remove mapping to ${objective.title}`}
+                  >
+                    Remove
+                  </button>
+                </form>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        {view.linkableObjectives.length > 0 ? (
+          <ObjectiveLinkForm
+            action={linkObjectiveAction}
+            slug={certification.slug}
+            questionId={question.id}
+            candidates={view.linkableObjectives}
+          />
+        ) : (
+          <p className="field-hint">
+            {view.linkedObjectives.length === 0
+              ? "This track has no active objectives to map yet."
+              : "Every active objective of this track is already mapped."}
+          </p>
+        )}
+      </section>
+
+      <section aria-labelledby="manage-heading" className="section">
+        <div className="section-heading">
+          <h2 id="manage-heading">Manage</h2>
+        </div>
+        <QuestionOwnerPanel
+          slug={certification.slug}
+          question={question}
+          deletable={view.deletable}
+          blockingDependencies={view.blockingDependencies}
+        />
+      </section>
+
+      <section aria-labelledby="history-heading" className="section">
+        <div className="section-heading">
+          <h2 id="history-heading">Revision history</h2>
+          <p className="section-note">
+            Editing a question adds a revision. Earlier revisions are kept
+            exactly as they were written.
+          </p>
+        </div>
+        <RevisionHistory
+          slug={certification.slug}
+          questionId={question.id}
+          revisions={view.revisions}
+          currentRevisionId={question.currentRevisionId}
+        />
+      </section>
+    </main>
+  );
+}

@@ -8,6 +8,7 @@ import {
 import { CertificationMeta } from "@/modules/certifications/ui/certification-meta";
 import { ObjectiveTree } from "@/modules/certifications/ui/objective-tree";
 import { OriginBadge } from "@/modules/certifications/ui/origin-badge";
+import { getQuestionBankFacade } from "@/modules/question-bank/composition";
 
 interface StudyTrackPageProps {
   readonly params: Promise<{ readonly slug: string }>;
@@ -23,6 +24,9 @@ export default async function StudyTrackPage({ params }: StudyTrackPageProps) {
 
   const { certification } = view;
   const isArchived = certification.status === "ARCHIVED";
+  // Two counts, not the whole bank: the track page summarises the bank and links
+  // to it (`spec/ARCHITECTURE.md` section 8).
+  const bank = await getQuestionBankFacade().countBank(certification.id);
 
   return (
     <main className="page">
@@ -88,6 +92,25 @@ export default async function StudyTrackPage({ params }: StudyTrackPageProps) {
           </div>
         </div>
         <ObjectiveTree slug={certification.slug} nodes={view.objectiveTree} />
+      </section>
+
+      <section aria-labelledby="questions-heading" className="section">
+        <div className="section-heading">
+          <h2 id="questions-heading">Question bank</h2>
+          <p className="section-note">
+            {bank.total === 0
+              ? "No questions yet. The bank is where you write and keep them."
+              : `${bank.active} active of ${bank.total} question${bank.total === 1 ? "" : "s"}.`}
+          </p>
+          <div className="section-actions">
+            <Link
+              className="button"
+              href={`/study-tracks/${certification.slug}/questions`}
+            >
+              Open question bank
+            </Link>
+          </div>
+        </div>
       </section>
     </main>
   );

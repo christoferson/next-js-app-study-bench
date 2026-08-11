@@ -19,8 +19,19 @@ class NotFoundSignal extends Error {}
 const findDetailBySlug =
   vi.fn<(slug: string) => Promise<CertificationDetailView | null>>();
 
+const countBank =
+  vi.fn<
+    (
+      certificationId: string,
+    ) => Promise<{ readonly total: number; readonly active: number }>
+  >();
+
 vi.mock("@/modules/certifications/composition", () => ({
   getCertificationFacade: () => ({ findDetailBySlug }),
+}));
+
+vi.mock("@/modules/question-bank/composition", () => ({
+  getQuestionBankFacade: () => ({ countBank }),
 }));
 
 vi.mock("next/navigation", () => ({
@@ -70,6 +81,8 @@ async function renderTrackPage(slug: string): Promise<void> {
 describe("Study-track detail page", () => {
   beforeEach(() => {
     findDetailBySlug.mockReset();
+    countBank.mockReset();
+    countBank.mockResolvedValue({ total: 0, active: 0 });
   });
 
   it("renders the track name and metadata", async () => {
@@ -156,6 +169,33 @@ describe("Study-track detail page", () => {
     expect(
       screen.getByRole("link", { name: "Back to study tracks" }),
     ).toHaveAttribute("href", "/");
+  });
+
+  it("links to the question bank for this track", async () => {
+    stubDetail();
+    countBank.mockResolvedValue({ total: 7, active: 4 });
+
+    await renderTrackPage("demo-cloud-practitioner");
+
+    expect(
+      screen.getByRole("link", { name: "Open question bank" }),
+    ).toHaveAttribute(
+      "href",
+      "/study-tracks/demo-cloud-practitioner/questions",
+    );
+    expect(screen.getByText("4 active of 7 questions.")).toBeVisible();
+  });
+
+  it("invites the owner to start the bank when it is empty", async () => {
+    stubDetail();
+    countBank.mockResolvedValue({ total: 0, active: 0 });
+
+    await renderTrackPage("demo-cloud-practitioner");
+
+    expect(screen.getByText(/No questions yet/)).toBeVisible();
+    expect(
+      screen.getByRole("link", { name: "Open question bank" }),
+    ).toBeInTheDocument();
   });
 
   it("triggers the not-found path for an unknown slug", async () => {

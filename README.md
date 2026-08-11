@@ -6,25 +6,39 @@ StudyBench is a personal, single-user, AI-assisted study workbench for technical
 certifications, language examinations, and other structured learning goals. It is
 built incrementally in small, independently verifiable milestones.
 
-## Current state — D2
+## Current state — D3
 
-Milestone D2 replaces the D1 read-only demo catalog with **local SQLite
-persistence and full certification management**:
+Milestone D3 adds a **manual question bank** on top of the D2 study tracks:
 
-- A dashboard at `/` listing your active study tracks, with a "New study track"
-  action and an archived-tracks toggle offering restore.
-- Create and edit a study track at `/study-tracks/new` and
-  `/study-tracks/[slug]/edit`.
-- A detail page at `/study-tracks/[slug]` with track metadata, edit,
-  archive/restore, and a nested objective tree.
-- Objective management: add a root objective or a child, edit, reorder among
-  siblings with explicit up/down controls, reparent through a select, and
-  archive/restore.
+- Study tracks (D2): a dashboard at `/` listing your active tracks with a "New
+  study track" action and an archived-tracks toggle offering restore; create and
+  edit at `/study-tracks/new` and `/study-tracks/[slug]/edit`; a detail page at
+  `/study-tracks/[slug]` with metadata, edit, archive/restore, and a nested
+  objective tree; objective management with add-child, edit, sibling reordering,
+  reparenting, and archive/restore.
+- A per-track question bank at `/study-tracks/[slug]/questions`, listing
+  questions with their type, lifecycle status, review state, and revision, and
+  filtering by lifecycle, review state, type, objective, and question text.
+- Writing questions at `/study-tracks/[slug]/questions/new` in three types:
+  single choice, multiple response, and short answer. A new question starts as a
+  draft, and an unanswerable choice configuration is rejected.
+- A question page at `/study-tracks/[slug]/questions/[questionId]` showing how
+  the question will be studied, the answer and explanation behind a disclosure,
+  its objective mappings, and its revision history.
+- Editing at `.../[questionId]/edit` **appends a revision** rather than
+  overwriting one; every earlier revision stays readable at
+  `.../[questionId]/revisions/[revisionNumber]`.
+- Question lifecycle (activate, retire, restore) and review state (approve,
+  dispute with a reason, resolve a dispute) as two independent dimensions.
+- Objective mappings, restricted to objectives of the question's own track.
+- Permanent deletion of a question, its revisions, and its objective mappings —
+  offered only when nothing depends on the question.
 - A liveness endpoint at `/health` (unchanged from D1).
 
-Everything is stored in a local SQLite database and survives a restart.
-Archiving is reversible and **nothing is hard-deleted**. There are no questions,
-flashcards, sessions, or AI features yet — those arrive in later milestones.
+Everything is stored in a local SQLite database and survives a restart. Tracks
+and objectives are still never hard-deleted; a question can be deleted, and the
+page says so before you confirm. There are no attempts, study sessions,
+flashcards, imports, or AI features yet — those arrive in later milestones.
 
 See `SPEC.md` for the full specification and `PROGRESS.md` for implementation
 state.
@@ -106,7 +120,14 @@ With `npm run seed` followed by `npm run dev`:
 - Create a track, add objectives, then restart the server — the data is still
   there
 - Archive a track, use "Show archived tracks", and restore it
+- Open a track, choose "Open question bank", and write a single-choice question;
+  saving without marking a correct answer is rejected with a message
+- Activate the draft, then edit it: the revision history shows two revisions and
+  revision 1 still reads as originally written
+- Filter the bank by status, dispute a question with a reason, and resolve it
 - `http://localhost:3000/study-tracks/unknown` — not-found page
+- `http://localhost:3000/study-tracks/demo-cloud-practitioner/questions/nope` —
+  not-found page
 - `http://localhost:3000/health` — `{"status":"ok","application":"study-bench"}`
 
 ## Architecture
@@ -122,17 +143,34 @@ src/
 ├── platform/
 │   ├── clock.ts                      injectable UTC clock port
 │   ├── id-generator.ts               injectable ID port (crypto.randomUUID)
-│   └── database/                     connection, config, migrations, runner
-└── modules/certifications/
-    ├── domain/                       framework-free types, slug rules,
-    │                                 hierarchy validation, domain errors
+│   └── database/                     connection, config, migrations, runner,
+│                                     shared connection composition
+└── modules/
+    ├── certifications/               study tracks and objectives
+    └── question-bank/                questions and their revisions
+```
+
+Each module has the same five layers plus a composition root:
+
+```
+    <module>/
+    ├── domain/                       framework-free types, invariants,
+    │                                 lifecycle rules, domain errors
     ├── ports/                        repository and unit-of-work interfaces
     │                                 plus the shared repository contract suite
-    ├── application/                  Zod schemas and CertificationFacade
+    ├── application/                  Zod schemas and the module facade
     ├── infrastructure/               SQLite repositories, unit of work,
-    │                                 demo seed data, test support
-    ├── ui/                           Server Actions, forms, cards, tree
+    │                                 test support
+    ├── ui/                           Server Actions and components
     └── composition.ts                server-only composition root
 ```
+
+Both modules share one database connection and one transaction runner from
+`platform/database/composition.ts`, so migrations run once and writes serialise
+across modules.
+
+Question content is a discriminated union per question type, stored as validated
+JSON with the type in its own column. Revisions are append-only: the repository
+port has no update-revision method, so an edit can only add revision `n + 1`.
 
 Detailed engineering rules live in `CLAUDE.md` and `spec/`.

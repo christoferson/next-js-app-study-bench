@@ -2,15 +2,16 @@
 
 ## Current milestone
 
-D1 — Foundation and Demo Study Catalog
+D2 — Local Persistence and Certification Management
 
 ## Status
 
-Completed on 2026-08-10. Awaiting explicit authorization for D2.
+Completed on 2026-08-11. Awaiting explicit authorization for D3.
 
 ## Completed milestones
 
 - D1 — Foundation and Demo Study Catalog (2026-08-10)
+- D2 — Local Persistence and Certification Management (2026-08-11)
 
 ## In progress
 
@@ -18,9 +19,7 @@ Completed on 2026-08-10. Awaiting explicit authorization for D2.
 
 ## Planned milestones
 
-- D2 — Local Persistence and Certification Management (proposed next, not
-  authorized)
-- D3 — Manual Question Bank
+- D3 — Manual Question Bank (proposed next, not authorized)
 - D4 — Flashcards and Review Scheduling
 - D5 — Quick Study Sessions and Progress
 - D6 — Bedrock AI Foundation and Raw-Knowledge Generation
@@ -84,37 +83,74 @@ Completed on 2026-08-10. Awaiting explicit authorization for D2.
   has no code for them and empty directories are prohibited
   (`spec/ARCHITECTURE.md` section 3). The composition root is
   `src/modules/study-catalog/composition.ts`.
+- 2026-08-11 (D2): Local persistence uses `better-sqlite3` (no ORM) at
+  `./data/study-bench.db`, git-ignored. Every connection is opened through one
+  factory (`src/platform/database/sqlite.ts`) that sets `foreign_keys = ON`,
+  `journal_mode = WAL`, `busy_timeout = 5000`. Tables are STRICT.
+- 2026-08-11 (D2): Migrations use a small hand-rolled runner (ordered
+  migrations applied transactionally, tracked in a STRICT `schema_migrations`
+  table). Migrations run automatically when the database is first opened, so
+  `npm install && npm run dev` is the full setup.
+- 2026-08-11 (D2): Runtime validation uses `zod` at the Server Action
+  boundary; it is the single schema-validation library for the project.
+- 2026-08-11 (D2): The D1 `study-catalog` module (port, `DemoStudyCatalog`,
+  demo data, UI) was removed and replaced by
+  `src/modules/certifications/` (domain, ports, application facade,
+  SQLite infrastructure, UI, composition root). Home and detail pages now read
+  from the facade. D1's demo content is available through the explicit
+  `npm run seed` command (idempotent by slug, never automatic).
+- 2026-08-11 (D2): D1 study types migrated to the SPEC 6.1 enum:
+  AWS demo track → `TECHNICAL_CERTIFICATION`, HSK → `LANGUAGE_PROFICIENCY`.
+- 2026-08-11 (D2): `personaId` on certifications is deferred to D6 — no
+  placeholder column or field exists (personas do not exist before D6).
+- 2026-08-11 (D2): Slugs are derived from the name at creation (kebab-case,
+  unique with a bounded numeric-suffix fallback) and remain stable on edit so
+  links keep resolving. `new` is a reserved slug.
+- 2026-08-11 (D2): IDs come from an injectable `IdGenerator`
+  (`crypto.randomUUID()` in production) and time from an injectable `Clock`
+  (UTC ISO text in SQLite), keeping tests deterministic.
+- 2026-08-11 (D2): The unit of work uses explicit
+  `BEGIN IMMEDIATE`/`COMMIT`/`ROLLBACK` with an in-process queue because
+  better-sqlite3's native `transaction()` rejects async callbacks.
+- 2026-08-11 (D2): No hard deletion in D2; certifications and objectives are
+  archived and restorable. Archived tracks are hidden by default behind a
+  "Show archived" affordance.
 
 ## Deviations
 
-- None from `SPEC.md` D1 requirements. Structural deviation from the 19.4
-  reference tree (omitted empty directories) is permitted by 19.4 itself.
+- None from `SPEC.md` D2 requirements. D1 structural deviation (omitted empty
+  directories) remains permitted by SPEC 19.4.
 
 ## Known limitations
 
-- Responsiveness at a 360-pixel viewport is implemented via a single-column
-  layout and one `min-width: 40rem` breakpoint but was verified by stylesheet
-  review, not real-browser device emulation.
-- Color contrast was chosen conservatively (dark text on light background) but
+- Responsiveness at a 360-pixel viewport is verified by stylesheet review, not
+  real-browser device emulation; color contrast was chosen conservatively but
   not measured with a contrast tool.
 - `npm audit` reports 3 high-severity advisories in transitive dependencies of
   Next.js 15 (`postcss`, `sharp`); the only offered fix is Next 16, a breaking
-  upgrade out of D1 scope. Revisit no later than D13 production hardening.
+  upgrade out of scope. Revisit no later than D13 production hardening.
+- Manual UI verification of D2 flows was performed by driving the real Server
+  Actions over HTTP against the production build (including hostile payloads
+  for the invalid-parent and cycle invariants), not by clicking in a browser.
+- `better-sqlite3` native-module compilation on platforms without a prebuilt
+  binary was not exercised.
 
-## Validation results (2026-08-10)
+## Validation results (2026-08-11)
 
 - `npm run format:check` — passed
 - `npm run lint` — passed
 - `npm run type-check` — passed
-- `npm test` — passed (4 files, 18 tests)
-- `npm run build` — passed (routes: `/`, `/_not-found` static; `/health`,
-  `/study-tracks/[slug]` dynamic)
-- Manual: `/` shows dashboard with two Demo tracks; detail pages render with
-  demo badge, metadata, objectives, and return link; unknown slug returns HTTP
-  404 via the Next.js not-found page; `/health` returns
-  `{"status":"ok","application":"study-bench"}` with `Cache-Control: no-store`.
+- `npm test` — passed (13 files, 178 tests, including the repository contract
+  suite against SQLite on fresh in-memory migrated databases)
+- `npm run build` — passed (8 routes)
+- Manual: tracks and objective hierarchies persist across a server restart;
+  invalid parent references and cyclic reparenting are rejected with
+  field-associated errors; archive hides a track from the default list and
+  restore returns it; unknown slug returns HTTP 404; `/health` returns
+  `{"status":"ok","application":"study-bench"}` unchanged; `npm run seed` is
+  idempotent (second run reports both demo tracks already present).
 
 ## Next proposed milestone
 
-D2 — Local Persistence and Certification Management. Not authorized; waiting
-for explicit user authorization.
+D3 — Manual Question Bank. Not authorized; waiting for explicit user
+authorization.

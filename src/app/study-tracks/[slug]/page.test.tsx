@@ -1,8 +1,27 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
+import type { CertificationDetailView } from "@/modules/certifications/application/certification-facade";
+import { buildObjectiveTree } from "@/modules/certifications/domain/objective";
+import {
+  certificationFixture,
+  objectiveFixture,
+} from "@/modules/certifications/infrastructure/test-support";
 import StudyTrackPage from "@/app/study-tracks/[slug]/page";
 
+/**
+ * Detail page rendering test.
+ *
+ * The composition root is mocked, so the page is exercised without a database
+ * while still consuming the real facade view shape.
+ */
 class NotFoundSignal extends Error {}
+
+const findDetailBySlug =
+  vi.fn<(slug: string) => Promise<CertificationDetailView | null>>();
+
+vi.mock("@/modules/certifications/composition", () => ({
+  getCertificationFacade: () => ({ findDetailBySlug }),
+}));
 
 vi.mock("next/navigation", () => ({
   notFound: (): never => {
@@ -10,36 +29,129 @@ vi.mock("next/navigation", () => ({
   },
 }));
 
+vi.mock("@/modules/certifications/ui/actions", () => ({
+  archiveCertificationAction: vi.fn(),
+  restoreCertificationAction: vi.fn(),
+  archiveObjectiveAction: vi.fn(),
+  restoreObjectiveAction: vi.fn(),
+  moveObjectiveAction: vi.fn(),
+}));
+
+const OBJECTIVES = [
+  objectiveFixture({
+    id: "objective-1",
+    code: "Domain 1",
+    title: "Everyday vocabulary",
+    displayOrder: 1,
+  }),
+  objectiveFixture({
+    id: "objective-2",
+    parentObjectiveId: "objective-1",
+    code: "Task 1.1",
+    title: "Demo unit 1",
+    displayOrder: 1,
+  }),
+];
+
+function stubDetail(view: Partial<CertificationDetailView> = {}): void {
+  findDetailBySlug.mockResolvedValue({
+    objectiveTree: buildObjectiveTree(OBJECTIVES),
+    activeObjectiveCount: OBJECTIVES.length,
+    archivedObjectiveCount: 0,
+    ...view,
+    certification: view.certification ?? certificationFixture(),
+  });
+}
+
 async function renderTrackPage(slug: string): Promise<void> {
   render(await StudyTrackPage({ params: Promise.resolve({ slug }) }));
 }
 
 describe("Study-track detail page", () => {
-  it("renders the track name, metadata, and demo badge", async () => {
-    await renderTrackPage("aws-certified-generative-ai-developer-professional");
+  beforeEach(() => {
+    findDetailBySlug.mockReset();
+  });
+
+  it("renders the track name and metadata", async () => {
+    stubDetail({
+      certification: certificationFixture({
+        name: "Demo Cloud Practitioner",
+        provider: "Demo Provider",
+        examCode: "DEMO-001",
+      }),
+    });
+
+    await renderTrackPage("demo-cloud-practitioner");
 
     expect(
       screen.getByRole("heading", {
         level: 1,
-        name: "AWS Certified Generative AI Developer - Professional (AIP-C01)",
+        name: "Demo Cloud Practitioner",
       }),
     ).toBeInTheDocument();
-    expect(screen.getByText("AWS")).toBeVisible();
-    expect(screen.getByText("Certification")).toBeVisible();
+    expect(screen.getByText("Demo Provider")).toBeVisible();
+    expect(screen.getByText("Technical certification")).toBeVisible();
+    expect(screen.getByText("DEMO-001")).toBeVisible();
+  });
+
+  it("labels seeded content as demo", async () => {
+    stubDetail({ certification: certificationFixture({ origin: "DEMO" }) });
+
+    await renderTrackPage("demo-cloud-practitioner");
+
     expect(screen.getByText("Demo")).toBeVisible();
   });
 
-  it("renders the read-only demo objectives", async () => {
-    await renderTrackPage("hsk-chinese-demo-track");
+  it("renders the objective hierarchy", async () => {
+    stubDetail();
 
-    expect(screen.getByText("Language examination")).toBeVisible();
-    expect(screen.getByText("Everyday vocabulary")).toBeVisible();
-    expect(screen.getByText("Demo unit 1")).toBeVisible();
-    expect(screen.queryByRole("button")).toBeNull();
+    await renderTrackPage("demo-cloud-practitioner");
+
+    const child = screen.getByText("Demo unit 1");
+    const parentItem = screen.getByText("Everyday vocabulary").closest("li");
+
+    expect(parentItem).not.toBeNull();
+    expect(parentItem?.contains(child)).toBe(true);
+  });
+
+  it("offers editing, archiving, and objective creation", async () => {
+    stubDetail();
+
+    await renderTrackPage("demo-cloud-practitioner");
+
+    expect(screen.getByRole("link", { name: "Edit track" })).toHaveAttribute(
+      "href",
+      "/study-tracks/demo-cloud-practitioner/edit",
+    );
+    expect(
+      screen.getByRole("button", { name: "Archive track" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "Add root objective" }),
+    ).toHaveAttribute(
+      "href",
+      "/study-tracks/demo-cloud-practitioner/objectives/new",
+    );
+  });
+
+  it("offers restore instead of archive for an archived track", async () => {
+    stubDetail({
+      certification: certificationFixture({ status: "ARCHIVED" }),
+    });
+
+    await renderTrackPage("demo-cloud-practitioner");
+
+    expect(screen.getByText("Archived")).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Restore track" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Archive track" })).toBeNull();
   });
 
   it("offers a working return link to the dashboard", async () => {
-    await renderTrackPage("hsk-chinese-demo-track");
+    stubDetail();
+
+    await renderTrackPage("demo-cloud-practitioner");
 
     expect(
       screen.getByRole("link", { name: "Back to study tracks" }),
@@ -47,6 +159,8 @@ describe("Study-track detail page", () => {
   });
 
   it("triggers the not-found path for an unknown slug", async () => {
+    findDetailBySlug.mockResolvedValue(null);
+
     await expect(
       StudyTrackPage({ params: Promise.resolve({ slug: "no-such-track" }) }),
     ).rejects.toBeInstanceOf(NotFoundSignal);

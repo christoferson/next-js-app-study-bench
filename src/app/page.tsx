@@ -1,8 +1,28 @@
-import { getStudyCatalog } from "@/modules/study-catalog/composition";
-import { StudyTrackCard } from "@/modules/study-catalog/ui/study-track-card";
+import Link from "next/link";
+import { getCertificationFacade } from "@/modules/certifications/composition";
+import {
+  ArchivedCertificationCard,
+  CertificationCard,
+} from "@/modules/certifications/ui/certification-card";
 
-export default async function HomePage() {
-  const tracks = await getStudyCatalog().listTracks();
+interface HomePageProps {
+  readonly searchParams?: Promise<
+    Record<string, string | string[] | undefined>
+  >;
+}
+
+/**
+ * Study-track dashboard.
+ *
+ * Archived tracks are hidden by default and revealed through `?archived=1`, so
+ * the visible list is the owner's active study plan.
+ */
+export default async function HomePage({ searchParams }: HomePageProps) {
+  const resolved = (await searchParams) ?? {};
+  const includeArchived = resolved.archived === "1";
+  const view = await getCertificationFacade().listCertifications({
+    includeArchived,
+  });
 
   return (
     <main className="page">
@@ -18,17 +38,64 @@ export default async function HomePage() {
       <section aria-labelledby="study-tracks-heading" className="section">
         <div className="section-heading">
           <h2 id="study-tracks-heading">Study tracks</h2>
-          <p className="section-note">
-            The tracks below are demo content included with this early build.
-            Nothing here is saved yet, and no progress has been recorded.
-          </p>
+          <div className="section-actions">
+            <Link className="button" href="/study-tracks/new">
+              New study track
+            </Link>
+            {view.archivedCount > 0 ? (
+              <Link
+                className="button-quiet"
+                href={includeArchived ? "/" : "/?archived=1"}
+              >
+                {includeArchived
+                  ? "Hide archived tracks"
+                  : `Show archived tracks (${view.archivedCount})`}
+              </Link>
+            ) : null}
+          </div>
         </div>
-        <ul className="card-list">
-          {tracks.map((track) => (
-            <StudyTrackCard key={track.id} track={track} />
-          ))}
-        </ul>
+
+        {view.active.length === 0 ? (
+          <p className="empty-state">
+            No study tracks yet. Create your first track to start building a
+            question bank, or run <code>npm run seed</code> to load the demo
+            tracks.
+          </p>
+        ) : (
+          <ul className="card-list">
+            {view.active.map((certification) => (
+              <CertificationCard
+                key={certification.id}
+                certification={certification}
+              />
+            ))}
+          </ul>
+        )}
       </section>
+
+      {includeArchived ? (
+        <section aria-labelledby="archived-tracks-heading" className="section">
+          <div className="section-heading">
+            <h2 id="archived-tracks-heading">Archived tracks</h2>
+            <p className="section-note">
+              Archived tracks stay out of the active list until you restore
+              them. Nothing is deleted.
+            </p>
+          </div>
+          {view.archived.length === 0 ? (
+            <p className="empty-state">No archived tracks.</p>
+          ) : (
+            <ul className="card-list">
+              {view.archived.map((certification) => (
+                <ArchivedCertificationCard
+                  key={certification.id}
+                  certification={certification}
+                />
+              ))}
+            </ul>
+          )}
+        </section>
+      ) : null}
     </main>
   );
 }

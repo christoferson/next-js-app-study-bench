@@ -1,0 +1,235 @@
+import type { IsoTimestamp } from "@/platform/clock";
+import type { CertificationId, LifecycleStatus } from "./certification";
+import {
+  CyclicObjectiveParentError,
+  InvalidParentObjectiveError,
+  ObjectiveNotFoundError,
+} from "./errors";
+
+/**
+ * Objective hierarchy domain model, including the pure tree rules that guard
+ * the hierarchy (`SPEC.md` section 6.2).
+ */
+
+export type ObjectiveId = string;
+
+/** Source types from `SPEC.md` section 6.2. */
+export type ObjectiveSourceType =
+  | "OFFICIAL"
+  | "OFFICIAL_SYLLABUS"
+  | "USER_DEFINED"
+  | "AI_PROPOSED"
+  | "IMPORTED";
+
+export const OBJECTIVE_SOURCE_TYPES: readonly ObjectiveSourceType[] = [
+  "OFFICIAL",
+  "OFFICIAL_SYLLABUS",
+  "USER_DEFINED",
+  "AI_PROPOSED",
+  "IMPORTED",
+];
+
+/**
+ * Source types the owner may choose in D2.
+ *
+ * `AI_PROPOSED` and `IMPORTED` are set by the generation and import milestones,
+ * never by a manual form, so offering them would let the owner mislabel
+ * provenance.
+ */
+export const SELECTABLE_OBJECTIVE_SOURCE_TYPES: readonly ObjectiveSourceType[] =
+  ["USER_DEFINED", "OFFICIAL", "OFFICIAL_SYLLABUS"];
+
+export interface Objective {
+  readonly id: ObjectiveId;
+  readonly certificationId: CertificationId;
+  readonly parentObjectiveId: ObjectiveId | null;
+  readonly code: string | null;
+  readonly title: string;
+  readonly description: string | null;
+  /** Percentage share of the examination, when the owner records one. */
+  readonly weight: number | null;
+  readonly sourceType: ObjectiveSourceType;
+  /** Rank among siblings. Contiguous from 1 after any repository write. */
+  readonly displayOrder: number;
+  readonly status: LifecycleStatus;
+  readonly createdAt: IsoTimestamp;
+  readonly updatedAt: IsoTimestamp;
+}
+
+/** An objective plus its descendants, ready for rendering as a nested list. */
+export interface ObjectiveTreeNode {
+  readonly objective: Objective;
+  readonly depth: number;
+  readonly children: readonly ObjectiveTreeNode[];
+}
+
+export function describeObjectiveSourceType(
+  sourceType: ObjectiveSourceType,
+): string {
+  switch (sourceType) {
+    case "OFFICIAL":
+      return "Official";
+    case "OFFICIAL_SYLLABUS":
+      return "Official syllabus";
+    case "USER_DEFINED":
+      return "User defined";
+    case "AI_PROPOSED":
+      return "AI proposed";
+    case "IMPORTED":
+      return "Imported";
+  }
+}
+
+/** AI-proposed objectives must never be presented as official. */
+export function isOfficialSource(sourceType: ObjectiveSourceType): boolean {
+  return sourceType === "OFFICIAL" || sourceType === "OFFICIAL_SYLLABUS";
+}
+
+/**
+ * Builds the objective forest from a flat list.
+ *
+ * Siblings keep repository order (`displayOrder`, then `id` as a stable
+ * tiebreaker). Objectives whose parent is absent from the input — for example
+ * an active child under a filtered-out archived parent — are surfaced at the
+ * root so nothing silently disappears from the tree.
+ */
+export function buildObjectiveTree(
+  objectives: readonly Objective[],
+): readonly ObjectiveTreeNode[] {
+  const present = new Set(objectives.map((objective) => objective.id));
+  const childrenByParent = new Map<ObjectiveId | null, Objective[]>();
+
+  for (const objective of sortSiblings(objectives)) {
+    const parentId =
+      objective.parentObjectiveId !== null &&
+      present.has(objective.parentObjectiveId)
+        ? objective.parentObjectiveId
+        : null;
+    const siblings = childrenByParent.get(parentId) ?? [];
+    siblings.push(objective);
+    childrenByParent.set(parentId, siblings);
+  }
+
+  const build = (
+    parentId: ObjectiveId | null,
+    depth: number,
+  ): readonly ObjectiveTreeNode[] =>
+    (childrenByParent.get(parentId) ?? []).map((objective) => ({
+      objective,
+      depth,
+      children: build(objective.id, depth + 1),
+    }));
+
+  return build(null, 0);
+}
+
+function sortSiblings(objectives: readonly Objective[]): readonly Objective[] {
+  return [...objectives].sort(
+    (left, right) =>
+      left.displayOrder - right.displayOrder || left.id.localeCompare(right.id),
+  );
+}
+
+/** Every descendant of `objectiveId`, excluding the objective itself. */
+export function collectDescendantIds(
+  objectives: readonly Objective[],
+  objectiveId: ObjectiveId,
+): ReadonlySet<ObjectiveId> {
+  const childrenByParent = new Map<ObjectiveId, ObjectiveId[]>();
+
+  for (const objective of objectives) {
+    if (objective.parentObjectiveId === null) {
+      continue;
+    }
+    const siblings = childrenByParent.get(objective.parentObjectiveId) ?? [];
+    siblings.push(objective.id);
+    childrenByParent.set(objective.parentObjectiveId, siblings);
+  }
+
+  const descendants = new Set<ObjectiveId>();
+  const pending = [...(childrenByParent.get(objectiveId) ?? [])];
+
+  while (pending.length > 0) {
+    const current = pending.pop();
+    if (current === undefined || descendants.has(current)) {
+      continue;
+    }
+    descendants.add(current);
+    pending.push(...(childrenByParent.get(current) ?? []));
+  }
+
+  return descendants;
+}
+
+/**
+ * Asserts that `parentObjectiveId` is a legal parent for a new objective.
+ *
+ * A parent must exist within the same certification. `siblings` is the full
+ * objective set of that certification, archived rows included, because an
+ * archived parent still constrains the hierarchy.
+ */
+export function assertValidNewParent(
+  objectives: readonly Objective[],
+  parentObjectiveId: ObjectiveId | null,
+): void {
+  if (parentObjectiveId === null) {
+    return;
+  }
+
+  const parentExists = objectives.some(
+    (objective) => objective.id === parentObjectiveId,
+  );
+
+  if (!parentExists) {
+    throw new InvalidParentObjectiveError(parentObjectiveId);
+  }
+}
+
+/**
+ * Asserts that moving `objectiveId` under `parentObjectiveId` is legal.
+ *
+ * Rejects a missing objective, a parent outside the certification, self-parenting,
+ * and any move that would place an objective under one of its own descendants.
+ */
+export function assertValidReparent(
+  objectives: readonly Objective[],
+  objectiveId: ObjectiveId,
+  parentObjectiveId: ObjectiveId | null,
+): void {
+  const objective = objectives.find((entry) => entry.id === objectiveId);
+
+  if (objective === undefined) {
+    throw new ObjectiveNotFoundError(objectiveId);
+  }
+
+  if (parentObjectiveId === null) {
+    return;
+  }
+
+  if (parentObjectiveId === objectiveId) {
+    throw new CyclicObjectiveParentError(objectiveId, parentObjectiveId);
+  }
+
+  assertValidNewParent(objectives, parentObjectiveId);
+
+  if (collectDescendantIds(objectives, objectiveId).has(parentObjectiveId)) {
+    throw new CyclicObjectiveParentError(objectiveId, parentObjectiveId);
+  }
+}
+
+/**
+ * Candidate parents for an objective being edited or moved.
+ *
+ * Excludes the objective itself and its descendants, which are exactly the
+ * choices that `assertValidReparent` would reject as cyclic.
+ */
+export function listReparentCandidates(
+  objectives: readonly Objective[],
+  objectiveId: ObjectiveId,
+): readonly Objective[] {
+  const excluded = collectDescendantIds(objectives, objectiveId);
+
+  return objectives.filter(
+    (objective) => objective.id !== objectiveId && !excluded.has(objective.id),
+  );
+}

@@ -1,9 +1,13 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getStudyCatalog } from "@/modules/study-catalog/composition";
-import { describeStudyType } from "@/modules/study-catalog/domain/study-track";
-import { DemoBadge } from "@/modules/study-catalog/ui/demo-badge";
-import { StudyObjectiveList } from "@/modules/study-catalog/ui/study-objective-list";
+import { getCertificationFacade } from "@/modules/certifications/composition";
+import {
+  archiveCertificationAction,
+  restoreCertificationAction,
+} from "@/modules/certifications/ui/actions";
+import { CertificationMeta } from "@/modules/certifications/ui/certification-meta";
+import { ObjectiveTree } from "@/modules/certifications/ui/objective-tree";
+import { OriginBadge } from "@/modules/certifications/ui/origin-badge";
 
 interface StudyTrackPageProps {
   readonly params: Promise<{ readonly slug: string }>;
@@ -11,11 +15,14 @@ interface StudyTrackPageProps {
 
 export default async function StudyTrackPage({ params }: StudyTrackPageProps) {
   const { slug } = await params;
-  const track = await getStudyCatalog().findTrackBySlug(slug);
+  const view = await getCertificationFacade().findDetailBySlug(slug);
 
-  if (track === null) {
+  if (view === null) {
     notFound();
   }
+
+  const { certification } = view;
+  const isArchived = certification.status === "ARCHIVED";
 
   return (
     <main className="page">
@@ -25,31 +32,62 @@ export default async function StudyTrackPage({ params }: StudyTrackPageProps) {
 
       <header className="page-header">
         <div className="card-heading">
-          <h1>{track.name}</h1>
-          <DemoBadge origin={track.origin} />
+          <h1>{certification.name}</h1>
+          {isArchived ? <span className="badge">Archived</span> : null}
+          <OriginBadge origin={certification.origin} />
         </div>
-        <dl className="meta">
-          <div className="meta-item">
-            <dt>Provider</dt>
-            <dd>{track.provider}</dd>
-          </div>
-          <div className="meta-item">
-            <dt>Study type</dt>
-            <dd>{describeStudyType(track.studyType)}</dd>
-          </div>
-        </dl>
-        <p className="lede">{track.shortDescription}</p>
+        <CertificationMeta certification={certification} detailed />
+        {certification.description.length > 0 ? (
+          <p className="lede">{certification.description}</p>
+        ) : null}
+        <div className="section-actions">
+          <Link
+            className="button-quiet"
+            href={`/study-tracks/${certification.slug}/edit`}
+          >
+            Edit track
+          </Link>
+          <form
+            action={
+              isArchived
+                ? restoreCertificationAction
+                : archiveCertificationAction
+            }
+            className="inline-form"
+          >
+            <input
+              type="hidden"
+              name="certificationId"
+              value={certification.id}
+              readOnly
+            />
+            <button type="submit" className="button-quiet">
+              {isArchived ? "Restore track" : "Archive track"}
+            </button>
+          </form>
+        </div>
       </header>
 
       <section aria-labelledby="objectives-heading" className="section">
         <div className="section-heading">
           <h2 id="objectives-heading">Objectives</h2>
           <p className="section-note">
-            Read-only demo objectives. They outline study focus only and are not
-            official examination content.
+            {view.activeObjectiveCount} active
+            {view.archivedObjectiveCount > 0
+              ? `, ${view.archivedObjectiveCount} archived`
+              : ""}
+            . Objectives outline study focus only.
           </p>
+          <div className="section-actions">
+            <Link
+              className="button"
+              href={`/study-tracks/${certification.slug}/objectives/new`}
+            >
+              Add root objective
+            </Link>
+          </div>
         </div>
-        <StudyObjectiveList objectives={track.objectives} />
+        <ObjectiveTree slug={certification.slug} nodes={view.objectiveTree} />
       </section>
     </main>
   );

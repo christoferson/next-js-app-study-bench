@@ -8,6 +8,11 @@
 # testing
 /coverage
 
+# local SQLite database (D2) — local data is never committed
+/data/*.db
+/data/*.db-shm
+/data/*.db-wal
+
 # next.js
 /.next/
 /out/

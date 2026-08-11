@@ -11,6 +11,7 @@
   --color-badge-bg: #eceff3;
   --color-badge-text: #33414f;
   --color-focus: #0b6ea8;
+  --color-error: #a4131a;
 
   --space-1: 0.25rem;
   --space-2: 0.5rem;
@@ -232,9 +233,9 @@ a:hover {
   font-size: 0.9375rem;
 }
 
-/* Objectives */
+/* Objective tree */
 
-.objective-list {
+.objective-tree {
   display: grid;
   gap: var(--space-3);
   margin: 0;
@@ -242,14 +243,39 @@ a:hover {
   list-style: none;
 }
 
+/* Nested levels are indented and marked with a rule so depth is visible
+   without relying on colour. The indent stays small enough for a 360px
+   viewport. */
+.objective-tree .objective-tree {
+  margin-top: var(--space-3);
+  padding-left: var(--space-3);
+  border-left: 2px solid var(--color-border);
+}
+
+.objective-node {
+  display: block;
+}
+
 .objective {
   display: flex;
   flex-direction: column;
-  gap: var(--space-1);
+  gap: var(--space-2);
   padding: var(--space-4);
   background-color: var(--color-panel);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
+}
+
+.objective-archived {
+  background-color: var(--color-surface);
+  border-style: dashed;
+}
+
+.objective-labels {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
 }
 
 .objective-reference {
@@ -264,10 +290,181 @@ a:hover {
   font-weight: 600;
 }
 
+.objective-weight {
+  font-size: 0.875rem;
+  color: var(--color-text-muted);
+}
+
 .objective-focus {
   max-width: var(--measure);
   font-size: 0.9375rem;
   color: var(--color-text-muted);
+}
+
+.objective-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+}
+
+/* Actions */
+
+.section-actions,
+.inline-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+}
+
+/* Touch targets stay at least 2.75rem tall on both buttons and links. */
+.button,
+.button-quiet {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 2.75rem;
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-sm);
+  font-family: inherit;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.button {
+  background-color: var(--color-accent);
+  border: 1px solid var(--color-accent);
+  color: #ffffff;
+}
+
+.button:hover:not(:disabled) {
+  background-color: var(--color-focus);
+  border-color: var(--color-focus);
+  color: #ffffff;
+}
+
+.button-quiet {
+  background-color: var(--color-panel);
+  border: 1px solid var(--color-border);
+  color: var(--color-accent);
+}
+
+.button-quiet:hover:not(:disabled) {
+  border-color: var(--color-focus);
+  color: var(--color-focus);
+}
+
+.button:disabled,
+.button-quiet:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.empty-state {
+  padding: var(--space-5) var(--space-4);
+  background-color: var(--color-panel);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-md);
+  color: var(--color-text-muted);
+  max-width: var(--measure);
+}
+
+.card-archived {
+  background-color: var(--color-surface);
+  border-style: dashed;
+}
+
+/* Forms */
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  max-width: 40rem;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.field label {
+  font-weight: 600;
+}
+
+.field-required {
+  font-weight: 400;
+  font-size: 0.875rem;
+  color: var(--color-text-muted);
+}
+
+.field-hint {
+  font-size: 0.875rem;
+  color: var(--color-text-muted);
+  max-width: var(--measure);
+}
+
+.field input,
+.field select,
+.field textarea {
+  width: 100%;
+  min-height: 2.75rem;
+  padding: var(--space-2) var(--space-3);
+  background-color: var(--color-panel);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+  font-family: inherit;
+  font-size: 1rem;
+}
+
+.field textarea {
+  min-height: 6rem;
+  resize: vertical;
+}
+
+.field input[aria-invalid="true"],
+.field select[aria-invalid="true"],
+.field textarea[aria-invalid="true"] {
+  border-color: var(--color-error);
+  border-width: 2px;
+}
+
+.input-narrow {
+  max-width: 10rem;
+}
+
+.field-errors {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  padding-left: var(--space-4);
+  color: var(--color-error);
+  font-size: 0.9375rem;
+  font-weight: 600;
+}
+
+.form-row {
+  display: grid;
+  gap: var(--space-5);
+}
+
+.form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+code {
+  padding: 0.0625rem var(--space-1);
+  background-color: var(--color-badge-bg);
+  border-radius: var(--radius-sm);
+  font-size: 0.9375em;
 }
 
 @media (min-width: 40rem) {
@@ -277,5 +474,13 @@ a:hover {
 
   h1 {
     font-size: 2rem;
+  }
+
+  .form-row {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .objective-tree .objective-tree {
+    padding-left: var(--space-5);
   }
 }

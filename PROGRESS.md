@@ -2,11 +2,11 @@
 
 ## Current milestone
 
-D4 — Flashcards and Review Scheduling
+D5 — Quick Study Sessions and Progress
 
 ## Status
 
-Completed on 2026-08-11. Awaiting explicit authorization for D5.
+Completed on 2026-08-11. Awaiting explicit authorization for D6.
 
 ## Completed milestones
 
@@ -14,6 +14,7 @@ Completed on 2026-08-11. Awaiting explicit authorization for D5.
 - D2 — Local Persistence and Certification Management (2026-08-11)
 - D3 — Manual Question Bank (2026-08-11)
 - D4 — Flashcards and Review Scheduling (2026-08-11)
+- D5 — Quick Study Sessions and Progress (2026-08-11)
 
 ## In progress
 
@@ -21,7 +22,8 @@ Completed on 2026-08-11. Awaiting explicit authorization for D5.
 
 ## Planned milestones
 
-- D5 — Quick Study Sessions and Progress (proposed next, not authorized)
+- D6 — Bedrock AI Foundation and Raw-Knowledge Generation (proposed next, not
+  authorized)
 - D4 — Flashcards and Review Scheduling
 - D5 — Quick Study Sessions and Progress
 - D6 — Bedrock AI Foundation and Raw-Knowledge Generation
@@ -176,13 +178,51 @@ Completed on 2026-08-11. Awaiting explicit authorization for D5.
   excluded. The review screen reveals via minimal client state; a rating
   posted with a stale revision id is attributed to the card's current
   revision (last-write-wins, documented in `resolveReviewedRevision`).
+- 2026-08-11 (D5): New `src/modules/study-sessions/` module. Sessions are
+  composed deterministically by a pure-domain composer strategy following
+  the DOMAIN-RULES 2.2 priority order (overdue cards, confident-incorrect,
+  other incorrect, weak objectives, unseen objectives, never-attempted,
+  retention), with mode and track filtering, dedup, exclusion of
+  draft/retired/archived/disputed content, and frozen revision ids at
+  composition. Candidate queries live in the question-bank and flashcards
+  repositories (`findStudyCandidates` / `findDueCandidates`, bounded).
+- 2026-08-11 (D5): Migration `0004` adds STRICT tables `study_sessions`,
+  `session_certifications`, `study_session_items`, `question_attempts`
+  (RESTRICT FKs to questions, revisions, and flashcards — attempts and
+  session items are protected history).
+- 2026-08-11 (D5): DIAGNOSTIC is a session mode (not a separate flag).
+  Diagnostics are offered only when enough active questions exist; skipping
+  leaves objectives UNSEEN with no zero scores. Mistake-review availability
+  and composition share one predicate so the mode can never be offered and
+  then fail.
+- 2026-08-11 (D5): Choice questions are auto-graded
+  (evaluationMode DETERMINISTIC; MULTIPLE_RESPONSE is exact set equality, no
+  partial credit). SHORT_ANSWER is self-assessed after reveal
+  (evaluationMode SELF_ASSESSED). Confidence (GUESS/UNCERTAIN/FAIRLY_SURE/
+  CONFIDENT) is required on every question answer.
+- 2026-08-11 (D5): Every completed item persists immediately in one
+  transaction (attempt + item completion; card rating + schedule update +
+  item completion). Sessions resume at the same frozen item after
+  interruption; editing a question mid-session does not change the session.
+  One session in progress at a time; starting a new one abandons the old.
+- 2026-08-11 (D5): The question dependency checker is now a composite:
+  derived flashcards (D4) plus attempts and study-session history (D5) block
+  hard deletion; retirement stays available.
+- 2026-08-11 (D5): `/progress` renders the SPEC 6.8 evidence-based measures
+  (coverage, accuracy by track/objective/type, recent mistakes, due counts,
+  unseen objectives, session history, confidence calibration, bank counts)
+  and no pass probability. The route is forced dynamic so it is not
+  prerendered against the build machine's database.
 
 ## Deviations
 
-- None from `SPEC.md` D2/D3/D4 requirements. D1 structural deviation (omitted
+- None from `SPEC.md` D2–D5 requirements. D1 structural deviation (omitted
   empty directories) remains permitted by SPEC 19.4. "View attempt history"
-  from SPEC 6.3 waits for D5 (attempts do not exist before then). Flashcard
-  hard deletion is not in D4 scope (SPEC 22.2 lists none) and was not added.
+  from SPEC 6.3 was delivered in D5 with attempts. Flashcard hard deletion is
+  not in D4 scope (SPEC 22.2 lists none) and was not added.
+- `npm run test:integration` (preferred name in CLAUDE.md section 10) does
+  not exist yet; no milestone has introduced a distinct integration suite.
+  Repository behavior is covered by contract tests inside `npm test`.
 
 ## Known limitations
 
@@ -198,29 +238,34 @@ Completed on 2026-08-11. Awaiting explicit authorization for D5.
 - `better-sqlite3` native-module compilation on platforms without a prebuilt
   binary was not exercised.
 
-## Validation results (2026-08-11, after D4)
+## Validation results (2026-08-11, after D5)
 
 - `npm run format:check` — passed
 - `npm run lint` — passed
 - `npm run type-check` — passed
-- `npm test` — passed (32 files, 556 tests, including repository contract
-  suites for certifications, questions, and flashcards against SQLite on
-  fresh in-memory migrated databases, and DB-independent scheduling unit
-  tests with a fixed clock)
-- `npm run build` — passed (20 routes)
-- Manual (D4): all five card types created and activated; ratings verified
-  against the exact SPEC 6.5 intervals (new card AGAIN 10 min / HARD 1 d /
-  GOOD 3 d / EASY 7 d; existing card GOOD 4320→8640 min, HARD 8640→10368,
-  AGAIN back to 10 min with lapse increment); editing a reviewed card kept
-  review history and revision 1 intact; retiring removed a card from the due
-  queue and a forged rating on it was refused; question→card conversion
-  carried objective mappings and blocks hard deletion of the source question
-  with a clear message; cross-track card addressing 404s.
-- Manual (regression): D1–D3 flows unchanged (`/health`, dashboard, objective
-  tree, question bank, archive controls); review and flashcard-bank pages
-  render meaningful empty states on a database with no cards.
+- `npm test` — passed (46 files, 874 tests: pure composer/grading unit
+  tests, repository contract suites for all four modules against fresh
+  in-memory migrated SQLite, facade transactionality tests, and component
+  tests)
+- `npm run build` — passed (24 routes; `/progress` forced dynamic)
+- Manual (D5, scratch database): a 12-item mixed session composed with
+  overdue cards first per the priority order; answers with confidence and
+  card ratings persisted item-by-item; interruption resumed at the same
+  frozen item; early finish left remaining items pending; the summary and
+  `/progress` rendered coverage, accuracy, calibration, recent mistakes, and
+  unseen objectives with no pass-probability language; mistake review
+  composed the just-missed question and is disabled (with a reason) when no
+  studiable mistake exists; an answered question became undeletable
+  (attempts + session history reported as blockers) while retire kept
+  working; a mid-session question edit did not alter the in-progress
+  session; unknown session id 404s.
+- Manual (regression): D1–D4 flows unchanged (`/health`, dashboard, tracks,
+  objectives, question bank, flashcards, review).
+- Three defects were found and fixed during D5 verification itself: empty
+  duration parsed as 0 seconds, `/progress` prerendered statically at build
+  time, and mistake review offerable when the only mistake was retired.
 
 ## Next proposed milestone
 
-D5 — Quick Study Sessions and Progress. Not authorized; waiting for explicit
-user authorization.
+D6 — Bedrock AI Foundation and Raw-Knowledge Generation. Not authorized;
+waiting for explicit user authorization.

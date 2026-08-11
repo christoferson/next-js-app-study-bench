@@ -249,4 +249,120 @@ CREATE TABLE review_schedules (
 CREATE INDEX review_schedules_due_idx ON review_schedules (due_at);
 `,
   },
+  {
+    id: "0004",
+    description:
+      "study_sessions, session_certifications, study_session_items, question_attempts",
+    sql: `
+CREATE TABLE study_sessions (
+  id TEXT PRIMARY KEY,
+  -- The requested mode, kept for the whole life of the session so history says
+  -- what kind of session it was. DIAGNOSTIC is a mode rather than a flag: a
+  -- diagnostic differs only in how the composer selects and how the summary
+  -- reads, and one enum keeps "is this session diagnostic" a single question.
+  mode TEXT NOT NULL
+    CHECK (mode IN ('SINGLE_TRACK', 'MIXED_TRACKS', 'QUESTIONS_ONLY',
+      'FLASHCARDS_ONLY', 'MISTAKE_REVIEW', 'DIAGNOSTIC')),
+  status TEXT NOT NULL
+    CHECK (status IN ('IN_PROGRESS', 'COMPLETED', 'ABANDONED')),
+  -- An estimate, never a deadline (SPEC 6.6: "estimate duration rather than
+  -- enforce a hard timer"). It sizes the composed item list and nothing else.
+  target_minutes INTEGER NOT NULL CHECK (target_minutes BETWEEN 5 AND 240),
+  created_at TEXT NOT NULL,
+  completed_at TEXT
+) STRICT;
+
+CREATE INDEX study_sessions_status_idx
+  ON study_sessions (status, created_at);
+
+-- Track selection is a join table rather than a JSON column because a mixed
+-- session names several tracks and progress reporting groups by track: a join
+-- lets the query filter and group in SQL instead of parsing JSON per row.
+CREATE TABLE session_certifications (
+  session_id TEXT NOT NULL REFERENCES study_sessions (id) ON DELETE CASCADE,
+  certification_id TEXT NOT NULL
+    REFERENCES certifications (id) ON DELETE RESTRICT,
+  PRIMARY KEY (session_id, certification_id)
+) STRICT;
+
+CREATE INDEX session_certifications_track_idx
+  ON session_certifications (certification_id, session_id);
+
+CREATE TABLE study_session_items (
+  id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL REFERENCES study_sessions (id) ON DELETE CASCADE,
+  -- 1-based position in the composed order, so "item 3 of 8" needs no counting.
+  position INTEGER NOT NULL CHECK (position >= 1),
+  item_type TEXT NOT NULL CHECK (item_type IN ('QUESTION', 'FLASHCARD')),
+  -- Frozen references (spec/DOMAIN-RULES.md 2.3): the revision selected when the
+  -- session was created, so a later edit cannot change an in-progress session.
+  -- RESTRICT on the revisions for the same reason a review record restricts one:
+  -- the row would otherwise stop explaining what was studied.
+  question_id TEXT REFERENCES questions (id) ON DELETE RESTRICT,
+  question_revision_id TEXT
+    REFERENCES question_revisions (id) ON DELETE RESTRICT,
+  flashcard_id TEXT REFERENCES flashcards (id) ON DELETE RESTRICT,
+  flashcard_revision_id TEXT
+    REFERENCES flashcard_revisions (id) ON DELETE RESTRICT,
+  status TEXT NOT NULL CHECK (status IN ('PENDING', 'COMPLETED', 'SKIPPED')),
+  completed_at TEXT,
+  -- Exactly one content reference per item, matching its type. Enforced in SQL
+  -- as well as in the domain so a half-populated item cannot be committed.
+  CHECK (
+    (item_type = 'QUESTION'
+       AND question_id IS NOT NULL AND question_revision_id IS NOT NULL
+       AND flashcard_id IS NULL AND flashcard_revision_id IS NULL)
+    OR
+    (item_type = 'FLASHCARD'
+       AND flashcard_id IS NOT NULL AND flashcard_revision_id IS NOT NULL
+       AND question_id IS NULL AND question_revision_id IS NULL)
+  ),
+  -- No duplicate positions, which is also what makes the composed order stable.
+  UNIQUE (session_id, position)
+) STRICT;
+
+CREATE INDEX study_session_items_session_idx
+  ON study_session_items (session_id, position);
+
+CREATE INDEX study_session_items_question_idx
+  ON study_session_items (question_id);
+
+CREATE INDEX study_session_items_flashcard_idx
+  ON study_session_items (flashcard_id);
+
+CREATE TABLE question_attempts (
+  id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL REFERENCES study_sessions (id) ON DELETE CASCADE,
+  -- SPEC 10.1: an attempt must reference the question and the exact revision.
+  -- RESTRICT on both, so answered content can be retired but never deleted out
+  -- from under its own history (spec/DOMAIN-RULES.md 1.3).
+  question_id TEXT NOT NULL REFERENCES questions (id) ON DELETE RESTRICT,
+  question_revision_id TEXT NOT NULL
+    REFERENCES question_revisions (id) ON DELETE RESTRICT,
+  -- Validated JSON in the shape the answered question type requires, written
+  -- only after the domain has checked it and re-validated with zod on read.
+  submitted_answer TEXT NOT NULL,
+  -- 0 or 1: STRICT SQLite has no boolean type.
+  is_correct INTEGER NOT NULL CHECK (is_correct IN (0, 1)),
+  confidence TEXT NOT NULL
+    CHECK (confidence IN ('GUESS', 'UNCERTAIN', 'FAIRLY_SURE', 'CONFIDENT')),
+  -- Nullable: measured from the render, so it is absent when the page was
+  -- restored from history or the browser sent no timing.
+  duration_seconds INTEGER
+    CHECK (duration_seconds IS NULL OR duration_seconds >= 0),
+  attempted_at TEXT NOT NULL,
+  evaluation_mode TEXT NOT NULL
+    CHECK (evaluation_mode IN ('DETERMINISTIC', 'SELF_ASSESSED')),
+  -- The feedback shown at the time. Null in D5: feedback is derived from the
+  -- frozen revision, and there is no AI explanation to snapshot until D7.
+  feedback_snapshot TEXT
+) STRICT;
+
+CREATE INDEX question_attempts_question_idx
+  ON question_attempts (question_id, attempted_at);
+
+CREATE INDEX question_attempts_session_idx
+  ON question_attempts (session_id, attempted_at);
+`,
+  },
 ];

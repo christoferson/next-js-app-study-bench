@@ -20,6 +20,8 @@ import { QuestionPreview } from "@/modules/question-bank/ui/question-preview";
 import { RevisionHistory } from "@/modules/question-bank/ui/revision-history";
 import { convertQuestionAction } from "@/modules/flashcards/ui/actions";
 import { ConvertQuestionForm } from "@/modules/flashcards/ui/convert-question-form";
+import { getStudyFacade } from "@/modules/study-sessions/composition";
+import { AttemptHistory } from "@/modules/study-sessions/ui/attempt-history";
 
 interface QuestionDetailPageProps {
   readonly params: Promise<{
@@ -46,6 +48,9 @@ export default async function QuestionDetailPage({
 
   const { certification, question, currentRevision } = view;
   const bankPath = `/study-tracks/${certification.slug}/questions`;
+  // Bounded to the most recent attempts: the history is a record to inspect, not a
+  // log to page through (`spec/ARCHITECTURE.md` section 8).
+  const attempts = await getStudyFacade().listAttemptsForQuestion(question.id);
 
   return (
     <main className="page">
@@ -219,6 +224,18 @@ export default async function QuestionDetailPage({
             Activate this question to make a flashcard from it.
           </p>
         )}
+      </section>
+
+      <section aria-labelledby="attempts-heading" className="section">
+        <div className="section-heading">
+          <h2 id="attempts-heading">Attempt history</h2>
+          <p className="section-note">
+            Every answer you have recorded for this question, newest first. Each
+            names the revision it was answered against, so editing the question
+            does not rewrite what you answered.
+          </p>
+        </div>
+        <AttemptHistory attempts={attempts} revisions={view.revisions} />
       </section>
 
       <section aria-labelledby="manage-heading" className="section">

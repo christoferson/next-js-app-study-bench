@@ -783,6 +783,99 @@ a:hover {
   white-space: normal;
 }
 
+/* Study sessions */
+
+/* The answer controls sit in one column with generous spacing: a study screen is
+   used one-handed on a phone, so the next tap should never need aiming. */
+.study-answer {
+  gap: var(--space-5);
+}
+
+/* A whole answer row is the target, not just the tick, and it stays above the
+   2.75rem minimum with two lines of text inside it. */
+.study-choice {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  min-height: 2.75rem;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background-color: var(--color-surface);
+  font-size: 1rem;
+  font-weight: 400;
+  color: var(--color-text);
+  cursor: pointer;
+}
+
+.study-choice > span {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+/* An unavailable mode is dimmed and says why next to it; the reason carries the
+   meaning, and the dimming only reinforces it. */
+.study-choice-unavailable {
+  color: var(--color-text-muted);
+  cursor: not-allowed;
+}
+
+.confidence-word {
+  font-weight: 600;
+}
+
+.confidence-hint {
+  font-size: 0.8125rem;
+  color: var(--color-text-muted);
+}
+
+.study-self-grade {
+  display: grid;
+  gap: var(--space-4);
+}
+
+/* Two verdicts, stacked at 360px so neither is a mis-tap of the other. */
+.study-self-grade-buttons {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.study-controls {
+  display: grid;
+  gap: var(--space-2);
+  margin-top: var(--space-5);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--color-border);
+}
+
+.study-feedback {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  background-color: var(--color-panel);
+}
+
+.study-summary-figures {
+  gap: var(--space-3);
+}
+
+/* Progress */
+
+/* Objective rows are indented by nesting depth, capped so a deep tree still fits a
+   360-pixel width. */
+.objective-progress-list .card[data-depth="1"] {
+  margin-inline-start: var(--space-3);
+}
+
+.objective-progress-list .card[data-depth="2"] {
+  margin-inline-start: var(--space-5);
+}
+
+.objective-progress-list .card[data-depth="3"] {
+  margin-inline-start: var(--space-6);
+}
+
 code {
   padding: 0.0625rem var(--space-1);
   background-color: var(--color-badge-bg);
@@ -833,5 +926,10 @@ code {
 
   .card-study-prompt {
     font-size: 1.5rem;
+  }
+
+  /* Both self-grade verdicts fit on one line once there is width for them. */
+  .study-self-grade-buttons {
+    grid-template-columns: 1fr 1fr;
   }
 }

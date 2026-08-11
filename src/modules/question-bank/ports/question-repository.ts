@@ -7,6 +7,7 @@ import type {
   QuestionLifecycleStatus,
   QuestionQualityStatus,
   QuestionRevision,
+  QuestionRevisionId,
   QuestionType,
   QuestionWithRevision,
 } from "@/modules/question-bank/domain/question";
@@ -52,6 +53,40 @@ export interface QuestionBankCounts {
   readonly active: number;
 }
 
+/**
+ * Candidate query for session composition (`SPEC.md` section 8.5).
+ *
+ * Several tracks in one call because a mixed-track session composes from all of
+ * them at once, and asking per track would make the composer's ordering depend on
+ * how many queries it happened to run.
+ */
+export interface StudyCandidateCriteria {
+  readonly certificationIds: readonly CertificationId[];
+  /**
+   * Maximum rows. Required: the bank must never be read unbounded, and session
+   * composition is no exception (`spec/ARCHITECTURE.md` section 8).
+   */
+  readonly limit: number;
+}
+
+/**
+ * A question that is eligible to be studied.
+ *
+ * Carries the current revision identifier so the caller can freeze it into a
+ * session item without a second read (`spec/DOMAIN-RULES.md` section 2.3), and the
+ * objective mappings so the composer can reason about coverage without one query
+ * per question.
+ */
+export interface QuestionCandidate {
+  readonly questionId: QuestionId;
+  readonly questionRevisionId: QuestionRevisionId;
+  readonly certificationId: CertificationId;
+  readonly objectiveIds: readonly ObjectiveId[];
+  readonly questionType: QuestionType;
+  readonly difficulty: number | null;
+  readonly createdAt: IsoTimestamp;
+}
+
 export interface QuestionRepository {
   findById(id: QuestionId): Promise<Question | null>;
   /** The root together with its current revision, or `null` if unknown. */
@@ -67,6 +102,25 @@ export interface QuestionRepository {
   countsByCertification(
     certificationId: CertificationId,
   ): Promise<QuestionBankCounts>;
+  /**
+   * Questions that may appear in a study session, in a deterministic order.
+   *
+   * Eligibility is applied in SQL rather than by the caller, so ineligible content
+   * is never fetched at all: only `ACTIVE` questions whose quality is not
+   * `DISPUTED` are returned, which is `isStudyEligible` expressed as a query
+   * (`SPEC.md` section 6.6 — avoid retired and archived items, exclude disputed
+   * questions by default). Bounded by `criteria.limit`.
+   */
+  findStudyCandidates(
+    criteria: StudyCandidateCriteria,
+  ): Promise<QuestionCandidate[]>;
+  /**
+   * How many questions of one track are eligible to be studied.
+   *
+   * Backs the diagnostic-availability check and the progress dashboard's active
+   * bank count without fetching the candidates themselves.
+   */
+  countStudyCandidates(certificationId: CertificationId): Promise<number>;
 
   /**
    * Inserts a new root together with its first revision.

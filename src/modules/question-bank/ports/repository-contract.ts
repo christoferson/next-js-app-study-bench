@@ -353,6 +353,184 @@ export function describeQuestionRepositoryContract(
       ).resolves.toEqual({ total: 0, active: 0 });
     });
 
+    describe("study candidates", () => {
+      it("offers only active, undisputed questions", async () => {
+        await seedLifecycles(subject);
+
+        const candidates = await subject.questions.findStudyCandidates({
+          certificationIds: [certificationFixture().id],
+          limit: 50,
+        });
+
+        // `SPEC.md` section 6.6: a session avoids retired and archived items and
+        // excludes disputed questions. Eligibility is applied in SQL, so an
+        // ineligible question is never fetched at all.
+        expect(candidates.map((candidate) => candidate.questionId)).toEqual([
+          "q-active",
+        ]);
+        await expect(
+          subject.questions.countStudyCandidates(certificationFixture().id),
+        ).resolves.toBe(1);
+      });
+
+      it("carries the current revision, type, and objectives of each candidate", async () => {
+        await subject.questions.create(
+          questionFixture({
+            lifecycleStatus: "ACTIVE",
+            createdAt: "2026-02-01T00:00:00.000Z",
+          }),
+          revisionFixture({ difficulty: 1 }),
+        );
+        await subject.questions.appendRevision(
+          revisionFixture({
+            id: "revision-2",
+            revisionNumber: 2,
+            questionType: "SHORT_ANSWER",
+            content: shortAnswerContent(),
+            difficulty: 3,
+          }),
+          LATER,
+        );
+        await subject.questions.replaceObjectiveLinks(
+          questionFixture().id,
+          ["objective-1"],
+          LATER,
+        );
+
+        // The candidate names the revision the composer freezes into the session
+        // item, so it must be the current one, not the first
+        // (`spec/DOMAIN-RULES.md` section 2.3).
+        await expect(
+          subject.questions.findStudyCandidates({
+            certificationIds: [certificationFixture().id],
+            limit: 50,
+          }),
+        ).resolves.toEqual([
+          {
+            questionId: questionFixture().id,
+            questionRevisionId: "revision-2",
+            certificationId: certificationFixture().id,
+            objectiveIds: ["objective-1"],
+            questionType: "SHORT_ANSWER",
+            difficulty: 3,
+            createdAt: "2026-02-01T00:00:00.000Z",
+          },
+        ]);
+      });
+
+      it("reports no objectives for an unmapped candidate", async () => {
+        await subject.questions.create(
+          questionFixture({ lifecycleStatus: "ACTIVE" }),
+          revisionFixture(),
+        );
+
+        const [candidate] = await subject.questions.findStudyCandidates({
+          certificationIds: [certificationFixture().id],
+          limit: 50,
+        });
+
+        expect(candidate?.objectiveIds).toEqual([]);
+      });
+
+      it("draws from every selected track in one deterministic order", async () => {
+        await subject.certifications.save(
+          certificationFixture({
+            id: "certification-2",
+            slug: "another-track",
+            name: "Another Track",
+          }),
+        );
+
+        for (const entry of [
+          { id: "q-b", certificationId: "certification-1" },
+          { id: "q-a", certificationId: "certification-2" },
+        ]) {
+          await subject.questions.create(
+            questionFixture({
+              id: entry.id,
+              certificationId: entry.certificationId,
+              currentRevisionId: `rev-${entry.id}`,
+              lifecycleStatus: "ACTIVE",
+              // One creation time for both, so the tie-break on id is what
+              // orders them and the order cannot depend on the track.
+              createdAt: LATER,
+            }),
+            revisionFixture({ id: `rev-${entry.id}`, questionId: entry.id }),
+          );
+        }
+
+        const candidates = await subject.questions.findStudyCandidates({
+          certificationIds: ["certification-1", "certification-2"],
+          limit: 50,
+        });
+
+        expect(candidates.map((candidate) => candidate.questionId)).toEqual([
+          "q-a",
+          "q-b",
+        ]);
+      });
+
+      it("never returns another track's questions", async () => {
+        await subject.certifications.save(
+          certificationFixture({
+            id: "certification-2",
+            slug: "another-track",
+            name: "Another Track",
+          }),
+        );
+        await subject.questions.create(
+          questionFixture({
+            certificationId: "certification-2",
+            lifecycleStatus: "ACTIVE",
+          }),
+          revisionFixture(),
+        );
+
+        await expect(
+          subject.questions.findStudyCandidates({
+            certificationIds: ["certification-1"],
+            limit: 50,
+          }),
+        ).resolves.toEqual([]);
+        await expect(
+          subject.questions.countStudyCandidates("certification-1"),
+        ).resolves.toBe(0);
+      });
+
+      it("applies the limit, because composition is a bounded read", async () => {
+        await seedLifecycles(subject);
+
+        for (const id of ["q-active-2", "q-active-3"]) {
+          await subject.questions.create(
+            questionFixture({
+              id,
+              currentRevisionId: `rev-${id}`,
+              lifecycleStatus: "ACTIVE",
+            }),
+            revisionFixture({ id: `rev-${id}`, questionId: id }),
+          );
+        }
+
+        await expect(
+          subject.questions.findStudyCandidates({
+            certificationIds: [certificationFixture().id],
+            limit: 2,
+          }),
+        ).resolves.toHaveLength(2);
+      });
+
+      it("offers nothing when no track was selected", async () => {
+        await seedLifecycles(subject);
+
+        await expect(
+          subject.questions.findStudyCandidates({
+            certificationIds: [],
+            limit: 50,
+          }),
+        ).resolves.toEqual([]);
+      });
+    });
+
     it("replaces objective links and filters by them", async () => {
       const question = questionFixture();
 
@@ -440,6 +618,37 @@ export function describeQuestionRepositoryContract(
       ).resolves.not.toBeNull();
     });
   });
+}
+
+/**
+ * One question in every lifecycle state, plus an active but disputed one.
+ *
+ * Only `q-active` is eligible to be studied, so any candidate query that returns
+ * anything else has let ineligible content into a session.
+ */
+async function seedLifecycles(subject: QuestionContractSubject): Promise<void> {
+  const entries = [
+    { id: "q-draft", lifecycleStatus: "DRAFT" as const, disputed: false },
+    { id: "q-active", lifecycleStatus: "ACTIVE" as const, disputed: false },
+    { id: "q-disputed", lifecycleStatus: "ACTIVE" as const, disputed: true },
+    { id: "q-retired", lifecycleStatus: "RETIRED" as const, disputed: false },
+    { id: "q-archived", lifecycleStatus: "ARCHIVED" as const, disputed: false },
+  ];
+
+  for (const entry of entries) {
+    const revisionId = `rev-${entry.id}`;
+
+    await subject.questions.create(
+      questionFixture({
+        id: entry.id,
+        currentRevisionId: revisionId,
+        lifecycleStatus: entry.lifecycleStatus,
+        qualityStatus: entry.disputed ? "DISPUTED" : "USER_APPROVED",
+        disputeReason: entry.disputed ? "Needs a source check." : null,
+      }),
+      revisionFixture({ id: revisionId, questionId: entry.id }),
+    );
+  }
 }
 
 /**

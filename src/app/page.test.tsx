@@ -12,9 +12,17 @@ import HomePage from "@/app/page";
  * still exercises the same facade view shape that production uses.
  */
 const listCertifications = vi.fn<() => Promise<CertificationListView>>();
+const findInProgressId = vi.fn<() => Promise<string | null>>();
 
 vi.mock("@/modules/certifications/composition", () => ({
   getCertificationFacade: () => ({ listCertifications }),
+}));
+
+// D5: the dashboard leads with studying, so it reads the study module too. Both
+// composition roots are `server-only`, so both are mocked and the page still
+// exercises the real facade view shapes.
+vi.mock("@/modules/study-sessions/composition", () => ({
+  getStudyFacade: () => ({ findInProgressId }),
 }));
 
 // The archived card posts to a Server Action; the action itself is covered by the
@@ -55,6 +63,8 @@ async function renderHomePage(
 describe("Home page", () => {
   beforeEach(() => {
     listCertifications.mockReset();
+    findInProgressId.mockReset();
+    findInProgressId.mockResolvedValue(null);
   });
 
   it("renders the StudyBench identity and tagline", async () => {
@@ -164,5 +174,42 @@ describe("Home page", () => {
     await renderHomePage();
 
     expect(screen.queryByRole("link", { name: /archived/i })).toBeNull();
+  });
+
+  describe("studying", () => {
+    it("leads with starting a session, above the track list", async () => {
+      stubView({ active: [ACTIVE_TRACK] });
+
+      await renderHomePage();
+
+      // Studying is the product's primary action; managing the bank is secondary
+      // (`spec/UI-GUIDELINES.md` section 1.2).
+      expect(
+        screen.getByRole("link", { name: /start 10-minute session/i }),
+      ).toHaveAttribute("href", "/study/new");
+      expect(screen.getByRole("link", { name: "Progress" })).toHaveAttribute(
+        "href",
+        "/progress",
+      );
+    });
+
+    it("offers to resume the session already running", async () => {
+      stubView({ active: [ACTIVE_TRACK] });
+      findInProgressId.mockResolvedValue("session-7");
+
+      await renderHomePage();
+
+      // Resuming rather than re-choosing a mode: the owner already made that
+      // decision (`SPEC.md` section 6.6).
+      expect(
+        screen.getByRole("link", { name: /resume your session/i }),
+      ).toHaveAttribute("href", "/study/sessions/session-7");
+      expect(
+        screen.queryByRole("link", { name: /start 10-minute session/i }),
+      ).toBeNull();
+      expect(
+        screen.getByRole("link", { name: /start a different session/i }),
+      ).toHaveAttribute("href", "/study/new");
+    });
   });
 });

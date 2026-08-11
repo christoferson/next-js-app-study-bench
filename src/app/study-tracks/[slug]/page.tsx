@@ -49,6 +49,16 @@ export default async function StudyTrackPage({ params }: StudyTrackPageProps) {
           <p className="lede">{certification.description}</p>
         ) : null}
         <div className="section-actions">
+          {isArchived ? null : (
+            // Preselects this track, so studying one track is one tap from its page
+            // rather than a mode-and-track decision on a separate screen.
+            <Link
+              className="button"
+              href={`/study/new?track=${certification.slug}`}
+            >
+              Start session
+            </Link>
+          )}
           <Link
             className="button-quiet"
             href={`/study-tracks/${certification.slug}/edit`}

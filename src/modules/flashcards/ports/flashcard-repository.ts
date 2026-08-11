@@ -78,6 +78,19 @@ export interface DueCardCriteria {
 }
 
 /**
+ * Due-card query across several tracks, for mixed-track session composition.
+ *
+ * Separate from `DueCardCriteria` rather than replacing it: the review screen is
+ * always about one track, and widening its criteria to a list would let a
+ * single-track view accidentally read another track's cards.
+ */
+export interface DueCardCandidateCriteria {
+  readonly certificationIds: readonly CertificationId[];
+  readonly now: IsoTimestamp;
+  readonly limit: number;
+}
+
+/**
  * One recorded review.
  *
  * The interval and due date this rating produced are stored with it, so the
@@ -154,6 +167,17 @@ export interface FlashcardRepository {
    * offers the same card until it is rated.
    */
   findDueCards(criteria: DueCardCriteria): Promise<DueFlashcard[]>;
+  /**
+   * The same due-card selection across several tracks at once.
+   *
+   * Used by session composition, where a mixed-track session draws from every
+   * selected track and asking per track would make the resulting order depend on
+   * how many queries were run. Ordering and eligibility match `findDueCards`
+   * exactly, so a card the review screen would offer is the card a session offers.
+   */
+  findDueCandidates(
+    criteria: DueCardCandidateCriteria,
+  ): Promise<DueFlashcard[]>;
   /** How many active cards are due, for the review call to action. */
   countDueCards(
     certificationId: CertificationId,

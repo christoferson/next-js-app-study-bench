@@ -4,6 +4,8 @@ import {
   ArchivedCertificationCard,
   CertificationCard,
 } from "@/modules/certifications/ui/certification-card";
+import { getStudyFacade } from "@/modules/study-sessions/composition";
+import { DEFAULT_QUICK_MINUTES } from "@/modules/study-sessions/application/study-facade";
 
 interface HomePageProps {
   readonly searchParams?: Promise<
@@ -16,13 +18,20 @@ interface HomePageProps {
  *
  * Archived tracks are hidden by default and revealed through `?archived=1`, so
  * the visible list is the owner's active study plan.
+ *
+ * Studying is the primary action, above the track list: the product is a study
+ * workbench, and the common case on opening it is wanting to study rather than wanting
+ * to manage the bank (`spec/UI-GUIDELINES.md` section 1.2). A session still in progress
+ * is offered as "resume" instead, so the owner is never asked to choose a mode for a
+ * session they have already started.
  */
 export default async function HomePage({ searchParams }: HomePageProps) {
   const resolved = (await searchParams) ?? {};
   const includeArchived = resolved.archived === "1";
-  const view = await getCertificationFacade().listCertifications({
-    includeArchived,
-  });
+  const [view, inProgressId] = await Promise.all([
+    getCertificationFacade().listCertifications({ includeArchived }),
+    getStudyFacade().findInProgressId(),
+  ]);
 
   return (
     <main className="page">
@@ -34,6 +43,31 @@ export default async function HomePage({ searchParams }: HomePageProps) {
           study material for technical certifications and language examinations.
         </p>
       </header>
+
+      <section aria-labelledby="study-now-heading" className="section">
+        <div className="section-heading">
+          <h2 id="study-now-heading">Study</h2>
+        </div>
+        <div className="section-actions">
+          {inProgressId === null ? (
+            <Link className="button" href="/study/new">
+              Start {DEFAULT_QUICK_MINUTES}-minute session
+            </Link>
+          ) : (
+            <>
+              <Link className="button" href={`/study/sessions/${inProgressId}`}>
+                Resume your session
+              </Link>
+              <Link className="button-quiet" href="/study/new">
+                Start a different session
+              </Link>
+            </>
+          )}
+          <Link className="button-quiet" href="/progress">
+            Progress
+          </Link>
+        </div>
+      </section>
 
       <section aria-labelledby="study-tracks-heading" className="section">
         <div className="section-heading">

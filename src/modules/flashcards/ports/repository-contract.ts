@@ -723,6 +723,148 @@ export function describeFlashcardRepositoryContract(
       );
     });
 
+    describe("due candidates for session composition", () => {
+      it("applies the same eligibility and order as the review queue", async () => {
+        await seedBank(subject);
+
+        await subject.flashcards.saveSchedule(
+          "card-active",
+          scheduleFixture({ dueAt: "2026-05-10T00:00:00.000Z" }),
+          NOW,
+        );
+        await subject.flashcards.saveSchedule(
+          "card-active-2",
+          scheduleFixture({ dueAt: "2026-05-05T00:00:00.000Z" }),
+          NOW,
+        );
+
+        // A card the review screen would offer is the card a session offers: the
+        // two queries must not disagree about eligibility or order.
+        const reviewQueue = await subject.flashcards.findDueCards({
+          certificationId: certificationFixture().id,
+          now: NOW,
+          limit: 10,
+        });
+        const candidates = await subject.flashcards.findDueCandidates({
+          certificationIds: [certificationFixture().id],
+          now: NOW,
+          limit: 10,
+        });
+
+        expect(candidates).toEqual(reviewQueue);
+        expect(candidates.map((entry) => entry.flashcard.id)).toEqual([
+          "card-active-2",
+          "card-active",
+        ]);
+      });
+
+      it("excludes a card scheduled into the future", async () => {
+        await seedBank(subject);
+
+        await subject.flashcards.saveSchedule(
+          "card-active",
+          scheduleFixture({ dueAt: NOW }),
+          NOW,
+        );
+        await subject.flashcards.saveSchedule(
+          "card-active-2",
+          scheduleFixture({ dueAt: "2026-06-01T12:00:00.001Z" }),
+          NOW,
+        );
+
+        const candidates = await subject.flashcards.findDueCandidates({
+          certificationIds: [certificationFixture().id],
+          now: NOW,
+          limit: 10,
+        });
+
+        expect(candidates.map((entry) => entry.flashcard.id)).toEqual([
+          "card-active",
+        ]);
+      });
+
+      it("draws from every selected track at once", async () => {
+        await seedBank(subject);
+        await subject.certifications.save(
+          certificationFixture({ id: "certification-2", slug: "other-track" }),
+        );
+        await subject.flashcards.create(
+          flashcardFixture({
+            id: "card-other",
+            certificationId: "certification-2",
+            currentRevisionId: "rev-other",
+            lifecycleStatus: "ACTIVE",
+            createdAt: "2026-05-01T00:00:00.000Z",
+            updatedAt: "2026-05-01T00:00:00.000Z",
+          }),
+          cardRevisionFixture({ id: "rev-other", flashcardId: "card-other" }),
+        );
+
+        // One call rather than one per track, so a mixed session's order does not
+        // depend on how many queries were run.
+        const candidates = await subject.flashcards.findDueCandidates({
+          certificationIds: ["certification-1", "certification-2"],
+          now: NOW,
+          limit: 10,
+        });
+
+        expect(candidates.map((entry) => entry.flashcard.id)).toContain(
+          "card-other",
+        );
+        expect(candidates).toHaveLength(3);
+      });
+
+      it("never returns an unselected track's cards", async () => {
+        await seedBank(subject);
+        await subject.certifications.save(
+          certificationFixture({ id: "certification-2", slug: "other-track" }),
+        );
+        await subject.flashcards.create(
+          flashcardFixture({
+            id: "card-other",
+            certificationId: "certification-2",
+            currentRevisionId: "rev-other",
+            lifecycleStatus: "ACTIVE",
+          }),
+          cardRevisionFixture({ id: "rev-other", flashcardId: "card-other" }),
+        );
+
+        const candidates = await subject.flashcards.findDueCandidates({
+          certificationIds: ["certification-2"],
+          now: NOW,
+          limit: 10,
+        });
+
+        expect(candidates.map((entry) => entry.flashcard.id)).toEqual([
+          "card-other",
+        ]);
+      });
+
+      it("bounds the candidate list", async () => {
+        await seedBank(subject);
+
+        await expect(
+          subject.flashcards.findDueCandidates({
+            certificationIds: [certificationFixture().id],
+            now: NOW,
+            limit: 1,
+          }),
+        ).resolves.toHaveLength(1);
+      });
+
+      it("offers nothing when no track was selected", async () => {
+        await seedBank(subject);
+
+        await expect(
+          subject.flashcards.findDueCandidates({
+            certificationIds: [],
+            now: NOW,
+            limit: 10,
+          }),
+        ).resolves.toEqual([]);
+      });
+    });
+
     it("records and reports the source question a card was converted from", async () => {
       await subject.questions.create(questionFixture(), revisionFixture());
 

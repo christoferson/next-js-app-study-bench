@@ -13,9 +13,11 @@ import type {
 } from "@/modules/question-bank/domain/question";
 import type {
   QuestionBankCounts,
+  QuestionCandidate,
   QuestionRepository,
   QuestionSearchCriteria,
   QuestionSearchPage,
+  StudyCandidateCriteria,
 } from "@/modules/question-bank/ports/question-repository";
 import type { QuestionRevisionRow, QuestionRow } from "./rows";
 import {
@@ -23,6 +25,7 @@ import {
   serializeTags,
   toQuestion,
   toQuestionRevision,
+  toQuestionType,
 } from "./rows";
 
 const QUESTION_COLUMNS = `id, certification_id, current_revision_id,
@@ -45,6 +48,16 @@ const JOINED_COLUMNS = [
 
 /** One search row: a question root joined to its current revision. */
 type JoinedRow = Record<string, string | number | null>;
+
+/** One candidate row: the few columns session composition needs. */
+interface CandidateRow {
+  readonly question_id: string;
+  readonly revision_id: string;
+  readonly certification_id: string;
+  readonly question_type: string;
+  readonly difficulty: number | null;
+  readonly created_at: string;
+}
 
 /**
  * SQLite-backed question-bank persistence.
@@ -201,6 +214,88 @@ export class SqliteQuestionRepository implements QuestionRepository {
   }
 
   /**
+   * Bounded candidate query for session composition.
+   *
+   * Eligibility is a `WHERE` clause rather than a filter the caller applies, so a
+   * draft, retired, archived, or disputed question is never fetched: it mirrors
+   * `isStudyEligible` in SQL, and the two are asserted to agree in the repository
+   * contract.
+   *
+   * Objective mappings are fetched in a second statement keyed by the questions
+   * just returned, rather than by joining them into the first. A join would
+   * multiply each question by its mapping count and break `LIMIT`, which must
+   * bound questions rather than rows.
+   *
+   * Ordering is by creation time then identifier, so the same database state
+   * always yields the same candidate list and the composer's own ordering is the
+   * only thing that decides session order.
+   */
+  async findStudyCandidates(
+    criteria: StudyCandidateCriteria,
+  ): Promise<QuestionCandidate[]> {
+    if (criteria.certificationIds.length === 0) {
+      return [];
+    }
+
+    const placeholders = criteria.certificationIds
+      .map((_, index) => `@certification${index}`)
+      .join(", ");
+    const parameters: Record<string, string | number> = {
+      limit: criteria.limit,
+    };
+
+    for (const [
+      index,
+      certificationId,
+    ] of criteria.certificationIds.entries()) {
+      parameters[`certification${index}`] = certificationId;
+    }
+
+    const rows = this.database
+      .prepare(
+        `SELECT q.id AS question_id, r.id AS revision_id,
+                q.certification_id AS certification_id,
+                r.question_type AS question_type, r.difficulty AS difficulty,
+                q.created_at AS created_at
+         FROM questions q
+         JOIN question_revisions r ON r.id = q.current_revision_id
+         WHERE q.certification_id IN (${placeholders})
+           AND q.lifecycle_status = 'ACTIVE'
+           AND q.quality_status <> 'DISPUTED'
+         ORDER BY q.created_at ASC, q.id ASC
+         LIMIT @limit`,
+      )
+      .all(parameters) as CandidateRow[];
+
+    const links = this.objectiveLinksFor(rows.map((row) => row.question_id));
+
+    return rows.map((row) => ({
+      questionId: row.question_id,
+      questionRevisionId: row.revision_id,
+      certificationId: row.certification_id,
+      objectiveIds: links.get(row.question_id) ?? [],
+      questionType: toQuestionType(row.question_type),
+      difficulty: row.difficulty,
+      createdAt: row.created_at,
+    }));
+  }
+
+  async countStudyCandidates(
+    certificationId: CertificationId,
+  ): Promise<number> {
+    const row = this.database
+      .prepare(
+        `SELECT COUNT(*) AS total FROM questions
+         WHERE certification_id = ?
+           AND lifecycle_status = 'ACTIVE'
+           AND quality_status <> 'DISPUTED'`,
+      )
+      .get(certificationId) as { readonly total: number } | undefined;
+
+    return row?.total ?? 0;
+  }
+
+  /**
    * Inserts the root, then its first revision, then the current pointer.
    *
    * The pointer is a third statement because the two tables reference each
@@ -340,6 +435,48 @@ export class SqliteQuestionRepository implements QuestionRepository {
     }
 
     this.touch(id, occurredAt);
+  }
+
+  /**
+   * Objective mappings for a known set of questions, as one statement.
+   *
+   * Bounded by construction: the identifiers come from a page of candidates that
+   * was already limited, so there is no unbounded read hiding behind the `IN`.
+   */
+  private objectiveLinksFor(
+    questionIds: readonly QuestionId[],
+  ): Map<QuestionId, ObjectiveId[]> {
+    const links = new Map<QuestionId, ObjectiveId[]>();
+
+    if (questionIds.length === 0) {
+      return links;
+    }
+
+    const placeholders = questionIds.map(() => "?").join(", ");
+    const rows = this.database
+      .prepare(
+        `SELECT l.question_id AS question_id, l.objective_id AS objective_id
+         FROM question_objective_links l
+         JOIN certification_objectives o ON o.id = l.objective_id
+         WHERE l.question_id IN (${placeholders})
+         ORDER BY o.display_order ASC, o.id ASC`,
+      )
+      .all(...questionIds) as {
+      readonly question_id: string;
+      readonly objective_id: string;
+    }[];
+
+    for (const row of rows) {
+      const existing = links.get(row.question_id);
+
+      if (existing === undefined) {
+        links.set(row.question_id, [row.objective_id]);
+      } else {
+        existing.push(row.objective_id);
+      }
+    }
+
+    return links;
   }
 
   private insertRevision(revision: QuestionRevision): void {

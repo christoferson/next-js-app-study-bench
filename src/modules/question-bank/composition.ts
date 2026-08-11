@@ -11,6 +11,11 @@ import { SqliteQuestionBankUnitOfWork } from "@/modules/question-bank/infrastruc
 import { SqliteQuestionRepository } from "@/modules/question-bank/infrastructure/sqlite-question-repository";
 import { FlashcardQuestionDependencyChecker } from "@/modules/flashcards/infrastructure/flashcard-question-dependency-checker";
 import { SqliteFlashcardRepository } from "@/modules/flashcards/infrastructure/sqlite-flashcard-repository";
+import {
+  AttemptQuestionDependencyChecker,
+  CompositeQuestionDependencyChecker,
+} from "@/modules/study-sessions/infrastructure/attempt-question-dependency-checker";
+import { SqliteStudySessionRepository } from "@/modules/study-sessions/infrastructure/sqlite-study-session-repository";
 
 /**
  * Server-only composition root for the question bank.
@@ -21,9 +26,12 @@ import { SqliteFlashcardRepository } from "@/modules/flashcards/infrastructure/s
  * The dependency checker is composed here rather than constructed inside the
  * facade, which is what lets D4 replace the D3 "nothing depends on a question yet"
  * checker with one that reports converted flashcards, without touching the facade,
- * the delete flow, or the error type. The cross-module import belongs here for the
- * same reason: composition roots are where modules are wired together, and the
- * question bank still depends only on its own port.
+ * the delete flow, or the error type. D5 adds a second checker to the same seam for
+ * answer attempts and recorded sessions, so a question the owner has answered is
+ * reported as undeletable with its reasons named, and both kinds are reported at
+ * once. The cross-module imports belong here for the same reason: composition roots
+ * are where modules are wired together, and the question bank still depends only on
+ * its own port.
  */
 export function createQuestionBankFacade(
   database: SqliteDatabase,
@@ -34,8 +42,13 @@ export function createQuestionBankFacade(
     certifications: new SqliteCertificationRepository(database),
     objectives: new SqliteObjectiveRepository(database),
     unitOfWork: new SqliteQuestionBankUnitOfWork(database, runner),
-    dependencies: new FlashcardQuestionDependencyChecker(
-      new SqliteFlashcardRepository(database),
+    dependencies: new CompositeQuestionDependencyChecker(
+      new FlashcardQuestionDependencyChecker(
+        new SqliteFlashcardRepository(database),
+      ),
+      new AttemptQuestionDependencyChecker(
+        new SqliteStudySessionRepository(database),
+      ),
     ),
     clock: systemClock,
     ids: cryptoIdGenerator,

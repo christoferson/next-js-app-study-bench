@@ -14,6 +14,7 @@ import type {
 import { searchableText } from "@/modules/flashcards/domain/flashcard-content";
 import type { ReviewSchedule } from "@/modules/flashcards/domain/review-scheduling";
 import type {
+  DueCardCandidateCriteria,
   DueCardCriteria,
   DueFlashcard,
   FlashcardBankCounts,
@@ -346,6 +347,52 @@ export class SqliteFlashcardRepository implements FlashcardRepository {
         now: criteria.now,
         limit: criteria.limit,
       }) as JoinedRow[];
+
+    return rows.map(toDueFlashcard);
+  }
+
+  /**
+   * The same selection as `findDueCards`, across several tracks.
+   *
+   * The clauses and the `ORDER BY` are deliberately identical: the only difference
+   * is `IN` instead of `=`, so a mixed-track session cannot disagree with the
+   * per-track review screen about which card is next.
+   */
+  async findDueCandidates(
+    criteria: DueCardCandidateCriteria,
+  ): Promise<DueFlashcard[]> {
+    if (criteria.certificationIds.length === 0) {
+      return [];
+    }
+
+    const placeholders = criteria.certificationIds
+      .map((_, index) => `@certification${index}`)
+      .join(", ");
+    const parameters: Record<string, string | number> = {
+      now: criteria.now,
+      limit: criteria.limit,
+    };
+
+    for (const [
+      index,
+      certificationId,
+    ] of criteria.certificationIds.entries()) {
+      parameters[`certification${index}`] = certificationId;
+    }
+
+    const rows = this.database
+      .prepare(
+        `SELECT ${DUE_COLUMNS}
+         FROM flashcards f
+         JOIN flashcard_revisions r ON r.id = f.current_revision_id
+         LEFT JOIN review_schedules s ON s.flashcard_id = f.id
+         WHERE f.certification_id IN (${placeholders})
+           AND f.lifecycle_status = 'ACTIVE'
+           AND (s.due_at IS NULL OR s.due_at <= @now)
+         ORDER BY COALESCE(s.due_at, f.created_at) ASC, f.id ASC
+         LIMIT @limit`,
+      )
+      .all(parameters) as JoinedRow[];
 
     return rows.map(toDueFlashcard);
   }

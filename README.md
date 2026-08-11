@@ -6,17 +6,49 @@ StudyBench is a personal, single-user, AI-assisted study workbench for technical
 certifications, language examinations, and other structured learning goals. It is
 built incrementally in small, independently verifiable milestones.
 
-## Current state — D4
+## Current state — D5
 
-Milestone D4 adds **flashcards and spaced review** on top of the D3 question
-bank:
+Milestone D5 adds **quick study sessions and progress** on top of the D4
+flashcard bank. Studying is now the primary action: the dashboard leads with
+"Start 10-minute session", or "Resume your session" when one is still running.
 
+- A start screen at `/study/new` choosing what kind of session (one track, mixed
+  tracks, questions only, flashcards only, mistake review, diagnostic), which
+  tracks, and roughly how long (5–45 minutes; a guide, not a timer). A mode with
+  nothing to offer is disabled with the reason stated next to it. Arriving from a
+  track page (`/study/new?track=[slug]`) preselects that track.
+- A study screen at `/study/sessions/[sessionId]` presenting one item at a time,
+  with position, a skip, and a "finish early". Answers are saved the moment they
+  are submitted, so closing the tab loses nothing and reopening the session
+  resumes at the same item with the same items in the same order.
+- Questions are answered with a required confidence (guessed, unsure, fairly
+  sure, confident). Single choice and multiple response are checked against the
+  recorded answer; a short answer is revealed and graded by you, and the feedback
+  says so. Feedback names the correct answer and the explanation from the
+  revision you answered, not the question's current wording.
+- Flashcards met inside a session are prompted and rated exactly as the D4 review
+  screen does, and one rating updates the review record, the card's schedule, and
+  the session item together.
+- A summary at `/study/sessions/[sessionId]/summary` reporting items reached,
+  questions answered and how many were right, cards rated, anything left
+  unreached, and what was missed with how sure you had been. A flashcards-only
+  session reports no accuracy rather than 0%.
+- A progress dashboard at `/progress`: overall and per-track accuracy, objective
+  coverage with unseen objectives named as "not studied yet", accuracy by
+  question type and by objective, confidence calibration, recent mistakes,
+  flashcards due, what each bank holds, and recent sessions with a resume link.
+  Every figure is counted from recorded answers — there is deliberately **no pass
+  probability, readiness score, or predicted grade**.
+- A question page now shows its attempt history, each row naming the revision it
+  was answered against. A question that has been answered or offered in a session
+  can no longer be hard-deleted; retiring it is how it leaves study, and the
+  history survives.
 - Study tracks (D2): a dashboard at `/` listing your active tracks with a "New
   study track" action and an archived-tracks toggle offering restore; create and
   edit at `/study-tracks/new` and `/study-tracks/[slug]/edit`; a detail page at
-  `/study-tracks/[slug]` with metadata, edit, archive/restore, and a nested
-  objective tree; objective management with add-child, edit, sibling reordering,
-  reparenting, and archive/restore.
+  `/study-tracks/[slug]` with metadata, edit, archive/restore, a "Start session"
+  action, and a nested objective tree; objective management with add-child, edit,
+  sibling reordering, reparenting, and archive/restore.
 - A per-track question bank (D3) at `/study-tracks/[slug]/questions`, listing
   questions with their type, lifecycle status, review state, and revision, and
   filtering by lifecycle, review state, type, objective, and question text.
@@ -53,8 +85,11 @@ bank:
 Everything is stored in a local SQLite database and survives a restart. Tracks,
 objectives, and flashcards are never hard-deleted — a card carries review
 history, so retirement is how it leaves the queue. A question can be deleted, but
-not while a flashcard made from it still exists. There are no attempts, study
-sessions, imports, or AI features yet — those arrive in later milestones.
+not while a flashcard made from it exists, and not once it has been answered or
+offered in a session. Sessions are composed by a deterministic strategy that
+reads only the bank: **no AI is involved in starting a session**. There are no
+imports, printable artifacts, audio, or AI features yet — those arrive in later
+milestones.
 
 See `SPEC.md` for the full specification and `PROGRESS.md` for implementation
 state.
@@ -150,6 +185,20 @@ With `npm run seed` followed by `npm run dev`:
 - Retire the card and reload the review screen — it is no longer offered
 - On an active question, choose "Make a flashcard from this question", then try to
   delete that question: the deletion is refused while the card exists
+- From the dashboard, choose "Start 10-minute session", pick one track, and work
+  through it: answer with a confidence, read the feedback, rate a card, skip an
+  item, then "Finish early" — the summary reports what was reached
+- Close the tab mid-session and reopen `http://localhost:3000` — "Resume your
+  session" returns to the same item with the same items in the same order
+- Edit a question you answered earlier, then open its page: the attempt history
+  still names the revision you answered
+- Try to delete that answered question: the deletion is refused and "Retire"
+  is offered instead
+- Open `http://localhost:3000/progress` — counted accuracy, objective coverage,
+  confidence calibration, recent mistakes, and recent sessions, with no pass
+  probability anywhere
+- After a wrong answer, "Mistake review" becomes available on `/study/new`
+- `http://localhost:3000/study/sessions/nope` — not-found page
 - `http://localhost:3000/study-tracks/unknown` — not-found page
 - `http://localhost:3000/study-tracks/demo-cloud-practitioner/questions/nope` —
   not-found page
@@ -175,7 +224,8 @@ src/
 └── modules/
     ├── certifications/               study tracks and objectives
     ├── question-bank/                questions and their revisions
-    └── flashcards/                   cards, revisions, review scheduling
+    ├── flashcards/                   cards, revisions, review scheduling
+    └── study-sessions/               sessions, attempts, progress measures
 ```
 
 Each module has the same five layers plus a composition root:
@@ -193,7 +243,7 @@ Each module has the same five layers plus a composition root:
     └── composition.ts                server-only composition root
 ```
 
-All three modules share one database connection and one transaction runner from
+All four modules share one database connection and one transaction runner from
 `platform/database/composition.ts`, so migrations run once and writes serialise
 across modules.
 
@@ -209,5 +259,24 @@ card's current schedule and returns the next one. It reads no database and gets
 its time from the injected clock, so every rule in `SPEC.md` section 6.5 is unit
 tested without persistence, and replacing it is one line in the flashcard
 composition root.
+
+Session composition is the second strategy
+(`modules/study-sessions/domain/session-composer.ts`): it takes the candidate
+questions and due cards the facade already fetched and returns an ordered item
+list. It reads no database and calls no model, so a session starts from bounded
+queries alone and the composition rules are unit tested without persistence.
+
+A session item freezes the question or card revision it offers. Attempts are
+append-only and each names the revision it answered, so editing a question mid
+session neither changes what is on screen nor rewrites what was answered. An
+answer writes the attempt and completes the item in one transaction through the
+study module's unit of work, and rating a card in a session writes the review, the
+card's new schedule, and the item together — so a refused grade or a retired card
+leaves nothing behind.
+
+Whether a question can be hard-deleted is decided by a composite of dependency
+checkers wired in `modules/question-bank/composition.ts`: one reports flashcards
+derived from it, one reports attempts and session history. The database enforces
+the same rule independently with `ON DELETE RESTRICT`.
 
 Detailed engineering rules live in `CLAUDE.md` and `spec/`.

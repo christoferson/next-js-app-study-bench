@@ -171,7 +171,8 @@ function readJson(revisionId: string, payload: string): unknown {
   }
 }
 
-function toQuestionType(value: string): QuestionType {
+/** Exported so the candidate query validates its type column the same way. */
+export function toQuestionType(value: string): QuestionType {
   const questionType = QUESTION_TYPES.find((candidate) => candidate === value);
 
   if (questionType === undefined) {

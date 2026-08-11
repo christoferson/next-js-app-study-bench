@@ -1,0 +1,15 @@
+node_modules
+.next
+out
+build
+coverage
+package-lock.json
+next-env.d.ts
+
+# Authored specification and guidance documents.
+# SPEC.md must not be modified by tooling, and PROGRESS.md, CLAUDE.md, and
+# spec/ predate this configuration; reformatting them is out of milestone scope.
+SPEC.md
+PROGRESS.md
+CLAUDE.md
+spec/

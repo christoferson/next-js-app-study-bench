@@ -168,6 +168,7 @@ To start over, stop the server and delete `data/study-bench.db` (plus any
 | `npm run build`        | Production build                              |
 | `npm start`            | Serve the production build (after `build`)    |
 | `npm run seed`         | Insert the demo study tracks and demo content |
+| `npm run import:real`  | Import your own study material (see below)    |
 | `npm test`             | Run unit and component tests once (Vitest)    |
 | `npm run test:watch`   | Run tests in watch mode                       |
 | `npm run test:live`    | Opt-in live provider tests (see below)        |
@@ -205,6 +206,26 @@ Demo items are written through the same facades your own authoring uses, so they
 pass the same validation and are recorded as manual content, not as AI-generated
 content. They are activated on the way in, so a session can offer them
 immediately.
+
+### Importing your own study material
+
+```bash
+npm run import:real
+```
+
+One-off tooling for turning two documents you already own into real tracks, so the
+bank holds material worth studying rather than only demo content. It reads text you
+have extracted from your own PDFs and expects both files in `external/sources/`:
+`ai-professional-01.txt` (an official AWS exam guide) and
+`hsk5-vocabulary-list-2026.txt` (a New HSK 5 word list). `external/` is gitignored
+— the documents are personal material and are never committed, so the import fails
+with a message telling you where to put them if they are absent, and neither
+parser contains any of their content. It creates one track per document: the exam
+guide's content domains as top-level objectives carrying their stated weightings
+with each task beneath them, and the word list as one active vocabulary flashcard
+per word (term, pinyin, English meaning, register). No questions are imported, and
+no example sentences are invented. Idempotent by track slug: a track that already
+exists is reported and left completely untouched, so re-running is safe.
 
 ## AI generation
 
@@ -340,6 +361,8 @@ src/
 │   └── database/                     connection, config, migrations, runner,
 │                                     shared connection composition
 ├── seed/                             demo bank content and its wiring
+├── import/                           parsers for your own study documents,
+│                                     and the importer's wiring
 └── modules/
     ├── certifications/               study tracks and objectives
     ├── question-bank/                questions and their revisions

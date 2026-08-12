@@ -1,4 +1,6 @@
 import { z } from "zod";
+import type { GenerationMode } from "@/modules/question-bank/domain/question";
+import { GENERATION_MODES } from "@/modules/question-bank/domain/question";
 import type {
   CardType,
   Flashcard,
@@ -34,6 +36,8 @@ export interface FlashcardRow {
   readonly current_revision_id: string | null;
   readonly lifecycle_status: string;
   readonly source_question_id: string | null;
+  readonly generation_mode: string;
+  readonly generation_run_id: string | null;
   readonly created_at: string;
   readonly updated_at: string;
 }
@@ -130,6 +134,8 @@ export function toFlashcard(row: FlashcardRow): Flashcard {
     currentRevisionId: row.current_revision_id,
     lifecycleStatus: toLifecycleStatus(row.lifecycle_status),
     sourceQuestionId: row.source_question_id,
+    generationMode: toGenerationMode(row.generation_mode),
+    generationRunId: row.generation_run_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -244,6 +250,16 @@ function toLifecycleStatus(value: string): FlashcardLifecycleStatus {
   }
 
   return status;
+}
+
+function toGenerationMode(value: string): GenerationMode {
+  const mode = GENERATION_MODES.find((candidate) => candidate === value);
+
+  if (mode === undefined) {
+    throw new Error(`Unsupported stored generation mode: ${value}`);
+  }
+
+  return mode;
 }
 
 function toRating(value: string): RecallRating {

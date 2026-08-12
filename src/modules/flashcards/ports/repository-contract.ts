@@ -259,6 +259,9 @@ export function describeFlashcardRepositoryContract(
       await expect(
         subject.flashcards.saveSchedule("missing", scheduleFixture(), LATER),
       ).rejects.toBeInstanceOf(FlashcardNotFoundError);
+      await expect(subject.flashcards.delete("missing")).rejects.toBeInstanceOf(
+        FlashcardNotFoundError,
+      );
     });
 
     it("filters the bank by lifecycle, card type, and text", async () => {
@@ -904,6 +907,71 @@ export function describeFlashcardRepositoryContract(
       const found = await subject.flashcards.findById(flashcardFixture().id);
 
       expect(found?.sourceQuestionId).toBeNull();
+    });
+
+    it("deletes the root, every revision, and every objective link", async () => {
+      const flashcard = flashcardFixture();
+
+      await subject.flashcards.create(flashcard, cardRevisionFixture());
+      await subject.flashcards.appendRevision(
+        cardRevisionFixture({
+          id: "card-revision-2",
+          revisionNumber: 2,
+          createdAt: LATER,
+        }),
+        LATER,
+      );
+      await subject.flashcards.replaceObjectiveLinks(
+        flashcard.id,
+        ["objective-1"],
+        LATER,
+      );
+
+      await subject.flashcards.delete(flashcard.id);
+
+      await expect(
+        subject.flashcards.findById(flashcard.id),
+      ).resolves.toBeNull();
+      await expect(
+        subject.flashcards.findWithCurrentRevision(flashcard.id),
+      ).resolves.toBeNull();
+      await expect(
+        subject.flashcards.listRevisions(flashcard.id),
+      ).resolves.toEqual([]);
+      await expect(
+        subject.flashcards.findRevision(flashcard.id, 1),
+      ).resolves.toBeNull();
+      await expect(
+        subject.flashcards.countsByCertification(certificationFixture().id),
+      ).resolves.toEqual({ total: 0, active: 0 });
+      // The objective survives; only the mapping went with the card.
+      await expect(
+        subject.objectives.findById("objective-1"),
+      ).resolves.not.toBeNull();
+    });
+
+    it("refuses to delete a card that has been reviewed", async () => {
+      const flashcard = flashcardFixture();
+
+      await subject.flashcards.create(flashcard, cardRevisionFixture());
+      await subject.flashcards.saveSchedule(
+        flashcard.id,
+        scheduleFixture(),
+        NOW,
+      );
+      await subject.flashcards.recordReview(reviewRecordFixture());
+
+      // History is never deleted to make content deletable
+      // (`spec/DOMAIN-RULES.md` section 1.3): the restricting foreign key on the
+      // review's revision reference is what stops this, so the rule holds even
+      // for a caller that forgot to check. Callers run the delete inside a unit
+      // of work, so the partial work this rejection leaves behind rolls back;
+      // what the contract fixes is that the delete fails and the review stays.
+      await expect(subject.flashcards.delete(flashcard.id)).rejects.toThrow();
+
+      await expect(
+        subject.flashcards.listReviews(flashcard.id, 10),
+      ).resolves.toHaveLength(1);
     });
   });
 }

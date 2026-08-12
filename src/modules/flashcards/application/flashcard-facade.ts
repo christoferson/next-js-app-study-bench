@@ -391,6 +391,8 @@ export class FlashcardFacade {
           currentRevisionId: this.deps.ids.nextId(),
           lifecycleStatus: "DRAFT",
           sourceQuestionId: null,
+          generationMode: "MANUAL",
+          generationRunId: null,
           createdAt: now,
           updatedAt: now,
         };
@@ -637,6 +639,11 @@ export class FlashcardFacade {
           currentRevisionId: this.deps.ids.nextId(),
           lifecycleStatus: "DRAFT",
           sourceQuestionId: questionId,
+          // A conversion copies owner-authored content, so the card is `MANUAL`
+          // even when the question it came from was generated: no model produced
+          // this card's text.
+          generationMode: "MANUAL",
+          generationRunId: null,
           createdAt: now,
           updatedAt: now,
         };

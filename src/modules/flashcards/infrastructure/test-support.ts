@@ -81,6 +81,8 @@ export function flashcardFixture(
     currentRevisionId: "card-revision-1",
     lifecycleStatus: "DRAFT",
     sourceQuestionId: null,
+    generationMode: "MANUAL",
+    generationRunId: null,
     createdAt: FIXTURE_TIME,
     updatedAt: FIXTURE_TIME,
     ...overrides,

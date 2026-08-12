@@ -53,6 +53,7 @@ export function questionFixture(overrides: Partial<Question> = {}): Question {
     lifecycleStatus: "DRAFT",
     qualityStatus: "UNREVIEWED",
     generationMode: "MANUAL",
+    generationRunId: null,
     disputeReason: null,
     createdAt: FIXTURE_TIME,
     updatedAt: FIXTURE_TIME,

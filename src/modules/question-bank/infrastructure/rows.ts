@@ -33,6 +33,7 @@ export interface QuestionRow {
   readonly lifecycle_status: string;
   readonly quality_status: string;
   readonly generation_mode: string;
+  readonly generation_run_id: string | null;
   readonly dispute_reason: string | null;
   readonly created_at: string;
   readonly updated_at: string;
@@ -99,6 +100,7 @@ export function toQuestion(row: QuestionRow): Question {
     lifecycleStatus: toLifecycleStatus(row.lifecycle_status),
     qualityStatus: toQualityStatus(row.quality_status),
     generationMode: toGenerationMode(row.generation_mode),
+    generationRunId: row.generation_run_id,
     disputeReason: row.dispute_reason,
     createdAt: row.created_at,
     updatedAt: row.updated_at,

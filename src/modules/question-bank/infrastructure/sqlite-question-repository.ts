@@ -29,8 +29,8 @@ import {
 } from "./rows";
 
 const QUESTION_COLUMNS = `id, certification_id, current_revision_id,
-  lifecycle_status, quality_status, generation_mode, dispute_reason, created_at,
-  updated_at`;
+  lifecycle_status, quality_status, generation_mode, generation_run_id,
+  dispute_reason, created_at, updated_at`;
 
 const REVISION_COLUMNS = `id, question_id, revision_number, stem, instructions,
   question_type, content_payload, explanation, difficulty, tags, language,
@@ -305,10 +305,11 @@ export class SqliteQuestionRepository implements QuestionRepository {
     this.database
       .prepare(
         `INSERT INTO questions (id, certification_id, current_revision_id,
-           lifecycle_status, quality_status, generation_mode, dispute_reason,
-           created_at, updated_at)
+           lifecycle_status, quality_status, generation_mode, generation_run_id,
+           dispute_reason, created_at, updated_at)
          VALUES (@id, @certificationId, NULL, @lifecycleStatus, @qualityStatus,
-           @generationMode, @disputeReason, @createdAt, @updatedAt)`,
+           @generationMode, @generationRunId, @disputeReason, @createdAt,
+           @updatedAt)`,
       )
       .run({
         id: question.id,
@@ -316,6 +317,7 @@ export class SqliteQuestionRepository implements QuestionRepository {
         lifecycleStatus: question.lifecycleStatus,
         qualityStatus: question.qualityStatus,
         generationMode: question.generationMode,
+        generationRunId: question.generationRunId,
         disputeReason: question.disputeReason,
         createdAt: question.createdAt,
         updatedAt: question.updatedAt,

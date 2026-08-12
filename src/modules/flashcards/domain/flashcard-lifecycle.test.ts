@@ -24,6 +24,8 @@ function flashcardFixture(
     currentRevisionId: "rev-1",
     lifecycleStatus,
     sourceQuestionId: null,
+    generationMode: "MANUAL",
+    generationRunId: null,
     createdAt: "2026-03-01T08:00:00.000Z",
     updatedAt: "2026-03-01T08:00:00.000Z",
   };

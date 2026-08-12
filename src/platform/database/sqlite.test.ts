@@ -121,8 +121,9 @@ describe("runMigrations", () => {
 
       // The full list, so a migration that creates a table nobody expected is a
       // failure rather than a silent addition. Extended in D4 with the flashcard
-      // tables from migration 0003, and in D5 with the session and attempt tables
-      // from migration 0004.
+      // tables from migration 0003, in D5 with the session and attempt tables
+      // from migration 0004, and in D6 with the generation-run table from
+      // migration 0005.
       expect(tables.map((table) => table.name)).toEqual([
         "certification_objectives",
         "certifications",
@@ -130,6 +131,7 @@ describe("runMigrations", () => {
         "flashcard_reviews",
         "flashcard_revisions",
         "flashcards",
+        "generation_runs",
         "question_attempts",
         "question_objective_links",
         "question_revisions",

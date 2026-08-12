@@ -175,6 +175,17 @@ export interface Question {
   readonly lifecycleStatus: QuestionLifecycleStatus;
   readonly qualityStatus: QuestionQualityStatus;
   readonly generationMode: GenerationMode;
+  /**
+   * The generation run that produced this question, or `null` when the owner
+   * wrote it.
+   *
+   * The run holds the rest of the provenance — model, persona, template, and
+   * their versions (`SPEC.md` section 10.3) — so the question stores one
+   * reference rather than a copy that could drift from it. Typed as a plain
+   * string rather than imported from the ai-generation module: the bank does not
+   * depend on the generator, and the generator already depends on the bank.
+   */
+  readonly generationRunId: string | null;
   /** Why the owner disputed the question; present only while `DISPUTED`. */
   readonly disputeReason: string | null;
   readonly createdAt: IsoTimestamp;

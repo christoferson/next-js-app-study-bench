@@ -39,7 +39,8 @@ import {
 } from "./rows";
 
 const CARD_COLUMNS = `id, certification_id, current_revision_id,
-  lifecycle_status, source_question_id, created_at, updated_at`;
+  lifecycle_status, source_question_id, generation_mode, generation_run_id,
+  created_at, updated_at`;
 
 const REVISION_COLUMNS = `id, flashcard_id, revision_number, card_type,
   content_payload, search_text, notes, tags, language, created_at`;
@@ -228,15 +229,19 @@ export class SqliteFlashcardRepository implements FlashcardRepository {
     this.database
       .prepare(
         `INSERT INTO flashcards (id, certification_id, current_revision_id,
-           lifecycle_status, source_question_id, created_at, updated_at)
+           lifecycle_status, source_question_id, generation_mode,
+           generation_run_id, created_at, updated_at)
          VALUES (@id, @certificationId, NULL, @lifecycleStatus,
-           @sourceQuestionId, @createdAt, @updatedAt)`,
+           @sourceQuestionId, @generationMode, @generationRunId, @createdAt,
+           @updatedAt)`,
       )
       .run({
         id: flashcard.id,
         certificationId: flashcard.certificationId,
         lifecycleStatus: flashcard.lifecycleStatus,
         sourceQuestionId: flashcard.sourceQuestionId,
+        generationMode: flashcard.generationMode,
+        generationRunId: flashcard.generationRunId,
         createdAt: flashcard.createdAt,
         updatedAt: flashcard.updatedAt,
       });
@@ -267,6 +272,33 @@ export class SqliteFlashcardRepository implements FlashcardRepository {
     if (result.changes === 0) {
       throw new FlashcardNotFoundError(id);
     }
+  }
+
+  /**
+   * Removes a card completely.
+   *
+   * The current-revision pointer is cleared first: it is `ON DELETE RESTRICT`, so
+   * the revision rows cannot go while the root still points at one. The same
+   * restriction on `flashcard_reviews.flashcard_revision_id` and on the session
+   * item columns is what makes a studied card undeletable — the revision delete
+   * raises a constraint failure rather than removing the history that names it.
+   */
+  async delete(id: FlashcardId): Promise<void> {
+    const cleared = this.database
+      .prepare(`UPDATE flashcards SET current_revision_id = NULL WHERE id = ?`)
+      .run(id);
+
+    if (cleared.changes === 0) {
+      throw new FlashcardNotFoundError(id);
+    }
+
+    this.database
+      .prepare(`DELETE FROM flashcard_objective_links WHERE flashcard_id = ?`)
+      .run(id);
+    this.database
+      .prepare(`DELETE FROM flashcard_revisions WHERE flashcard_id = ?`)
+      .run(id);
+    this.database.prepare(`DELETE FROM flashcards WHERE id = ?`).run(id);
   }
 
   async listObjectiveLinks(id: FlashcardId): Promise<ObjectiveId[]> {

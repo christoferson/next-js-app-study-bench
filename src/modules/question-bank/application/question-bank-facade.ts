@@ -273,8 +273,10 @@ export class QuestionBankFacade {
    *
    * The root and its first revision are written in one transaction: a root
    * without content is not a valid aggregate (`SPEC.md` section 9.6).
-   * `generationMode` is `MANUAL` because D3 has no generator; provenance is
-   * recorded at creation rather than inferred later.
+   * `generationMode` is `MANUAL` and `generationRunId` is `null` because this is
+   * the owner-authoring path; provenance is recorded at creation rather than
+   * inferred later. A generated question is written by the ai-generation module,
+   * which supplies its own mode and run reference.
    */
   async createQuestion(
     certificationId: CertificationId,
@@ -299,6 +301,7 @@ export class QuestionBankFacade {
           lifecycleStatus: "DRAFT",
           qualityStatus: "UNREVIEWED",
           generationMode: "MANUAL",
+          generationRunId: null,
           disputeReason: null,
           createdAt: now,
           updatedAt: now,

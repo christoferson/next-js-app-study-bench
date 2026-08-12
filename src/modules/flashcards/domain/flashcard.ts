@@ -1,7 +1,10 @@
 import type { IsoTimestamp } from "@/platform/clock";
 import type { CertificationId } from "@/modules/certifications/domain/certification";
 import type { ObjectiveId } from "@/modules/certifications/domain/objective";
-import type { QuestionId } from "@/modules/question-bank/domain/question";
+import type {
+  GenerationMode,
+  QuestionId,
+} from "@/modules/question-bank/domain/question";
 
 /**
  * Flashcard aggregate: a root that owns identity, lifecycle, and provenance,
@@ -134,6 +137,18 @@ export interface Flashcard {
   readonly currentRevisionId: FlashcardRevisionId;
   readonly lifecycleStatus: FlashcardLifecycleStatus;
   readonly sourceQuestionId: QuestionId | null;
+  /**
+   * How the card came to exist. `MANUAL` covers both a card the owner wrote and
+   * one converted from a question: a conversion copies owner-authored content, so
+   * calling it anything else would overstate the model's involvement.
+   *
+   * The enum is the question bank's, because provenance modes are a property of
+   * generated content rather than of one content type
+   * (`spec/AI-GUIDELINES.md` section 1.2).
+   */
+  readonly generationMode: GenerationMode;
+  /** The generation run that produced this card, or `null` if none did. */
+  readonly generationRunId: string | null;
   readonly createdAt: IsoTimestamp;
   readonly updatedAt: IsoTimestamp;
 }

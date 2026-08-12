@@ -28,6 +28,12 @@ import type {
  * append-only and reviews are historical facts
  * (`spec/DOMAIN-RULES.md` sections 1.1 and 1.4), so the absence of those methods
  * is the enforcement.
+ *
+ * `delete` removes a whole card, matching `QuestionRepository.delete`. It is the
+ * write that D6 draft rejection needs: rejecting a generated card must leave
+ * nothing behind, exactly as rejecting a generated question does. It is not a
+ * general-purpose card deletion path — the flashcard facade offers no delete, so
+ * the owner still retires a card they have studied.
  */
 
 /** Bank filters. Every field but the certification and bounds is optional. */
@@ -148,6 +154,16 @@ export interface FlashcardRepository {
     status: FlashcardLifecycleStatus,
     occurredAt: IsoTimestamp,
   ): Promise<void>;
+  /**
+   * Removes the root, all of its revisions, and all of its objective links.
+   *
+   * Fails rather than cascading when a review record or a session item still
+   * names one of the card's revisions: history is never deleted to make content
+   * deletable (`spec/DOMAIN-RULES.md` section 1.3). The restricting foreign keys
+   * are what enforce that, so a studied card cannot be removed even by a caller
+   * that forgot to check.
+   */
+  delete(id: FlashcardId): Promise<void>;
 
   listObjectiveLinks(id: FlashcardId): Promise<ObjectiveId[]>;
   /** Replaces the whole mapping set for one card. */

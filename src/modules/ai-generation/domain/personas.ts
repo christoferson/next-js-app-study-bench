@@ -150,10 +150,14 @@ export function personaForStudyType(studyType: StudyType): Persona {
  * by a persona that has since been renamed must still render, showing the
  * recorded identifier and version even when the current registry cannot expand
  * them.
+ *
+ * `Object.hasOwn` rather than `in`, because `in` walks the prototype chain: a
+ * recorded identifier of `toString` or `constructor` would otherwise return an
+ * inherited function typed as a `Persona`.
  */
 export function findPersona(personaId: string): Persona | null {
-  return personaId in PERSONAS
-    ? PERSONAS[personaId as PersonaId]
+  return Object.hasOwn(PERSONAS, personaId)
+    ? (PERSONAS[personaId as PersonaId] ?? null)
     : null;
 }
 

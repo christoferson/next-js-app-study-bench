@@ -138,8 +138,14 @@ export type GenerationRequestInput = z.output<typeof generationRequestSchema>;
 
 /** Rejecting one generated draft from the run review screen. */
 export const rejectDraftSchema = z.object({
-  runId: z.string().max(ID_LIMIT).transform((value) => value.trim()),
-  itemId: z.string().max(ID_LIMIT).transform((value) => value.trim()),
+  runId: z
+    .string()
+    .max(ID_LIMIT)
+    .transform((value) => value.trim()),
+  itemId: z
+    .string()
+    .max(ID_LIMIT)
+    .transform((value) => value.trim()),
 });
 
 export type RejectDraftInput = z.output<typeof rejectDraftSchema>;

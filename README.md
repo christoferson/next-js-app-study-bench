@@ -6,12 +6,45 @@ StudyBench is a personal, single-user, AI-assisted study workbench for technical
 certifications, language examinations, and other structured learning goals. It is
 built incrementally in small, independently verifiable milestones.
 
-## Current state — D5
+## Current state — D6
 
-Milestone D5 adds **quick study sessions and progress** on top of the D4
-flashcard bank. Studying is now the primary action: the dashboard leads with
-"Start 10-minute session", or "Resume your session" when one is still running.
+Milestone D6 adds the **Bedrock AI foundation and raw-knowledge generation** on
+top of the D5 study sessions. You can now ask a model for a small batch of
+questions or flashcards for one track, review the batch, and keep or reject each
+item. **Out of the box it uses a fake model and costs nothing** — see
+[AI generation](#ai-generation) below.
 
+- "Generate with AI" on a track page opens `/study-tracks/[slug]/generate`:
+  questions or flashcards, 1–10 items, an optional difficulty, optional
+  objectives to target, optional extra instructions, and the item types the
+  track's persona supports. Generation is synchronous — you wait on the page, and
+  there is no queue or background worker.
+- Every batch is recorded as a **generation run** and every generated item is
+  linked to it. Run history is at `/study-tracks/[slug]/generation-runs`, and one
+  run's review screen at `.../generation-runs/[runId]` names the model, the
+  persona and its version, the prompt template and its version, the token usage
+  the provider reported, and what the batch produced.
+- Generated items land as **drafts, unreviewed**, marked
+  `AI generated — model knowledge`, and are never labelled official or real exam
+  material. Nothing generated can appear in a study session until you activate
+  it. Rejecting an item deletes it while it is still a draft; activating it makes
+  it yours, and generation will not touch it again.
+- Content is written by a **persona** chosen from the track's study type: a
+  technical-certification persona writes applied scenario questions in English, an
+  HSK persona writes word- and sentence-level material in simplified Chinese with
+  pinyin. The two produce structurally different prompts, not reworded copies.
+- Model output is validated against an application-owned schema and then checked
+  by deterministic rules (answerable choices, a marked correct answer, objectives
+  that exist on this track, no duplicate items in a batch) **before** anything is
+  stored. An item that fails is counted as failed, not saved, and a batch may be
+  reported as partly completed.
+- Asking twice for the same batch shows a notice linking the earlier run, with an
+  explicit "generate anyway" if that is what you meant.
+- A provider failure produces a `Failed` run you can read, with a category and
+  safe advice. No stack trace, credential, or provider message reaches the
+  interface.
+- Studying (D5) is still the primary action: the dashboard leads with
+  "Start 10-minute session", or "Resume your session" when one is still running.
 - A start screen at `/study/new` choosing what kind of session (one track, mixed
   tracks, questions only, flashcards only, mistake review, diagnostic), which
   tracks, and roughly how long (5–45 minutes; a guide, not a timer). A mode with
@@ -87,9 +120,10 @@ objectives, and flashcards are never hard-deleted — a card carries review
 history, so retirement is how it leaves the queue. A question can be deleted, but
 not while a flashcard made from it exists, and not once it has been answered or
 offered in a session. Sessions are composed by a deterministic strategy that
-reads only the bank: **no AI is involved in starting a session**. There are no
-imports, printable artifacts, audio, or AI features yet — those arrive in later
-milestones.
+reads only the bank: **no AI is involved in starting a session**. AI generation
+writes only drafts. There is no AI tutor, no explanation-on-demand, no source
+import or grounded generation, no printable artifacts, and no audio yet — those
+arrive in later milestones.
 
 See `SPEC.md` for the full specification and `PROGRESS.md` for implementation
 state.
@@ -128,18 +162,19 @@ To start over, stop the server and delete `data/study-bench.db` (plus any
 
 ## Commands
 
-| Command                | Purpose                                    |
-| ---------------------- | ------------------------------------------ |
-| `npm run dev`          | Start the development server on port 3000  |
-| `npm run build`        | Production build                           |
-| `npm start`            | Serve the production build (after `build`) |
-| `npm run seed`         | Insert the two demo study tracks           |
-| `npm test`             | Run unit and component tests once (Vitest) |
-| `npm run test:watch`   | Run tests in watch mode                    |
-| `npm run type-check`   | TypeScript type checking (`tsc --noEmit`)  |
-| `npm run lint`         | ESLint                                     |
-| `npm run format`       | Format the repository with Prettier        |
-| `npm run format:check` | Verify formatting without writing changes  |
+| Command                | Purpose                                       |
+| ---------------------- | --------------------------------------------- |
+| `npm run dev`          | Start the development server on port 3000     |
+| `npm run build`        | Production build                              |
+| `npm start`            | Serve the production build (after `build`)    |
+| `npm run seed`         | Insert the demo study tracks and demo content |
+| `npm test`             | Run unit and component tests once (Vitest)    |
+| `npm run test:watch`   | Run tests in watch mode                       |
+| `npm run test:live`    | Opt-in live provider tests (see below)        |
+| `npm run type-check`   | TypeScript type checking (`tsc --noEmit`)     |
+| `npm run lint`         | ESLint                                        |
+| `npm run format`       | Format the repository with Prettier           |
+| `npm run format:check` | Verify formatting without writing changes     |
 
 ### Seeding demo content
 
@@ -149,9 +184,77 @@ npm run seed
 
 `npm run seed` is explicit and never runs automatically. It inserts two clearly
 labelled demo tracks (an AWS certification track and an HSK Chinese track) with
-their objectives, each marked `Demo` in the interface. It is safe to re-run: a
-track whose slug already exists is skipped and reported, so seeding never
-duplicates or overwrites your own content.
+their objectives, each marked `Demo` in the interface, and then fills both banks
+on both tracks with demo questions and demo flashcards so a fresh database has
+something studiable in it. The demo items are invented for this repository —
+fictional services, fictional numbers — and nothing in them is presented as
+official or real exam material.
+
+It is safe to re-run, and idempotent in two layers:
+
+- **Tracks, by slug.** A demo track whose slug already exists is skipped and
+  reported, untouched.
+- **Bank content, per bank.** A question bank or flashcard bank that already holds
+  **any** item is left completely alone; an empty one receives the whole demo set.
+  Nothing is edited, deleted, or de-duplicated item by item, so re-seeding can
+  never overwrite your wording or add a second copy beside an item you rewrote.
+  Emptying a bank and re-seeding does write the demo items again — that is what
+  "empty bank" means here.
+
+Demo items are written through the same facades your own authoring uses, so they
+pass the same validation and are recorded as manual content, not as AI-generated
+content. They are activated on the way in, so a session can offer them
+immediately.
+
+## AI generation
+
+Generation is configured with three environment variables. **None of them is a
+secret**, and StudyBench never reads, stores, logs, or renders an AWS credential:
+the Bedrock client resolves credentials through the AWS default provider chain
+(your shared profile, environment variables, or a task role).
+
+| Variable                  | Default                                        | Purpose                                        |
+| ------------------------- | ---------------------------------------------- | ---------------------------------------------- |
+| `LANGUAGE_MODEL_PROVIDER` | `fake`                                         | `fake` or `bedrock`                            |
+| `BEDROCK_MODEL_ID`        | `us.anthropic.claude-sonnet-4-5-20250929-v1:0` | The Bedrock model or inference profile to call |
+| `AWS_REGION`              | resolved by the AWS SDK                        | Passed to the Bedrock client when set          |
+
+**Fake by default, on purpose.** A fresh clone runs the entire generation flow —
+the form, the run record, the drafts, the review screen, the failure paths — with
+no AWS account and no spend, because the default provider is a deterministic fake
+model. Its output is obviously placeholder text. Nothing about the fake path is a
+stub: the same facade, validation, checks, and persistence run.
+
+To use a real model:
+
+```bash
+LANGUAGE_MODEL_PROVIDER=bedrock AWS_PROFILE=your-profile npm run dev
+```
+
+Your account needs `bedrock:Converse` access to the configured model in the
+configured region. **This spends money** — a batch of a few items is a few
+thousand tokens, and the form shows which model it will call before you submit.
+
+`APP_ENV=production` with anything other than `LANGUAGE_MODEL_PROVIDER=bedrock`
+**fails loudly** at composition, naming the variable to fix: a production
+deployment quietly filling your bank with placeholder items would be worse than
+refusing to serve.
+
+Environment files are ignored by git (`.env`, `.env*.local`), so local settings
+are never committed.
+
+### Live provider tests
+
+`npm test` never calls AWS. The one test that does is excluded twice over: it
+lives outside `src/`, which the default Vitest configuration does not scan, and
+every case skips unless `STUDYBENCH_LIVE_AI_TESTS=1` is set.
+
+```bash
+STUDYBENCH_LIVE_AI_TESTS=1 LANGUAGE_MODEL_PROVIDER=bedrock npm run test:live
+```
+
+It generates one question. It is a smoke test, not a milestone gate, and it costs
+whatever one small request costs.
 
 ## Local verification
 
@@ -167,7 +270,11 @@ npm run build
 
 With `npm run seed` followed by `npm run dev`:
 
-- `http://localhost:3000` — dashboard listing the seeded `Demo` tracks
+- `http://localhost:3000` — dashboard listing the seeded `Demo` tracks; both
+  tracks already have questions and cards, and "Start 10-minute session" has
+  content to offer
+- Run `npm run seed` a second time — every bank reports "already present, left
+  unchanged" and nothing is duplicated
 - Create a track, add objectives, then restart the server — the data is still
   there
 - Archive a track, use "Show archived tracks", and restore it
@@ -198,6 +305,16 @@ With `npm run seed` followed by `npm run dev`:
   confidence calibration, recent mistakes, and recent sessions, with no pass
   probability anywhere
 - After a wrong answer, "Mistake review" becomes available on `/study/new`
+- On the AWS demo track, choose "Generate with AI", ask for 3 questions, and wait:
+  the run review screen opens naming the model, the persona and version, the
+  prompt template and version, and the token usage
+- Ask for exactly the same batch again — a notice links the earlier run and offers
+  "generate anyway"
+- Reject one draft (it disappears), open another and activate it (the review
+  screen now says it is no longer a draft and offers no reject), and edit a third
+  (the review screen says it changed since generation and shows your version)
+- On the HSK demo track, generate flashcards — the cards are in simplified
+  Chinese with pinyin, marked `AI generated — model knowledge`, and are drafts
 - `http://localhost:3000/study/sessions/nope` — not-found page
 - `http://localhost:3000/study-tracks/unknown` — not-found page
 - `http://localhost:3000/study-tracks/demo-cloud-practitioner/questions/nope` —
@@ -219,13 +336,17 @@ src/
 ├── platform/
 │   ├── clock.ts                      injectable UTC clock port
 │   ├── id-generator.ts               injectable ID port (crypto.randomUUID)
+│   ├── hash.ts                       SHA-256, for request fingerprints
 │   └── database/                     connection, config, migrations, runner,
 │                                     shared connection composition
+├── seed/                             demo bank content and its wiring
 └── modules/
     ├── certifications/               study tracks and objectives
     ├── question-bank/                questions and their revisions
     ├── flashcards/                   cards, revisions, review scheduling
-    └── study-sessions/               sessions, attempts, progress measures
+    ├── study-sessions/               sessions, attempts, progress measures
+    └── ai-generation/                personas, prompt templates, model gateway,
+                                      generation runs
 ```
 
 Each module has the same five layers plus a composition root:
@@ -243,9 +364,17 @@ Each module has the same five layers plus a composition root:
     └── composition.ts                server-only composition root
 ```
 
-All four modules share one database connection and one transaction runner from
+All five modules share one database connection and one transaction runner from
 `platform/database/composition.ts`, so migrations run once and writes serialise
 across modules.
+
+The module dependency direction is
+`certifications ← question-bank ← flashcards ← ai-generation`. Generation reads
+and writes both banks; neither bank, nor the study-sessions module, knows that
+generation exists. That direction is asserted by a source scan in
+`modules/ai-generation/module-boundaries.test.ts`, which also checks that the AWS
+SDK appears in exactly one adapter, that the domain imports no framework, and that
+nothing in the module logs.
 
 Question and card content are discriminated unions per type, stored as validated
 JSON with the type in its own column. Revisions are append-only: the repository
@@ -278,5 +407,22 @@ Whether a question can be hard-deleted is decided by a composite of dependency
 checkers wired in `modules/question-bank/composition.ts`: one reports flashcards
 derived from it, one reports attempts and session history. The database enforces
 the same rule independently with `ON DELETE RESTRICT`.
+
+The model sits behind a port (`modules/ai-generation/ports/language-model-gateway.ts`)
+with two adapters: a Bedrock adapter that uses the **Converse API with forced tool
+use**, so structured output is a tool schema the model must fill rather than JSON
+parsed out of prose, and a deterministic fake. Which one runs is decided once, in
+`modules/ai-generation/composition.ts`, from the environment; the facade, the
+domain, the routes, and the components never read `process.env`. Structured output
+is validated with a bounded repair: one retry that tells the model what was wrong,
+then a clear failure.
+
+Personas and prompt templates are versioned modules under
+`modules/ai-generation/domain/`, never strings built inside a route handler. Every
+run records the model, provider, persona id and version, template id and version,
+and a SHA-256 fingerprint of the request, so a batch generated months ago can still
+be explained by the exact instructions that produced it. Your free-text
+"additional instructions" always go in the user message, never into the system
+instructions, so owner input cannot rewrite the persona's prohibitions.
 
 Detailed engineering rules live in `CLAUDE.md` and `spec/`.

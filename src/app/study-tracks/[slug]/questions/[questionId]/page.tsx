@@ -1,9 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import {
-  describeDifficulty,
-  describeGenerationMode,
-} from "@/modules/question-bank/domain/question";
+import { describeDifficulty } from "@/modules/question-bank/domain/question";
 import { getQuestionBankFacade } from "@/modules/question-bank/composition";
 import {
   linkObjectiveAction,
@@ -11,6 +8,7 @@ import {
 } from "@/modules/question-bank/ui/actions";
 import {
   LifecycleBadge,
+  ProvenanceBadge,
   QualityBadge,
   QuestionTypeBadge,
 } from "@/modules/question-bank/ui/question-badges";
@@ -65,9 +63,12 @@ export default async function QuestionDetailPage({
           <QuestionTypeBadge type={currentRevision.questionType} />
           <LifecycleBadge status={question.lifecycleStatus} />
           <QualityBadge status={question.qualityStatus} />
-          <span className="badge">
-            {describeGenerationMode(question.generationMode)}
-          </span>
+          <ProvenanceBadge
+            alwaysShow
+            generationMode={question.generationMode}
+            generationRunId={question.generationRunId}
+            slug={certification.slug}
+          />
         </div>
         {question.disputeReason !== null ? (
           <p className="lede">Disputed: {question.disputeReason}</p>

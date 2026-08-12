@@ -2,11 +2,11 @@
 
 ## Current milestone
 
-D5 — Quick Study Sessions and Progress
+D6 — Bedrock AI Foundation and Raw-Knowledge Generation
 
 ## Status
 
-Completed on 2026-08-11. Awaiting explicit authorization for D6.
+Completed on 2026-08-12. Awaiting explicit authorization for D7.
 
 ## Completed milestones
 
@@ -15,6 +15,7 @@ Completed on 2026-08-11. Awaiting explicit authorization for D6.
 - D3 — Manual Question Bank (2026-08-11)
 - D4 — Flashcards and Review Scheduling (2026-08-11)
 - D5 — Quick Study Sessions and Progress (2026-08-11)
+- D6 — Bedrock AI Foundation and Raw-Knowledge Generation (2026-08-12)
 
 ## In progress
 
@@ -22,8 +23,7 @@ Completed on 2026-08-11. Awaiting explicit authorization for D6.
 
 ## Planned milestones
 
-- D6 — Bedrock AI Foundation and Raw-Knowledge Generation (proposed next, not
-  authorized)
+- D7 — AI Tutor and Question Quality Workflow (proposed next, not authorized)
 - D4 — Flashcards and Review Scheduling
 - D5 — Quick Study Sessions and Progress
 - D6 — Bedrock AI Foundation and Raw-Knowledge Generation
@@ -213,6 +213,52 @@ Completed on 2026-08-11. Awaiting explicit authorization for D6.
   unseen objectives, session history, confidence calibration, bank counts)
   and no pass probability. The route is forced dynamic so it is not
   prerendered against the build machine's database.
+- 2026-08-12 (D6): New `src/modules/ai-generation/` module. AI goes through a
+  `LanguageModelGateway` port with two adapters: `BedrockLanguageModelGateway`
+  (Converse API with forced tool use, temperature 0; the only place
+  `@aws-sdk/client-bedrock-runtime` is imported — asserted by a module
+  boundary test) and a deterministic `FakeLanguageModelGateway` for all
+  default tests (zero AWS calls in `npm test`). `converse` on the port is
+  deferred to D7.
+- 2026-08-12 (D6): Configuration per SPEC 17: `LANGUAGE_MODEL_PROVIDER`
+  (fake|bedrock, fake by default in development; `APP_ENV=production` without
+  bedrock fails loudly at composition), `BEDROCK_MODEL_ID` (default
+  `us.anthropic.claude-sonnet-4-5-20250929-v1:0` cross-region inference
+  profile), `AWS_REGION`/credentials via the AWS default provider chain —
+  never in code, config files, or logs.
+- 2026-08-12 (D6): Personas via a registry keyed by study type (no scattered
+  provider checks): `technical-certification` v1 and `hsk` v1, with
+  structurally different versioned prompt templates
+  (`question-model-knowledge` v1, `flashcard-model-knowledge` v1) stored
+  outside route handlers and fixture-tested. Owner free-text instructions go
+  into the user message, never system instructions.
+- 2026-08-12 (D6): Migration `0005` adds STRICT
+  `generation_runs` (all SPEC 10.3 provenance fields, input hash, token
+  usage, status PENDING/COMPLETED/PARTIAL/FAILED) plus nullable
+  `generation_run_id` on questions and flashcards and
+  `flashcards.generation_mode` (default MANUAL). Items carry only the run id;
+  full provenance lives on the run so they cannot disagree.
+- 2026-08-12 (D6): Generation flow: zod-validated structured output with one
+  bounded repair attempt, then deterministic checks (SPEC 11.3) before
+  persistence; invalid items count as failed and the run becomes
+  COMPLETED/PARTIAL/FAILED. Drafts land as DRAFT/UNREVIEWED/MODEL_KNOWLEDGE
+  in one transaction, objective-linked, badged "AI generated — model
+  knowledge" and never labeled official. Accept = the normal edit/activate
+  workflow; reject deletes only while still DRAFT at revision 1. Batch cap 10
+  items; duplicate input hash shows a notice with a link and an explicit
+  "generate anyway".
+- 2026-08-12 (D6): Live Bedrock verified once end-to-end (us-east-1, Sonnet
+  4.5 inference profile, 2699 total tokens): output landed as a DRAFT with
+  correct provenance. An opt-in live smoke test exists via `npm run
+  test:live` (excluded from `npm test`).
+- 2026-08-12 (D6): `npm run seed` now also seeds demo bank content through
+  the real facades when a track's bank is empty (5 questions + 2 cards on
+  AWS, 2 questions + 5 cards on HSK, all ACTIVE, objective-linked, clearly
+  fictional). A bank with any existing item is left untouched.
+- 2026-08-12 (D6): The seed script has its own small composition wiring
+  (`src/seed/composition.ts`) because module composition roots import
+  `server-only`, which plain `tsx` cannot resolve; dropping that marker from
+  app roots would weaken client/server isolation.
 
 ## Deviations
 
@@ -238,34 +284,41 @@ Completed on 2026-08-11. Awaiting explicit authorization for D6.
 - `better-sqlite3` native-module compilation on platforms without a prebuilt
   binary was not exercised.
 
-## Validation results (2026-08-11, after D5)
+## Validation results (2026-08-12, after D6)
 
 - `npm run format:check` — passed
 - `npm run lint` — passed
 - `npm run type-check` — passed
-- `npm test` — passed (46 files, 874 tests: pure composer/grading unit
-  tests, repository contract suites for all four modules against fresh
-  in-memory migrated SQLite, facade transactionality tests, and component
-  tests)
-- `npm run build` — passed (24 routes; `/progress` forced dynamic)
-- Manual (D5, scratch database): a 12-item mixed session composed with
-  overdue cards first per the priority order; answers with confidence and
-  card ratings persisted item-by-item; interruption resumed at the same
-  frozen item; early finish left remaining items pending; the summary and
-  `/progress` rendered coverage, accuracy, calibration, recent mistakes, and
-  unseen objectives with no pass-probability language; mistake review
-  composed the just-missed question and is disabled (with a reason) when no
-  studiable mistake exists; an answered question became undeletable
-  (attempts + session history reported as blockers) while retire kept
-  working; a mid-session question edit did not alter the in-progress
-  session; unknown session id 404s.
-- Manual (regression): D1–D4 flows unchanged (`/health`, dashboard, tracks,
-  objectives, question bank, flashcards, review).
-- Three defects were found and fixed during D5 verification itself: empty
-  duration parsed as 0 seconds, `/progress` prerendered statically at build
-  time, and mistake review offerable when the only mistake was retired.
+- `npm test` — passed (60 files, 1161 tests, zero AWS calls; includes
+  deterministic-check tests for every SPEC 11.3 rule, prompt-template
+  fixture tests, generation facade flows against the fake gateway, and a
+  module-boundary test pinning the AWS SDK to the one adapter)
+- `npm run build` — passed (27 routes)
+- Manual (D6, fake provider, scratch database): seed populated both banks
+  and a second seed changed nothing; generated 3 AWS questions and 4 HSK
+  flashcards as drafts with full run provenance (persona and template ids +
+  versions, token counts); rejected a draft; edited another to revision 2
+  and activated it through the normal workflow; duplicate-batch notice fired
+  and "generate anyway" created a new run; a failed run rendered a safe
+  error with zero credential/stack leakage (scanned the HTML); a quick
+  session composed 8 items from seeded content.
+- Manual (D6, live Bedrock): one live run through the app (1 AWS question,
+  us-east-1, Sonnet 4.5 inference profile, 2096 in / 603 out tokens) landed
+  as DRAFT/UNREVIEWED/MODEL_KNOWLEDGE with correct provenance; the opt-in
+  live smoke test also passed. Default `npm test` makes no AWS calls.
+- Manual (regression, orchestrator): `/health` unchanged; generate and
+  run-list routes 200; seeded demo content visible in both banks (10 "Demo
+  question" occurrences on the AWS bank page; vocabulary/cloze/reversed
+  cards on HSK); `npm run seed` on the real dev database inserted demo bank
+  content alongside the pre-existing tracks.
+- Historical note (D5 validation, 2026-08-11): 46 files / 874 tests passed
+  with the same gates; a 12-item mixed session, resumption, frozen
+  revisions, mistake review, diagnostics, and `/progress` were all verified
+  manually; three defects found and fixed during that verification (empty
+  duration parsed as 0, `/progress` statically prerendered, mistake review
+  offerable with only retired mistakes).
 
 ## Next proposed milestone
 
-D6 — Bedrock AI Foundation and Raw-Knowledge Generation. Not authorized;
-waiting for explicit user authorization.
+D7 — AI Tutor and Question Quality Workflow. Not authorized; waiting for
+explicit user authorization.

@@ -375,7 +375,9 @@ function assertNotClaimedOfficial(texts: readonly string[]): string | null {
  */
 function assertNoFabricatedSources(tags: readonly string[]): string | null {
   for (const tag of tags) {
-    if (FABRICATED_SOURCE_PATTERNS.some((pattern) => pattern.test(tag.trim()))) {
+    if (
+      FABRICATED_SOURCE_PATTERNS.some((pattern) => pattern.test(tag.trim()))
+    ) {
       return "It cites a source, but this batch was generated from model knowledge with no sources.";
     }
   }

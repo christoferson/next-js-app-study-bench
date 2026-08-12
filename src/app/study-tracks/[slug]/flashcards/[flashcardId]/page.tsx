@@ -11,6 +11,7 @@ import {
   ConvertedBadge,
   FlashcardLifecycleBadge,
 } from "@/modules/flashcards/ui/flashcard-badges";
+import { ProvenanceBadge } from "@/modules/question-bank/ui/question-badges";
 import { CardFace } from "@/modules/flashcards/ui/card-face";
 import { FlashcardObjectiveLinkForm } from "@/modules/flashcards/ui/flashcard-objective-link-form";
 import { FlashcardOwnerPanel } from "@/modules/flashcards/ui/flashcard-owner-panel";
@@ -60,6 +61,12 @@ export default async function FlashcardDetailPage({
           <CardTypeBadge type={currentRevision.cardType} />
           <FlashcardLifecycleBadge status={flashcard.lifecycleStatus} />
           {view.sourceQuestionId !== null ? <ConvertedBadge /> : null}
+          <ProvenanceBadge
+            alwaysShow
+            generationMode={flashcard.generationMode}
+            generationRunId={flashcard.generationRunId}
+            slug={certification.slug}
+          />
         </div>
         <p className="lede">
           {describeCardPrompting(currentRevision.cardType)}

@@ -3,6 +3,7 @@ import type { QuestionWithRevision } from "@/modules/question-bank/domain/questi
 import { stemExcerpt } from "@/modules/question-bank/domain/question";
 import {
   LifecycleBadge,
+  ProvenanceBadge,
   QualityBadge,
   QuestionTypeBadge,
 } from "./question-badges";
@@ -29,6 +30,11 @@ export function QuestionBankList({ slug, items }: QuestionBankListProps) {
             <QuestionTypeBadge type={revision.questionType} />
             <LifecycleBadge status={question.lifecycleStatus} />
             <QualityBadge status={question.qualityStatus} />
+            <ProvenanceBadge
+              generationMode={question.generationMode}
+              generationRunId={question.generationRunId}
+              slug={slug}
+            />
           </div>
 
           <h3 className="card-title">

@@ -2,6 +2,7 @@ import Link from "next/link";
 import type { FlashcardWithRevision } from "@/modules/flashcards/domain/flashcard";
 import { textExcerpt } from "@/modules/flashcards/domain/flashcard";
 import { cardSummary } from "@/modules/flashcards/domain/flashcard-content";
+import { ProvenanceBadge } from "@/modules/question-bank/ui/question-badges";
 import {
   CardTypeBadge,
   ConvertedBadge,
@@ -29,6 +30,11 @@ export function FlashcardBankList({ slug, items }: FlashcardBankListProps) {
             <CardTypeBadge type={revision.cardType} />
             <FlashcardLifecycleBadge status={flashcard.lifecycleStatus} />
             {flashcard.sourceQuestionId === null ? null : <ConvertedBadge />}
+            <ProvenanceBadge
+              generationMode={flashcard.generationMode}
+              generationRunId={flashcard.generationRunId}
+              slug={slug}
+            />
           </div>
 
           <h3 className="card-title">

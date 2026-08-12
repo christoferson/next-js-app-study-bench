@@ -42,9 +42,26 @@ interface DemoTrack {
 
 const DEMO_SOURCE_TYPE: ObjectiveSourceType = "USER_DEFINED";
 
+const TECHNICAL_TRACK_NAME =
+  "AWS Certified Generative AI Developer - Professional (AIP-C01)";
+const LANGUAGE_TRACK_NAME = "HSK Chinese — Demo Track";
+
+/**
+ * The slugs the demo tracks are seeded under.
+ *
+ * Derived from the same names the tracks are inserted with, and exported so the
+ * demo bank content (`src/seed`) addresses the tracks it belongs to by the same
+ * value rather than by a second copy of the slug string. Renaming a demo track
+ * therefore moves both in one edit instead of silently orphaning its content.
+ */
+export const DEMO_TRACK_SLUGS = {
+  technicalCertification: slugify(TECHNICAL_TRACK_NAME),
+  languageProficiency: slugify(LANGUAGE_TRACK_NAME),
+} as const;
+
 const DEMO_TRACKS: readonly DemoTrack[] = [
   {
-    name: "AWS Certified Generative AI Developer - Professional (AIP-C01)",
+    name: TECHNICAL_TRACK_NAME,
     provider: "AWS",
     examCode: "AIP-C01",
     studyType: "TECHNICAL_CERTIFICATION",
@@ -93,7 +110,7 @@ const DEMO_TRACKS: readonly DemoTrack[] = [
     ],
   },
   {
-    name: "HSK Chinese — Demo Track",
+    name: LANGUAGE_TRACK_NAME,
     provider: "HSK",
     examCode: null,
     studyType: "LANGUAGE_PROFICIENCY",

@@ -33,7 +33,8 @@ export const GENERATED_ITEM_KINDS: readonly GeneratedItemKind[] = [
  * the owner paid for while hiding that the other two were rejected. `FAILED`
  * covers both "the provider call failed" and "nothing survived validation".
  */
-export type GenerationRunStatus = "PENDING" | "COMPLETED" | "PARTIAL" | "FAILED";
+export type GenerationRunStatus =
+  "PENDING" | "COMPLETED" | "PARTIAL" | "FAILED";
 
 export const GENERATION_RUN_STATUSES: readonly GenerationRunStatus[] = [
   "PENDING",

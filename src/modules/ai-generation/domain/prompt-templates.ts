@@ -33,8 +33,7 @@ import type { Persona } from "./personas";
  */
 
 export type PromptTemplateId =
-  | "question-model-knowledge"
-  | "flashcard-model-knowledge";
+  "question-model-knowledge" | "flashcard-model-knowledge";
 
 /** What one template renders into, ready for the gateway. */
 export interface RenderedPrompt {

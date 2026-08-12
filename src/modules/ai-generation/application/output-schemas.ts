@@ -95,7 +95,11 @@ const requiredModelText = (limit: number) =>
     .transform((value) => value.trim());
 
 const modelTags = z
-  .array(z.string().max(TAG_LIMIT, { message: `use ${TAG_LIMIT} characters or fewer` }))
+  .array(
+    z
+      .string()
+      .max(TAG_LIMIT, { message: `use ${TAG_LIMIT} characters or fewer` }),
+  )
   .max(MAX_TAGS, { message: `list ${MAX_TAGS} tags or fewer` })
   .nullish()
   .transform((values): readonly string[] => {
@@ -108,7 +112,9 @@ const modelTags = z
 
 const modelObjectiveIds = z
   .array(z.string().max(200))
-  .max(MAX_LIST_ENTRIES, { message: `list ${MAX_LIST_ENTRIES} objectives or fewer` })
+  .max(MAX_LIST_ENTRIES, {
+    message: `list ${MAX_LIST_ENTRIES} objectives or fewer`,
+  })
   .nullish()
   .transform((values): readonly string[] =>
     (values ?? []).map((id) => id.trim()).filter((id) => id.length > 0),
@@ -134,7 +140,9 @@ const questionItemSchema = z.object({
   instructions: optionalModelText(INSTRUCTIONS_LIMIT),
   choices: z
     .array(requiredModelText(CHOICE_TEXT_LIMIT))
-    .max(MAX_LIST_ENTRIES, { message: `list ${MAX_LIST_ENTRIES} choices or fewer` })
+    .max(MAX_LIST_ENTRIES, {
+      message: `list ${MAX_LIST_ENTRIES} choices or fewer`,
+    })
     .nullish()
     .transform((values): readonly string[] => values ?? []),
   correctChoiceIndexes: z
@@ -158,11 +166,9 @@ const questionItemSchema = z.object({
 });
 
 const questionResponseSchema = z.object({
-  questions: z
-    .array(questionItemSchema)
-    .max(MAX_ITEMS_PER_RESPONSE, {
-      message: `return ${MAX_ITEMS_PER_RESPONSE} questions or fewer`,
-    }),
+  questions: z.array(questionItemSchema).max(MAX_ITEMS_PER_RESPONSE, {
+    message: `return ${MAX_ITEMS_PER_RESPONSE} questions or fewer`,
+  }),
 });
 
 const commonCardFields = {
@@ -558,7 +564,8 @@ function toCardContent(item: CardItem): FlashcardContent {
  */
 function describeIssues(error: z.ZodError): readonly string[] {
   const messages = error.issues.map((issue) => {
-    const path = issue.path.length === 0 ? "the response" : issue.path.join(".");
+    const path =
+      issue.path.length === 0 ? "the response" : issue.path.join(".");
 
     return `${path}: ${issue.message}`;
   });

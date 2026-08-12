@@ -153,6 +153,37 @@ export default async function StudyTrackPage({ params }: StudyTrackPageProps) {
           </div>
         </div>
       </section>
+
+      {/* Generation is offered for a live track only, like starting a session: an
+          archived track is one the owner has put down, and filling its bank is not
+          what they are doing. The generate page itself remains reachable, so this
+          hides an unhelpful invitation rather than a capability. */}
+      {isArchived ? null : (
+        <section aria-labelledby="generate-heading" className="section">
+          <div className="section-heading">
+            <h2 id="generate-heading">Generate with AI</h2>
+            <p className="section-note">
+              A model can write a small batch of questions or cards from its own
+              knowledge. Everything it writes lands as a draft for you to review
+              — it is never official exam material.
+            </p>
+            <div className="section-actions">
+              <Link
+                className="button"
+                href={`/study-tracks/${certification.slug}/generate`}
+              >
+                Generate with AI
+              </Link>
+              <Link
+                className="button-quiet"
+                href={`/study-tracks/${certification.slug}/generation-runs`}
+              >
+                Past runs
+              </Link>
+            </div>
+          </div>
+        </section>
+      )}
     </main>
   );
 }

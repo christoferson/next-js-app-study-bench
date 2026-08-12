@@ -29,7 +29,8 @@ import type { ProviderUsage } from "@/modules/ai-generation/domain/generation-ru
  * leaks into the application.
  */
 export interface JsonSchema {
-  readonly type: "object" | "array" | "string" | "integer" | "number" | "boolean";
+  readonly type:
+    "object" | "array" | "string" | "integer" | "number" | "boolean";
   readonly description?: string;
   readonly properties?: Readonly<Record<string, JsonSchema>>;
   readonly required?: readonly string[];

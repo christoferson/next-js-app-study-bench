@@ -158,9 +158,9 @@ artifacts still arrive later.
 
 ### Added after D6, outside a milestone
 
-Work on the owner's own imported HSK track, authorized separately from the
-milestone plan. It adds no new dependency and no new milestone scope; `PROGRESS.md`
-still records D6 as the last completed milestone.
+Work authorized separately from the milestone plan. It adds no new milestone scope;
+`PROGRESS.md` still records D6 as the last completed milestone. One dependency was
+added, `unpdf`, for reading an uploaded syllabus PDF.
 
 - **The HSK 5 syllabus as an objective tree.** `npm run import:hsk-syllabus` adds
   the examination's skills and parts, the syllabus's grammar points, and the
@@ -188,6 +188,12 @@ still records D6 as the last completed milestone.
   vocabulary with AI" and "Generate drills"; a technical certification keeps its
   single "Generate with AI" entry point. The choice comes from the track's study
   type, never from its provider or name.
+- **"Import objectives"** on a track page: upload a syllabus as a PDF or text file,
+  or paste it, and a model proposes an objective tree you read and confirm before
+  anything is written — see
+  [Importing objectives from a syllabus](#importing-objectives-from-a-syllabus).
+  The uploaded file is not stored, applying is one transaction, and applying the
+  same proposal twice is refused rather than duplicating it.
 - **Vocabulary and cloze cards hold more.** A vocabulary card can now carry
   further senses, synonyms, antonyms, several worked examples each with its own
   reading and translation, and a usage note — all of them **optional and
@@ -204,8 +210,10 @@ offered in a session. Sessions are composed by a deterministic strategy that
 reads only the bank: **no AI is involved in starting a session**. AI generation
 creates only drafts, and the one flow that touches content you already have —
 enrichment — appends a revision and never rewrites one. There is no AI tutor, no
-explanation-on-demand, and no source import, grounded generation, or printable
-artifacts yet — those arrive in later milestones.
+explanation-on-demand, and no source library, grounded generation, or printable
+artifacts yet — those arrive in later milestones. An imported syllabus is read once
+for its outline and the document itself is not kept, which is why it is not a source
+library.
 
 See `SPEC.md` for the full specification and `PROGRESS.md` for implementation
 state.
@@ -404,6 +412,46 @@ Bedrock:
 The cards are chosen for you: the next active vocabulary cards that still have only
 a gloss, in a deterministic order. Run it repeatedly to walk the list. When every
 card already has its detail, the page says so and makes no model call.
+
+### Importing objectives from a syllabus
+
+"Import objectives" on a track page, at
+`/study-tracks/[slug]/objectives/import`, turns a syllabus into an objective tree
+without typing it out. Upload the exam guide as a **PDF**, upload a **plain-text
+file**, or **paste** the outline; a model reads it and proposes a tree of up to
+three levels, with the codes and percentage weightings the document states. Text is
+extracted locally with [`unpdf`](https://github.com/unjs/unpdf) — pure JavaScript,
+no system PDF tooling to install.
+
+**Nothing is written until you confirm.** Extraction produces a proposal, not
+objectives. The confirm page at `/study-tracks/[slug]/objectives/import/[runId]`
+shows the whole proposed tree — codes, titles, weights, descriptions, and the node
+count — and you choose:
+
+- **Where it came from.** "Official syllabus" or "Unofficial or AI-assisted",
+  recorded on every objective the import adds. There is no default, because a model
+  reading a PDF is not what makes an outline official.
+- **Apply**, which inserts the whole tree in one transaction, appended after your
+  existing objectives and in document order, then opens the track. Or **Discard**,
+  which writes nothing.
+
+The confirm page has its own URL and survives a refresh: the proposal is stored on
+the extraction's run row, so re-reading it costs nothing and you can extract on a
+laptop and confirm on a phone. **Applying the same proposal twice is refused** with
+a message rather than duplicating the tree, which is what a stale tab would
+otherwise do.
+
+**The uploaded file itself is not stored.** It is read once, in the request, and
+discarded; only the outline you apply is kept. A source library that keeps
+documents arrives in a later milestone. Two limits apply: 10 MB per file, and
+120,000 characters of extracted text — a longer document is truncated, and the
+confirm page says so and tells you to check for a missing final section.
+
+A PDF that is a scan has no text layer to read, and a table-heavy layout sometimes
+extracts badly. Both cases end in a run that proposed nothing, and the answer to
+both is to paste the outline as text instead. Like every other AI flow, this one
+runs end to end on the default fake provider at no cost; a real extraction of a
+full exam guide is roughly 15–20k tokens.
 
 ## Spoken audio
 

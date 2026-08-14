@@ -17,6 +17,7 @@ import {
   MAX_ENRICHMENT_ITEMS,
   MIN_BATCH_ITEMS,
 } from "@/modules/ai-generation/domain/generation-limits";
+import { IMPORT_SOURCE_CHOICES } from "@/modules/ai-generation/domain/objective-import";
 
 /**
  * Authoritative input schemas for generation requests.
@@ -160,6 +161,61 @@ export const enrichmentRequestSchema = z.object({
 });
 
 export type EnrichmentRequestInput = z.output<typeof enrichmentRequestSchema>;
+
+/**
+ * How much extracted text one import may send to a model.
+ *
+ * A hard cap rather than a warning, because this is the one input whose size the owner
+ * does not choose directly: a 200-page PDF is one click. Text beyond the cap is
+ * truncated with a notice on the confirm step rather than the upload being refused,
+ * because a syllabus's outline is at the front of the document and refusing a long file
+ * outright would be refusing the common case. 120k characters is roughly 30k input
+ * tokens, which is a few cents on the configured model and comfortably inside its
+ * context.
+ */
+export const MAX_SYLLABUS_CHARACTERS = 120_000;
+
+/** The largest file the upload form accepts, before extraction. */
+export const MAX_SYLLABUS_FILE_BYTES = 10 * 1024 * 1024;
+
+/**
+ * One objective-import request.
+ *
+ * Only the notes and the paste box are parsed here. The file itself never becomes a
+ * schema field: bytes are not something zod should be carrying, and the size and type
+ * checks a file needs are stated in `objective-import-facade.ts` where the extractor is,
+ * so they hold for any caller rather than only for this form.
+ */
+export const objectiveImportRequestSchema = z.object({
+  /**
+   * Text the owner pasted instead of, or as well as, uploading a file.
+   *
+   * Bounded by the same cap the extracted text is, so a paste and an upload are the
+   * same size of request.
+   */
+  pastedText: optionalText(MAX_SYLLABUS_CHARACTERS),
+  additionalInstructions: optionalText(ADDITIONAL_INSTRUCTIONS_LIMIT),
+});
+
+export type ObjectiveImportRequestInput = z.output<
+  typeof objectiveImportRequestSchema
+>;
+
+/** Applying one proposed outline, from the confirm page. */
+export const applyObjectiveImportSchema = z.object({
+  runId: z
+    .string()
+    .max(ID_LIMIT)
+    .transform((value) => value.trim()),
+  sourceType: enumOf(
+    IMPORT_SOURCE_CHOICES,
+    "Choose whether this outline is the official syllabus or unofficial.",
+  ),
+});
+
+export type ApplyObjectiveImportInput = z.output<
+  typeof applyObjectiveImportSchema
+>;
 
 /** Rejecting one generated draft from the run review screen. */
 export const rejectDraftSchema = z.object({

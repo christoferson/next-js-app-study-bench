@@ -9,6 +9,8 @@ import { SqliteObjectiveRepository } from "@/modules/certifications/infrastructu
 import { SqliteQuestionRepository } from "@/modules/question-bank/infrastructure/sqlite-question-repository";
 import { SqliteFlashcardRepository } from "@/modules/flashcards/infrastructure/sqlite-flashcard-repository";
 import { GenerationFacade } from "@/modules/ai-generation/application/generation-facade";
+import { ObjectiveImportFacade } from "@/modules/ai-generation/application/objective-import-facade";
+import { UnpdfDocumentTextExtractor } from "@/modules/ai-generation/infrastructure/unpdf-document-text-extractor";
 import type { LanguageModelGateway } from "@/modules/ai-generation/ports/language-model-gateway";
 import { BedrockLanguageModelGateway } from "@/modules/ai-generation/infrastructure/bedrock-language-model-gateway";
 import {
@@ -87,6 +89,28 @@ export function createLanguageModelGateway(
   }
 }
 
+/**
+ * Composition for the objective import.
+ *
+ * Wired here beside the generation facade because it makes the same provider decision
+ * and shares the same transaction runner. The one addition is the text extractor, which
+ * is the only place `unpdf` is reachable from — a boundary test pins that.
+ */
+export function createObjectiveImportFacade(
+  database: SqliteDatabase,
+  runner?: SqliteTransactionRunner,
+  gateway?: LanguageModelGateway,
+): ObjectiveImportFacade {
+  return new ObjectiveImportFacade({
+    certifications: new SqliteCertificationRepository(database),
+    unitOfWork: new SqliteGenerationUnitOfWork(database, runner),
+    gateway: gateway ?? createLanguageModelGateway(),
+    extractor: new UnpdfDocumentTextExtractor(),
+    clock: systemClock,
+    ids: cryptoIdGenerator,
+  });
+}
+
 let facade: GenerationFacade | null = null;
 
 export function getGenerationFacade(): GenerationFacade {
@@ -97,4 +121,19 @@ export function getGenerationFacade(): GenerationFacade {
   }
 
   return facade;
+}
+
+let importFacade: ObjectiveImportFacade | null = null;
+
+export function getObjectiveImportFacade(): ObjectiveImportFacade {
+  if (importFacade === null) {
+    const container = getDatabaseContainer();
+
+    importFacade = createObjectiveImportFacade(
+      container.database,
+      container.transactions,
+    );
+  }
+
+  return importFacade;
 }

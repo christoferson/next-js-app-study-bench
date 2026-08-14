@@ -2,7 +2,7 @@ import {
   findUnmappedRadicals,
   normalizeCjkRadicals,
   normalizeLigatures,
-} from "./text-normalization";
+} from "@/shared/text-normalization";
 
 /**
  * Parser for a tabular HSK vocabulary list, as extracted text.

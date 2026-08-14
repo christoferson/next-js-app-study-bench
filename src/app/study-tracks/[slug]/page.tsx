@@ -105,6 +105,17 @@ export default async function StudyTrackPage({ params }: StudyTrackPageProps) {
             >
               Add root objective
             </Link>
+            {/*
+              Beside the manual route rather than instead of it. Typing an outline by
+              hand is the reliable way and stays the primary button; importing is the
+              fast way when the owner has the exam guide as a file.
+            */}
+            <Link
+              className="button-quiet"
+              href={`/study-tracks/${certification.slug}/objectives/import`}
+            >
+              Import objectives
+            </Link>
           </div>
         </div>
         <ObjectiveTree slug={certification.slug} nodes={view.objectiveTree} />

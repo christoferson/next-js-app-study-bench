@@ -35,6 +35,17 @@ export const MAX_BATCH_ITEMS = 10;
  */
 export const MAX_ENRICHMENT_ITEMS = 20;
 
+/**
+ * How many "items" one objective import asks for: one document.
+ *
+ * The run schema requires `requested_item_count >= 1`, and for an import the honest
+ * number is one — the owner uploaded one syllabus. How many *objectives* come back is
+ * not something the request asks for; that is capped by `MAX_IMPORT_NODES`, which is a
+ * property of the answer rather than of the request, and the run's
+ * `successful_item_count` records how many were actually proposed.
+ */
+export const OBJECTIVE_IMPORT_ITEM_COUNT = 1;
+
 /** The cap for one request, by what the request is for. */
 export function maxItemsFor(kind: GeneratedItemKind): number {
   switch (kind) {
@@ -43,6 +54,8 @@ export function maxItemsFor(kind: GeneratedItemKind): number {
       return MAX_BATCH_ITEMS;
     case "ENRICH_VOCABULARY":
       return MAX_ENRICHMENT_ITEMS;
+    case "OBJECTIVE_IMPORT":
+      return OBJECTIVE_IMPORT_ITEM_COUNT;
   }
 }
 
@@ -68,10 +81,22 @@ export function maxOutputTokensFor(
   kind: GeneratedItemKind,
   itemCount: number,
 ): number {
+  if (kind === "OBJECTIVE_IMPORT") {
+    // Not per item: the request is one document, and what the answer costs depends on
+    // how many objectives the *document* lists, which nobody knows before reading it.
+    // A flat ceiling sized for the node cap — roughly 150 objectives with a code, a
+    // title, and a short description each — so a full outline is not truncated halfway
+    // through and a runaway answer is still bounded.
+    return OBJECTIVE_IMPORT_OUTPUT_TOKENS;
+  }
+
   const perItem = tokensPerItem(kind);
 
   return 1_000 + perItem * Math.max(MIN_BATCH_ITEMS, itemCount);
 }
+
+/** The ceiling for one extracted outline. See `maxOutputTokensFor`. */
+export const OBJECTIVE_IMPORT_OUTPUT_TOKENS = 16_000;
 
 function tokensPerItem(kind: GeneratedItemKind): number {
   switch (kind) {
@@ -84,5 +109,9 @@ function tokensPerItem(kind: GeneratedItemKind): number {
     // the three answers per item even though it is the cheapest to think of.
     case "ENRICH_VOCABULARY":
       return 700;
+    case "OBJECTIVE_IMPORT":
+      // Unreachable: `maxOutputTokensFor` answers for this kind before it asks. Stated
+      // so the switch stays exhaustive and a fifth kind must still decide.
+      return OBJECTIVE_IMPORT_OUTPUT_TOKENS;
   }
 }

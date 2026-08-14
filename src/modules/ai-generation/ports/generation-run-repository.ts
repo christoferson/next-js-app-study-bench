@@ -1,3 +1,4 @@
+import type { IsoTimestamp } from "@/platform/clock";
 import type { CertificationId } from "@/modules/certifications/domain/certification";
 import type {
   GenerationRun,
@@ -62,6 +63,16 @@ export interface GenerationRunRepository {
    * exist.
    */
   complete(run: GenerationRun): Promise<void>;
+  /**
+   * Claims a run's proposal for application, once.
+   *
+   * Resolves `true` when this call is the one that claimed it and `false` when it was
+   * already applied — which is the idempotence guard for the objective import: applying
+   * the same proposed tree twice would silently double every objective, and a stale
+   * confirm page in a second tab is the ordinary way that happens. Implementations must
+   * make the check and the claim one atomic statement, not a read followed by a write.
+   */
+  markApplied(id: GenerationRunId, appliedAt: IsoTimestamp): Promise<boolean>;
   /** How many of a run's items survive, so a review screen can say so. */
   countItems(id: GenerationRunId): Promise<GenerationRunItemCounts>;
   /**

@@ -1,4 +1,4 @@
-import { normalizeLigatures } from "./text-normalization";
+import { normalizeLigatures } from "@/shared/text-normalization";
 
 /**
  * Parser for the content outline of an official AWS exam guide, as extracted

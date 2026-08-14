@@ -19,6 +19,8 @@ import {
   FLASHCARD_SCHEMA_NAME,
   QUESTION_SCHEMA_NAME,
 } from "@/modules/ai-generation/application/output-schemas";
+import { OBJECTIVE_IMPORT_SCHEMA_NAME } from "@/modules/ai-generation/application/objective-import-schema";
+import { MAX_IMPORT_NODES } from "@/modules/ai-generation/domain/objective-import";
 import type {
   LanguageModelGateway,
   StructuredGenerationRequest,
@@ -67,6 +69,17 @@ export interface FakeLanguageModelGatewayOptions {
   readonly responses?: readonly FakeGatewayResponse[];
   /** Token counts to report, or `null` to report none. */
   readonly usage?: ProviderUsage | null;
+  /**
+   * What a synthesised objective import returns.
+   *
+   * `"OUTLINE"` reads the uploaded document out of the prompt and returns the outline
+   * it states. `"MALFORMED"` returns an answer that cannot be valid whatever the
+   * document said — a node with no title, nested past the depth cap — which is how the
+   * repair attempt and the resulting failed run are exercised without scripting a
+   * payload by hand. It applies to every turn, so both the first attempt and the
+   * repair fail, which is the case the owner sees as `MALFORMED_OUTPUT`.
+   */
+  readonly objectiveImportMode?: "OUTLINE" | "MALFORMED";
 }
 
 /** One prompt as the gateway received it, for tests that inspect what was sent. */
@@ -91,6 +104,8 @@ export class FakeLanguageModelGateway implements LanguageModelGateway {
 
   private readonly usage: ProviderUsage | null;
 
+  private readonly objectiveImportMode: "OUTLINE" | "MALFORMED";
+
   private turn = 0;
 
   private readonly prompts: SentPrompt[] = [];
@@ -100,6 +115,7 @@ export class FakeLanguageModelGateway implements LanguageModelGateway {
     this.modelId = options.modelId ?? "fake-deterministic";
     this.responses = options.responses ?? null;
     this.usage = options.usage === undefined ? DEFAULT_USAGE : options.usage;
+    this.objectiveImportMode = options.objectiveImportMode ?? "OUTLINE";
   }
 
   /** How many provider turns have been taken, for tests that assert repair. */
@@ -157,7 +173,7 @@ export class FakeLanguageModelGateway implements LanguageModelGateway {
     this.turn += 1;
 
     if (this.responses === null) {
-      return synthesizePayload(request);
+      return synthesizePayload(request, this.objectiveImportMode);
     }
 
     const scripted = this.responses[this.turn - 1];
@@ -183,10 +199,13 @@ interface PromptFacts {
   readonly cardTypes: readonly CardType[];
   /** The words an enrichment prompt asked about, in the order they were listed. */
   readonly enrichmentTerms: readonly string[];
+  /** The uploaded document an import prompt carried, as extracted text. */
+  readonly uploadedDocument: string;
 }
 
 function synthesizePayload<Value>(
   request: StructuredGenerationRequest<Value>,
+  objectiveImportMode: "OUTLINE" | "MALFORMED",
 ): unknown {
   const facts = readPrompt(request.user);
 
@@ -197,6 +216,10 @@ function synthesizePayload<Value>(
       return { flashcards: synthesizeCards(facts) };
     case ENRICHMENT_SCHEMA_NAME:
       return { words: synthesizeEnrichments(facts) };
+    case OBJECTIVE_IMPORT_SCHEMA_NAME:
+      return objectiveImportMode === "MALFORMED"
+        ? malformedOutline()
+        : { objectives: extractOutline(facts.uploadedDocument) };
     default:
       // A schema this gateway has no fixture for is a wiring mistake, not a
       // provider problem, so it is loud.
@@ -397,6 +420,107 @@ function synthesizeEnrichments(facts: PromptFacts): readonly unknown[] {
 const DEMO_EXAMPLE_TAIL = "是这个示例里的词，编号";
 const DEMO_EXAMPLE_LEAD = "示例句子包含";
 
+/**
+ * The outline a document states, read out of the prompt rather than invented.
+ *
+ * This is the fake's one genuinely *extractive* fixture, and it is extractive on
+ * purpose. Returning a fixed demo tree would make every objective-import test pass
+ * regardless of whether the document ever reached the model, which is the one thing
+ * those tests exist to check. So it parses what the prompt actually carried: a line
+ * beginning with a dotted number is an objective, its depth is how many segments the
+ * number has, and a trailing `(20%)` is its weight. That is enough structure for a
+ * synthetic fixture to assert a specific tree, and it means a facade that forgot to
+ * pass `syllabusText` produces an empty outline and a failing test.
+ *
+ * A real model does far more than this — it reads prose, tables, and broken columns.
+ * The fake is not pretending otherwise; it is being deterministic about the one shape
+ * the test fixtures use, and the caps are applied so the fixture cannot accidentally
+ * produce output the validator would reject for size.
+ */
+function extractOutline(document: string): readonly unknown[] {
+  interface Draft {
+    code: string;
+    title: string;
+    weight: number | null;
+    depth: number;
+    children: Draft[];
+  }
+
+  const roots: Draft[] = [];
+  // The most recent draft at each depth, so a child attaches to the line above it.
+  const openByDepth = new Map<number, Draft>();
+  let produced = 0;
+
+  for (const line of document.split("\n")) {
+    const match = /^\s*(\d+(?:\.\d+)*)\.?\s+(.+?)\s*$/.exec(line);
+
+    if (match === null || produced >= MAX_IMPORT_NODES) {
+      continue;
+    }
+
+    const code = match[1] ?? "";
+    const rest = match[2] ?? "";
+    const weightMatch = /^(.*?)\s*\(\s*(\d+(?:\.\d+)?)\s*%\s*\)$/.exec(rest);
+    const title = (weightMatch === null ? rest : (weightMatch[1] ?? "")).trim();
+
+    if (title.length === 0) {
+      continue;
+    }
+
+    const draft: Draft = {
+      code,
+      title,
+      weight: weightMatch === null ? null : Number(weightMatch[2]),
+      depth: code.split(".").length,
+      children: [],
+    };
+    const parent = openByDepth.get(draft.depth - 1);
+
+    if (draft.depth === 1 || parent === undefined) {
+      roots.push(draft);
+    } else {
+      parent.children.push(draft);
+    }
+
+    openByDepth.set(draft.depth, draft);
+    produced += 1;
+  }
+
+  const toPayload = (draft: Draft): unknown => ({
+    code: draft.code,
+    title: draft.title,
+    // No description: the fixture has nothing to say beyond the title, and the
+    // template tells a model to leave it out in exactly that case.
+    weight: draft.weight,
+    children: draft.children.map(toPayload),
+  });
+
+  return roots.map(toPayload);
+}
+
+/**
+ * An answer that cannot be valid, for exercising the repair bound.
+ *
+ * Wrong in two independent ways — an empty title and a fourth level of nesting — so it
+ * fails whichever check runs first and stays invalid if one of the caps is ever
+ * relaxed.
+ */
+function malformedOutline(): unknown {
+  return {
+    objectives: [
+      {
+        title: "",
+        children: [
+          {
+            title: "Too deep",
+            children: [{ title: "Deeper", children: [{ title: "Deepest" }] }],
+          },
+        ],
+      },
+    ],
+  };
+}
+
 /** Objectives for one item: at most one, rotating through what was offered. */
 function pickObjective(
   objectiveIds: readonly string[],
@@ -438,6 +562,7 @@ function readPrompt(user: string): PromptFacts {
     questionTypes,
     cardTypes,
     enrichmentTerms: readEnrichmentTerms(user),
+    uploadedDocument: readDelimitedBlock(user, "owner_uploaded_document"),
   };
 }
 
@@ -459,18 +584,23 @@ function readCount(user: string): number {
  * Each line is `term | reading | meaning`, and only the first field is the word.
  */
 function readEnrichmentTerms(user: string): readonly string[] {
-  const block = /<owner_vocabulary>\n([\s\S]*?)\n<\/owner_vocabulary>/.exec(
-    user,
-  )?.[1];
-
-  if (block === undefined) {
-    return [];
-  }
-
-  return block
+  return readDelimitedBlock(user, "owner_vocabulary")
     .split("\n")
     .map((line) => (line.split("|")[0] ?? "").trim())
     .filter((term) => term.length > 0);
+}
+
+/**
+ * The text inside one named delimiter pair, or empty.
+ *
+ * Reading only from inside the delimiters is what makes the fake a fair stand-in for a
+ * model that respects them: a document is found where the template puts documents, and
+ * owner notes elsewhere in the message are not mistaken for one.
+ */
+function readDelimitedBlock(user: string, tag: string): string {
+  return (
+    new RegExp(`<${tag}>\\n([\\s\\S]*?)\\n</${tag}>`).exec(user)?.[1] ?? ""
+  );
 }
 
 function matchLine(user: string, pattern: RegExp): string | null {

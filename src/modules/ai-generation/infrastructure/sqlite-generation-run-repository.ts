@@ -19,7 +19,8 @@ const RUN_COLUMNS = `id, certification_id, item_kind, generation_mode,
   model_provider, model_id, persona_id, persona_version, prompt_template_id,
   prompt_template_version, input_hash, selected_source_snapshot_ids,
   requested_item_count, successful_item_count, failed_item_count,
-  usage_metadata, failure_reason, started_at, completed_at, status`;
+  usage_metadata, failure_reason, proposed_payload, applied_at, started_at,
+  completed_at, status`;
 
 /**
  * SQLite-backed generation-run persistence.
@@ -113,13 +114,15 @@ export class SqliteGenerationRunRepository implements GenerationRunRepository {
            persona_version, prompt_template_id, prompt_template_version,
            input_hash, selected_source_snapshot_ids, requested_item_count,
            successful_item_count, failed_item_count, usage_metadata,
-           failure_reason, started_at, completed_at, status)
+           failure_reason, proposed_payload, applied_at, started_at,
+           completed_at, status)
          VALUES (@id, @certificationId, @itemKind, @generationMode,
            @modelProvider, @modelId, @personaId, @personaVersion,
            @promptTemplateId, @promptTemplateVersion, @inputHash,
            @selectedSourceSnapshotIds, @requestedItemCount,
            @successfulItemCount, @failedItemCount, @usageMetadata,
-           @failureReason, @startedAt, @completedAt, @status)`,
+           @failureReason, @proposedPayload, @appliedAt, @startedAt,
+           @completedAt, @status)`,
       )
       .run({
         id: run.id,
@@ -141,6 +144,8 @@ export class SqliteGenerationRunRepository implements GenerationRunRepository {
         failedItemCount: run.failedItemCount,
         usageMetadata: serializeUsage(run.usageMetadata),
         failureReason: run.failureReason,
+        proposedPayload: run.proposedPayload,
+        appliedAt: run.appliedAt,
         startedAt: run.startedAt,
         completedAt: run.completedAt,
         status: run.status,
@@ -162,6 +167,7 @@ export class SqliteGenerationRunRepository implements GenerationRunRepository {
              failed_item_count = @failedItemCount,
              usage_metadata = @usageMetadata,
              failure_reason = @failureReason,
+             proposed_payload = @proposedPayload,
              completed_at = @completedAt,
              status = @status
          WHERE id = @id`,
@@ -172,6 +178,10 @@ export class SqliteGenerationRunRepository implements GenerationRunRepository {
         failedItemCount: run.failedItemCount,
         usageMetadata: serializeUsage(run.usageMetadata),
         failureReason: run.failureReason,
+        // Written on completion because that is when a proposal exists: the PENDING
+        // row is created before the model is called. `applied_at` is deliberately not
+        // here — applying happens later, by the owner, through `markApplied`.
+        proposedPayload: run.proposedPayload,
         completedAt: run.completedAt,
         status: run.status,
       });
@@ -179,6 +189,30 @@ export class SqliteGenerationRunRepository implements GenerationRunRepository {
     if (result.changes === 0) {
       throw new GenerationRunNotFoundError(run.id);
     }
+  }
+
+  /**
+   * Claims a proposal, or reports that it was already claimed.
+   *
+   * The guard is the `applied_at IS NULL` in the statement, not a read followed by a
+   * write: a conditional `UPDATE` is atomic, so two tabs that both post Apply produce
+   * one row change and one zero, and the loser is refused. Checking first and updating
+   * second would let both pass the check.
+   *
+   * Returns whether the claim succeeded rather than throwing, because "already applied"
+   * is an ordinary answer the facade turns into an owner-facing message, and the
+   * repository has no business deciding how that reads.
+   */
+  async markApplied(id: GenerationRunId, appliedAt: string): Promise<boolean> {
+    const result = this.database
+      .prepare(
+        `UPDATE generation_runs
+         SET applied_at = ?
+         WHERE id = ? AND applied_at IS NULL AND proposed_payload IS NOT NULL`,
+      )
+      .run(appliedAt, id);
+
+    return result.changes === 1;
   }
 
   async countItems(id: GenerationRunId): Promise<GenerationRunItemCounts> {
@@ -189,6 +223,11 @@ export class SqliteGenerationRunRepository implements GenerationRunRepository {
     }
 
     const source = itemSourceFor(run.itemKind);
+
+    if (source === null) {
+      return { total: 0, draft: 0, active: 0 };
+    }
+
     const row = this.database
       .prepare(
         `SELECT
@@ -220,6 +259,11 @@ export class SqliteGenerationRunRepository implements GenerationRunRepository {
     }
 
     const source = itemSourceFor(run.itemKind);
+
+    if (source === null) {
+      return [];
+    }
+
     const rows = this.database
       .prepare(
         `SELECT id FROM ${source.table}
@@ -245,12 +289,19 @@ export class SqliteGenerationRunRepository implements GenerationRunRepository {
  * it touched are reached through those. Every column the two queries need
  * (`id`, `created_at`, `lifecycle_status`) is on `flashcards` either way, which is
  * why the subquery form fits both without a second shape.
+ *
+ * `null` is the fourth answer and means "this kind of run has no bank items at all".
+ * An objective-import run proposes objectives, which are the track's outline rather
+ * than bank content, and they are inserted by the owner's own Apply rather than by the
+ * run — so there is no table to look in and no query to run.
  */
 function itemSourceFor(kind: GeneratedItemKind): {
   readonly table: "questions" | "flashcards";
   readonly condition: string;
-} {
+} | null {
   switch (kind) {
+    case "OBJECTIVE_IMPORT":
+      return null;
     case "QUESTION":
       return { table: "questions", condition: "generation_run_id = ?" };
     case "FLASHCARD":

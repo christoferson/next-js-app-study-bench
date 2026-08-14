@@ -97,6 +97,27 @@ describe("ai-generation internal boundaries", () => {
     ]);
   });
 
+  it("keeps the PDF library inside the one adapter that owns it", () => {
+    // Same rule as the AWS SDK, for the same reason: `unpdf` is an infrastructure
+    // detail behind `ports/document-text-extractor.ts`, and the facade takes bytes and
+    // a kind so it can be tested with a stub extractor. An application-layer import
+    // would put a PDF parser — and a second text-extraction path — inside the flow the
+    // unit tests exercise.
+    const importers = generationFiles()
+      .filter((file) =>
+        importSpecifiers(file).some(
+          (specifier) =>
+            specifier === "unpdf" || specifier.startsWith("unpdf/"),
+        ),
+      )
+      .map((file) => file.split(sep).at(-1));
+
+    // Only the adapter, and not even its own test: the extractor test builds a PDF out
+    // of bytes and drives it through the adapter, so nothing else in the module has any
+    // reason to name the library.
+    expect([...importers].sort()).toEqual(["unpdf-document-text-extractor.ts"]);
+  });
+
   it("keeps the domain free of framework, database, and environment access", () => {
     const forbidden = [
       "react",

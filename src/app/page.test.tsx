@@ -29,6 +29,7 @@ vi.mock("@/modules/study-sessions/composition", () => ({
 // facade tests.
 vi.mock("@/modules/certifications/ui/actions", () => ({
   restoreCertificationAction: vi.fn(),
+  deleteCertificationAction: vi.fn(),
 }));
 
 const ACTIVE_TRACK = certificationFixture({

@@ -623,4 +623,158 @@ CREATE TABLE media_assets (
 CREATE INDEX media_assets_created_idx ON media_assets (created_at DESC);
 `,
   },
+  {
+    id: "0008",
+    description:
+      "OBJECTIVE_IMPORT runs with a proposed payload the owner confirms",
+    sql: `
+-- Importing an objective tree is a fourth kind of generation request: a model reads
+-- a syllabus the owner uploaded and proposes a tree, and *nothing is written to the
+-- bank until the owner confirms it*. Three consequences shape this migration.
+--
+-- 1. item_kind must allow 'OBJECTIVE_IMPORT'. SQLite cannot alter a CHECK in place,
+--    so the table is rebuilt exactly as 0006 rebuilt it, including the link backup:
+--    questions.generation_run_id, flashcards.generation_run_id and
+--    flashcard_revisions.generation_run_id all reference this table
+--    ON DELETE SET NULL, so a bare DROP TABLE would make the whole bank forget its
+--    provenance. PRAGMA foreign_keys = OFF is not available — it is a no-op inside
+--    the transaction the migration runner wraps each migration in — so the links are
+--    copied out and written back within that one transaction.
+--
+--    0006 backed up two columns; this one backs up three, because 0006 itself added
+--    the third after its own rebuild.
+--
+-- 2. proposed_payload holds the validated tree between extraction and confirmation.
+--    It is on the run row rather than in a session or a hidden form field so the
+--    confirm page is an ordinary shareable, refreshable URL, and so a tree the owner
+--    never applied leaves the same readable record as one they did. It is TEXT
+--    holding JSON, validated by a schema on the way out (never cast), for the reason
+--    usage_metadata is: the database is an external boundary. NULL for every run of
+--    the other three kinds, which propose nothing.
+--
+-- 3. applied_at is the idempotence guard. Applying a tree twice would silently
+--    double every objective, and a stale confirm page in a second tab is the
+--    ordinary way that happens. The column records when the tree was inserted, so a
+--    second apply is refused by reading the row rather than by trusting the browser.
+--    It is deliberately not a new status value: PENDING/COMPLETED/PARTIAL/FAILED
+--    describe whether the *model call* worked, and an extraction that succeeded is
+--    COMPLETED whether or not the owner went on to apply it.
+
+CREATE TABLE generation_link_backup_0008 (
+  item_table TEXT NOT NULL,
+  item_id TEXT NOT NULL,
+  generation_run_id TEXT NOT NULL
+) STRICT;
+
+INSERT INTO generation_link_backup_0008 (item_table, item_id, generation_run_id)
+  SELECT 'questions', id, generation_run_id
+    FROM questions WHERE generation_run_id IS NOT NULL;
+
+INSERT INTO generation_link_backup_0008 (item_table, item_id, generation_run_id)
+  SELECT 'flashcards', id, generation_run_id
+    FROM flashcards WHERE generation_run_id IS NOT NULL;
+
+INSERT INTO generation_link_backup_0008 (item_table, item_id, generation_run_id)
+  SELECT 'flashcard_revisions', id, generation_run_id
+    FROM flashcard_revisions WHERE generation_run_id IS NOT NULL;
+
+-- Identical to the 0006 definition apart from the widened item_kind CHECK and the
+-- two new columns. Repeated in full rather than patched, for the reason 0006 gives:
+-- a rebuilt table is defined by the statement that creates it.
+CREATE TABLE generation_runs_0008 (
+  id TEXT PRIMARY KEY,
+  certification_id TEXT NOT NULL
+    REFERENCES certifications (id) ON DELETE CASCADE,
+  -- OBJECTIVE_IMPORT, like ENRICH_VOCABULARY, creates no bank items. Unlike it, it
+  -- creates nothing at all until the owner applies the run: the model's answer lives
+  -- in proposed_payload and the objectives are inserted by a later, separate action.
+  item_kind TEXT NOT NULL
+    CHECK (item_kind IN ('QUESTION', 'FLASHCARD', 'ENRICH_VOCABULARY',
+      'OBJECTIVE_IMPORT')),
+  generation_mode TEXT NOT NULL
+    CHECK (generation_mode IN ('MANUAL', 'MODEL_KNOWLEDGE', 'SOURCE_GROUNDED',
+      'HYBRID', 'IMPORTED', 'VARIANT', 'WEB_RESEARCH')),
+  model_provider TEXT NOT NULL,
+  model_id TEXT NOT NULL,
+  persona_id TEXT NOT NULL,
+  persona_version INTEGER NOT NULL CHECK (persona_version >= 1),
+  prompt_template_id TEXT NOT NULL,
+  prompt_template_version INTEGER NOT NULL CHECK (prompt_template_version >= 1),
+  input_hash TEXT NOT NULL,
+  selected_source_snapshot_ids TEXT NOT NULL,
+  requested_item_count INTEGER NOT NULL CHECK (requested_item_count >= 1),
+  successful_item_count INTEGER NOT NULL CHECK (successful_item_count >= 0),
+  failed_item_count INTEGER NOT NULL CHECK (failed_item_count >= 0),
+  usage_metadata TEXT,
+  failure_reason TEXT,
+  -- The validated tree an OBJECTIVE_IMPORT run proposed, as JSON. NULL for every
+  -- other kind, and NULL for an import run that failed before producing one.
+  proposed_payload TEXT,
+  -- When the proposed tree was inserted into the objective hierarchy. NULL means
+  -- "not applied", which is what makes a second apply refusable.
+  applied_at TEXT,
+  started_at TEXT NOT NULL,
+  completed_at TEXT,
+  status TEXT NOT NULL
+    CHECK (status IN ('PENDING', 'COMPLETED', 'PARTIAL', 'FAILED')),
+  CHECK ((status = 'PENDING') = (completed_at IS NULL)),
+  -- Nothing can be applied that was never proposed.
+  CHECK (applied_at IS NULL OR proposed_payload IS NOT NULL)
+) STRICT;
+
+INSERT INTO generation_runs_0008 (id, certification_id, item_kind,
+    generation_mode, model_provider, model_id, persona_id, persona_version,
+    prompt_template_id, prompt_template_version, input_hash,
+    selected_source_snapshot_ids, requested_item_count, successful_item_count,
+    failed_item_count, usage_metadata, failure_reason, proposed_payload,
+    applied_at, started_at, completed_at, status)
+  SELECT id, certification_id, item_kind, generation_mode, model_provider,
+         model_id, persona_id, persona_version, prompt_template_id,
+         prompt_template_version, input_hash, selected_source_snapshot_ids,
+         requested_item_count, successful_item_count, failed_item_count,
+         usage_metadata, failure_reason, NULL, NULL, started_at, completed_at,
+         status
+    FROM generation_runs;
+
+DROP TABLE generation_runs;
+
+ALTER TABLE generation_runs_0008 RENAME TO generation_runs;
+
+CREATE INDEX generation_runs_track_idx
+  ON generation_runs (certification_id, started_at);
+
+CREATE INDEX generation_runs_input_hash_idx
+  ON generation_runs (certification_id, input_hash);
+
+-- The links the DROP nulled, restored from the backup.
+UPDATE questions
+  SET generation_run_id = (
+    SELECT b.generation_run_id FROM generation_link_backup_0008 b
+      WHERE b.item_table = 'questions' AND b.item_id = questions.id)
+  WHERE id IN (
+    SELECT item_id FROM generation_link_backup_0008
+      WHERE item_table = 'questions');
+
+UPDATE flashcards
+  SET generation_run_id = (
+    SELECT b.generation_run_id FROM generation_link_backup_0008 b
+      WHERE b.item_table = 'flashcards' AND b.item_id = flashcards.id)
+  WHERE id IN (
+    SELECT item_id FROM generation_link_backup_0008
+      WHERE item_table = 'flashcards');
+
+UPDATE flashcard_revisions
+  SET generation_run_id = (
+    SELECT b.generation_run_id FROM generation_link_backup_0008 b
+      WHERE b.item_table = 'flashcard_revisions'
+        AND b.item_id = flashcard_revisions.id)
+  WHERE id IN (
+    SELECT item_id FROM generation_link_backup_0008
+      WHERE item_table = 'flashcard_revisions');
+
+-- No index is recreated for flashcard_revisions: dropping generation_runs drops
+-- only the indexes on generation_runs itself, so the one 0006 created is untouched.
+DROP TABLE generation_link_backup_0008;
+`,
+  },
 ];

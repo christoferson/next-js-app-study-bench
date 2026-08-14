@@ -39,12 +39,36 @@ export function generationRunFixture(
     failedItemCount: 0,
     usageMetadata: null,
     failureReason: null,
+    proposedPayload: null,
+    appliedAt: null,
     startedAt: FIXTURE_TIME,
     completedAt: null,
     status: "PENDING",
     ...overrides,
   };
 }
+
+/**
+ * A small synthetic syllabus, in the numbered-outline shape the fake gateway reads.
+ *
+ * Synthetic on purpose: no real exam guide's text is committed to this repository, so
+ * the fixture states an outline for an invented subject. It carries the three things
+ * the import flow has to get right — codes, weights, and two levels of nesting — plus
+ * front matter that must not become an objective.
+ */
+export const SYNTHETIC_SYLLABUS = [
+  "Demo Certification Exam Guide",
+  "Version 1.2 — Copyright notice, all rights reserved.",
+  "Register for the exam at the demo registration page.",
+  "",
+  "Content outline",
+  "1. Demo Foundations (40%)",
+  "1.1 Describe demo components",
+  "1.2 Describe demo boundaries",
+  "2. Demo Operations (60%)",
+  "2.1 Operate a demo workload",
+  "2.2 Troubleshoot a demo workload",
+].join("\n");
 
 /** One well-formed single-choice question, as a provider would answer. */
 export function questionPayloadItem(

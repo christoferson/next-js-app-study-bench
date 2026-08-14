@@ -560,6 +560,10 @@ export class GenerationFacade {
       failedItemCount: 0,
       usageMetadata: null,
       failureReason: null,
+      // Only an objective-import run proposes anything for the owner to confirm; a
+      // generation run's items are written by the run itself.
+      proposedPayload: null,
+      appliedAt: null,
       startedAt: this.deps.clock.now(),
       completedAt: null,
       status: "PENDING",
@@ -731,6 +735,9 @@ export class GenerationFacade {
       failedItemCount: 0,
       usageMetadata: null,
       failureReason: null,
+      // See `requestVocabularyEnrichment`: nothing here is proposed for confirmation.
+      proposedPayload: null,
+      appliedAt: null,
       startedAt,
       completedAt: null,
       status: "PENDING",

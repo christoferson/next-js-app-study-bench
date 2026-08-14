@@ -1,4 +1,4 @@
-import { normalizeLigatures } from "./text-normalization";
+import { normalizeLigatures } from "@/shared/text-normalization";
 
 /**
  * Parser for the owner's unofficial notes on HSK 5 topic areas and language

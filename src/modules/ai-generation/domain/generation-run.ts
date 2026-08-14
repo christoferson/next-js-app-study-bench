@@ -48,13 +48,35 @@ export function isFakeModelProvider(provider: string): boolean {
  * per-item outcomes were counted, and the result needs a page the owner can read.
  * A parallel "enrichment run" table would duplicate all of that.
  */
-export type GeneratedItemKind = "QUESTION" | "FLASHCARD" | "ENRICH_VOCABULARY";
+export type GeneratedItemKind =
+  "QUESTION" | "FLASHCARD" | "ENRICH_VOCABULARY" | "OBJECTIVE_IMPORT";
 
 export const GENERATED_ITEM_KINDS: readonly GeneratedItemKind[] = [
   "QUESTION",
   "FLASHCARD",
   "ENRICH_VOCABULARY",
+  "OBJECTIVE_IMPORT",
 ];
+
+/**
+ * Whether a run only *proposes* something the owner has still to confirm.
+ *
+ * `OBJECTIVE_IMPORT` is the only such kind so far, and it is the reason the run row
+ * carries `proposedPayload` and `appliedAt`: a question run's output is in the bank
+ * the moment the run completes, while an import run's output is a suggestion until
+ * the owner applies it. A predicate rather than an equality check at each call site,
+ * so the review screen, the repository, and the facade agree.
+ */
+export function proposesForConfirmation(kind: GeneratedItemKind): boolean {
+  switch (kind) {
+    case "QUESTION":
+    case "FLASHCARD":
+    case "ENRICH_VOCABULARY":
+      return false;
+    case "OBJECTIVE_IMPORT":
+      return true;
+  }
+}
 
 /**
  * Whether a run rewrites existing items rather than creating them.
@@ -67,6 +89,9 @@ export function revisesExistingItems(kind: GeneratedItemKind): boolean {
   switch (kind) {
     case "QUESTION":
     case "FLASHCARD":
+    // An import run touches no bank item at all: it proposes objectives, which are
+    // the track's outline rather than its content.
+    case "OBJECTIVE_IMPORT":
       return false;
     case "ENRICH_VOCABULARY":
       return true;
@@ -158,6 +183,25 @@ export interface GenerationRun {
   readonly failedItemCount: number;
   readonly usageMetadata: ProviderUsage | null;
   readonly failureReason: GenerationFailureCategory | null;
+  /**
+   * What an `OBJECTIVE_IMPORT` run proposed, as validated JSON text.
+   *
+   * Text rather than a parsed tree because this type is the run *record*: the run
+   * knows it is carrying a proposal and how big it is, and the shape of the proposal
+   * belongs to whatever kind of run made it. The application parses it through a
+   * schema when it needs the tree (`objective-import.ts`), so a hand-edited row
+   * fails loudly instead of reaching the objective hierarchy.
+   *
+   * `null` for every other kind, and for an import run that failed.
+   */
+  readonly proposedPayload: string | null;
+  /**
+   * When the proposal was applied, for the run kinds that have one.
+   *
+   * `null` means "not applied", which is the whole idempotence guard: a second apply
+   * is refused by reading this column rather than by trusting the page that posted.
+   */
+  readonly appliedAt: IsoTimestamp | null;
   readonly startedAt: IsoTimestamp;
   readonly completedAt: IsoTimestamp | null;
   readonly status: GenerationRunStatus;
@@ -171,6 +215,8 @@ export function describeItemKind(kind: GeneratedItemKind): string {
       return "Flashcards";
     case "ENRICH_VOCABULARY":
       return "Enriched vocabulary";
+    case "OBJECTIVE_IMPORT":
+      return "Imported objectives";
   }
 }
 
@@ -182,6 +228,8 @@ export function describeItemKindSingular(kind: GeneratedItemKind): string {
       return "flashcard";
     case "ENRICH_VOCABULARY":
       return "enriched card";
+    case "OBJECTIVE_IMPORT":
+      return "proposed objective";
   }
 }
 

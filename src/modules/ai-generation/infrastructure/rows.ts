@@ -46,6 +46,8 @@ export interface GenerationRunRow {
   readonly failed_item_count: number;
   readonly usage_metadata: string | null;
   readonly failure_reason: string | null;
+  readonly proposed_payload: string | null;
+  readonly applied_at: string | null;
   readonly started_at: string;
   readonly completed_at: string | null;
   readonly status: string;
@@ -95,6 +97,12 @@ export function toGenerationRun(row: GenerationRunRow): GenerationRun {
       row.failure_reason === null
         ? null
         : toFailureCategory(row.id, row.failure_reason),
+    // Carried across as text and validated by the application when it needs the tree
+    // (`application/objective-import-schema.ts`). Parsing it here would put a
+    // proposal's shape in the row mapper for every kind of run, including the three
+    // that never propose anything.
+    proposedPayload: row.proposed_payload,
+    appliedAt: row.applied_at,
     startedAt: row.started_at,
     completedAt: row.completed_at,
     status,

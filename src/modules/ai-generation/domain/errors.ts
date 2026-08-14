@@ -18,7 +18,10 @@ export type GenerationDomainErrorCode =
   | "GENERATION_RUN_NOT_FOUND"
   | "GENERATION_NOT_CONFIGURED"
   | "GENERATION_BATCH_TOO_LARGE"
-  | "GENERATED_DRAFT_NOT_REJECTABLE";
+  | "GENERATED_DRAFT_NOT_REJECTABLE"
+  | "IMPORT_ALREADY_APPLIED"
+  | "IMPORT_NOTHING_TO_APPLY"
+  | "SYLLABUS_UNREADABLE";
 
 export class GenerationRunNotFoundError extends DomainError {
   readonly code = "GENERATION_RUN_NOT_FOUND";
@@ -74,6 +77,74 @@ export class GeneratedDraftNotRejectableError extends DomainError {
 
   fieldMessages(): Readonly<Record<string, readonly string[]>> {
     return { "": [this.reason] };
+  }
+}
+
+/**
+ * The owner asked to apply an objective import that has already been applied.
+ *
+ * The ordinary way here is a confirm page still open in a second tab, or a browser
+ * back-and-resubmit. Applying twice would silently double every objective in the tree,
+ * which is why the run row carries `applied_at` and why this is a refusal rather than a
+ * no-op: the owner needs to know that their second Apply did nothing *because the first
+ * one worked*, not because it failed.
+ */
+export class ObjectiveImportAlreadyAppliedError extends DomainError {
+  readonly code = "IMPORT_ALREADY_APPLIED";
+
+  constructor(readonly runId: string) {
+    super("This proposed outline has already been added to the track.");
+  }
+
+  fieldMessages(): Readonly<Record<string, readonly string[]>> {
+    return {
+      "": [
+        "This proposed outline has already been added to the track, so nothing was added again. Open the track to see the objectives it created.",
+      ],
+    };
+  }
+}
+
+/**
+ * The owner asked to apply a run that proposed nothing.
+ *
+ * Reachable from a failed extraction's page, or from a run of another kind whose
+ * identifier was typed into the apply form.
+ */
+export class ObjectiveImportNothingToApplyError extends DomainError {
+  readonly code = "IMPORT_NOTHING_TO_APPLY";
+
+  constructor(readonly runId: string) {
+    super("That run has no proposed outline to add.");
+  }
+
+  fieldMessages(): Readonly<Record<string, readonly string[]>> {
+    return {
+      "": [
+        "That run has no proposed outline to add. Upload the syllabus again to extract one.",
+      ],
+    };
+  }
+}
+
+/**
+ * The uploaded document produced nothing usable.
+ *
+ * A form error rather than a failed run, because no model was called: an unreadable
+ * file, a scan with no text layer, or an empty paste is a problem with the upload, and
+ * recording a run for it would claim a model call that never happened. The message is
+ * this application's own — never the PDF library's, which can carry byte offsets and
+ * paths (`spec/SECURITY.md`).
+ */
+export class SyllabusUnreadableError extends DomainError {
+  readonly code = "SYLLABUS_UNREADABLE";
+
+  constructor(readonly detail: string) {
+    super(detail);
+  }
+
+  fieldMessages(): Readonly<Record<string, readonly string[]>> {
+    return { document: [this.detail] };
   }
 }
 

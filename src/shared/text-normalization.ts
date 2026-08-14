@@ -1,11 +1,17 @@
 /**
  * Text repairs that a PDF text extraction always needs.
  *
- * Both real-content sources (`npm run import:real`) are text extracted from a
- * PDF, and a PDF stores what the typesetter drew rather than what an author
- * typed. Two substitutions therefore have to be undone before anything is
- * parsed or stored, and both are pure string work, which is why they live here
- * rather than in either parser:
+ * Shared rather than script-side: these repairs were written for
+ * `npm run import:real`, and the objective import needs exactly the same ones on
+ * exactly the same kind of input — text pulled out of a PDF at request time. The file
+ * moved from `src/import/` to `@/shared` when the second caller arrived, because a
+ * request-time module importing from a `tsx` script directory would be the wrong
+ * dependency direction. Nothing about the functions changed; they are pure string
+ * work over Unicode facts and depend on nothing.
+ *
+ * A PDF stores what the typesetter drew rather than what an author typed. Two
+ * substitutions therefore have to be undone before anything is parsed or stored, and
+ * both are pure string work, which is why they live here rather than in a parser:
  *
  * - **Typographic ligatures.** "configure" is drawn as `conﬁgure` (U+FB01), so a
  *   naive parse stores a word that no search for "configure" will ever match.
@@ -41,6 +47,30 @@ export function normalizeLigatures(text: string): string {
   return text.replace(/[ﬀ-ﬆ]/g, (ligature) => {
     return LIGATURES.get(ligature) ?? ligature;
   });
+}
+
+/**
+ * Extracted document text, tidied enough to send to a model.
+ *
+ * Three repairs, and each earns its place on real PDF output. Ligatures, for the
+ * reason above. Carriage returns, because a PDF extracted on Windows produces `\r\n`
+ * and the delimiters the prompt wraps this text in are line-based. And runs of blank
+ * lines and trailing spaces, because column layout produces pages of them — on the
+ * owner's own exam guide that is a double-digit percentage of the characters, which
+ * is a double-digit percentage of the input tokens for nothing.
+ *
+ * What it deliberately does *not* do is join wrapped lines, strip page numbers, or
+ * drop headers. Those are judgements about a specific document's layout, and getting
+ * them wrong silently deletes syllabus content; the model is much better placed to
+ * ignore a stray page number than this function is to decide which line is one.
+ */
+export function normalizeExtractedText(text: string): string {
+  return normalizeLigatures(text)
+    .replace(/\r\n?/g, "\n")
+    .replace(/[ \t ]+/g, " ")
+    .replace(/ *\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 /** Kangxi Radicals: U+2F00–U+2FDF. */

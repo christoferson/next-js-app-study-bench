@@ -127,7 +127,7 @@ export function ObjectiveForm({
         <textarea
           id="description"
           name="description"
-          rows={3}
+          rows={8}
           aria-describedby={
             fieldErrors(state, "description") !== undefined
               ? "description-hint description-error"

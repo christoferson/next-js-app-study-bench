@@ -1,4 +1,4 @@
-import { normalizeLigatures } from "./text-normalization";
+import { normalizeLigatures } from "@/shared/text-normalization";
 
 /**
  * Parser for the examination structure section of the HSK 5 syllabus, as

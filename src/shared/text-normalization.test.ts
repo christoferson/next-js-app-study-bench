@@ -3,7 +3,7 @@ import {
   findUnmappedRadicals,
   normalizeCjkRadicals,
   normalizeLigatures,
-} from "./text-normalization";
+} from "@/shared/text-normalization";
 
 /**
  * Every fixture here is invented for the test. The real sources stay in

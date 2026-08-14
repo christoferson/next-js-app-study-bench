@@ -370,6 +370,25 @@ a:hover {
   opacity: 0.55;
 }
 
+/* Drop target wrapping the syllabus file input: a visible box so "drag it here"
+   has a here, highlighted while a file is over it. */
+.file-drop-zone {
+  padding: var(--space-4);
+  border: 2px dashed var(--color-border);
+  border-radius: var(--radius-sm);
+}
+
+.file-drop-zone-active {
+  border-color: var(--color-accent);
+  background-color: var(--color-panel);
+}
+
+.file-drop-hint {
+  margin: var(--space-2) 0 0;
+  font-size: 0.8125rem;
+  color: var(--color-text-muted);
+}
+
 /* A destructive action: same shape as the quiet button, unmistakably not it. */
 .button-danger {
   display: inline-flex;

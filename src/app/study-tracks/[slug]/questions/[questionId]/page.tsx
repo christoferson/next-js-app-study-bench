@@ -1,5 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { getAudioFacade, isAudioEnabled } from "@/modules/audio/composition";
+import { AudioClipList } from "@/modules/audio/ui/audio-clip-list";
 import { describeDifficulty } from "@/modules/question-bank/domain/question";
 import { getQuestionBankFacade } from "@/modules/question-bank/composition";
 import {
@@ -48,7 +50,19 @@ export default async function QuestionDetailPage({
   const bankPath = `/study-tracks/${certification.slug}/questions`;
   // Bounded to the most recent attempts: the history is a record to inspect, not a
   // log to page through (`spec/ARCHITECTURE.md` section 8).
-  const attempts = await getStudyFacade().listAttemptsForQuestion(question.id);
+  const [attempts, clips] = await Promise.all([
+    getStudyFacade().listAttemptsForQuestion(question.id),
+    // The stem only, and never the choices — see `questionClipRequests`. A cache read,
+    // so opening a question costs nothing. Offered only when a real voice is configured:
+    // the placeholder provider speaks silence, and a control that plays nothing is worse
+    // than none.
+    isAudioEnabled()
+      ? getAudioFacade().findQuestionClips({
+          revision: currentRevision,
+          studyType: certification.studyType,
+        })
+      : Promise.resolve([]),
+  ]);
 
   return (
     <main className="page">
@@ -120,6 +134,14 @@ export default async function QuestionDetailPage({
           </p>
         </div>
         <QuestionPreview revision={currentRevision} revealAnswer={false} />
+        {/* Inside the preview section rather than in one of its own: reading the stem
+            aloud is part of studying this question, and it reveals nothing the section
+            above does not already show. */}
+        <AudioClipList
+          clips={clips}
+          idPrefix="question-audio"
+          heading="Read aloud"
+        />
       </section>
 
       <section aria-labelledby="answer-heading" className="section">

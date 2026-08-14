@@ -29,6 +29,25 @@ vi.mock("@/modules/flashcards/ui/actions", () => ({
   reviewFlashcardAction: vi.fn(),
 }));
 
+// The screen offers pronunciation for the card on show, so the page reads the audio cache
+// as well — but only when a speech provider is configured. Both are stubbed rather than
+// composed because the real composition root is server-only. `findFlashcardClips` returns
+// nothing, which is this route's normal state; what a clip does once it exists is the
+// `AudioPlayButton` test's subject.
+const findFlashcardClips = vi.fn<() => Promise<readonly never[]>>(
+  async () => [],
+);
+const isAudioEnabled = vi.fn<() => boolean>(() => true);
+
+vi.mock("@/modules/audio/composition", () => ({
+  getAudioFacade: () => ({ findFlashcardClips }),
+  isAudioEnabled: () => isAudioEnabled(),
+}));
+
+vi.mock("@/modules/audio/ui/actions", () => ({
+  playAudioClipAction: vi.fn(),
+}));
+
 vi.mock("next/navigation", () => ({
   notFound: (): never => {
     throw new NotFoundSignal("NEXT_NOT_FOUND");
@@ -55,6 +74,8 @@ async function renderReviewPage(slug = "demo-hsk-1"): Promise<void> {
 describe("Review page", () => {
   beforeEach(() => {
     findReviewSession.mockReset();
+    findFlashcardClips.mockClear();
+    isAudioEnabled.mockReturnValue(true);
   });
 
   it("shows the next due card", async () => {
@@ -105,5 +126,24 @@ describe("Review page", () => {
     await expect(
       ReviewPage({ params: Promise.resolve({ slug: "no-such-track" }) }),
     ).rejects.toBeInstanceOf(NotFoundSignal);
+  });
+
+  it("reads no audio cache at all when speech is not configured", async () => {
+    // Mid-review is the worst place to discover that a play button makes no sound, so the
+    // page does not even look the cache up.
+    isAudioEnabled.mockReturnValue(false);
+    stubSession({
+      card: {
+        flashcard: flashcardFixture({ lifecycleStatus: "ACTIVE" }),
+        revision: cardRevisionFixture(),
+        schedule: scheduleFixture(),
+      },
+      remainingCount: 1,
+      activeCount: 1,
+    });
+
+    await renderReviewPage();
+
+    expect(findFlashcardClips).not.toHaveBeenCalled();
   });
 });

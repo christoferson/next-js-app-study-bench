@@ -1,5 +1,6 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { useActionState, useState } from "react";
 import { FieldErrors } from "@/shared/ui/field-errors";
 import type { FormState } from "@/shared/ui/form-state";
@@ -26,6 +27,19 @@ interface ReviewCardProps {
   /** `null` for a card that has never been reviewed. */
   readonly schedule: ReviewSchedule | null;
   readonly remainingCount: number;
+  /**
+   * Pronunciation controls for this card, rendered by the page.
+   *
+   * A node rather than data because the controls are a server component: they wire
+   * Server Actions and were built from a cache lookup the page already did. This
+   * component is a Client Component, so it can hold the audio in its tree but must not
+   * be what constructs it (`spec/ARCHITECTURE.md` section 6.3).
+   *
+   * Shown only after the answer is revealed. Hearing the term is a strong hint on a
+   * card that prompts with the meaning, and a control sitting under the prompt would be
+   * an answer one tap away from a screen meant to test recall.
+   */
+  readonly audio?: ReactNode;
 }
 
 /**
@@ -52,6 +66,7 @@ export function ReviewCard({
   revision,
   schedule,
   remainingCount,
+  audio,
 }: ReviewCardProps) {
   const [state, formAction, isPending] = useActionState(
     action,
@@ -82,6 +97,8 @@ export function ReviewCard({
       ) : null}
 
       <CardFace content={revision.content} revealAnswer={revealed} />
+
+      {revealed ? audio : null}
 
       {revealed ? (
         <form action={formAction} className="review-ratings">

@@ -115,6 +115,47 @@ item. **Out of the box it uses a fake model and costs nothing** — see
   independent of the question from then on.
 - A liveness endpoint at `/health` (unchanged from D1).
 
+### D10 — spoken audio
+
+Brought forward ahead of D7–D9 because pronunciation is what the owner's own HSK
+track needs most. Only the parts that stand on what already exists are here: audio
+study packs need D9's printable artifacts, and a listening-comprehension question
+needs a question type the bank does not have. **Audio is off until you configure a
+real voice** — see [Spoken audio](#spoken-audio) below.
+
+- **Pronunciation on vocabulary cards.** A small speaker button sits beside the term.
+  Press it and you hear the word — one press, whether or not the clip already exists.
+  The button appears on the card page at
+  `/study-tracks/[slug]/flashcards/[flashcardId]`, on the review screen, and on a
+  card inside a session — on the two study screens only **after** the answer is
+  revealed, since hearing the term is a strong hint on a card that prompts with the
+  meaning.
+- **The term only.** Not the example sentence, not the reading, not the meaning. A
+  vocabulary card is for learning one word; a column of buttons down the answer face
+  invited pressing all of them, and an example is where the billed characters pile up
+  for the part of the card that is read rather than learned. `xuéxí` read by a Mandarin
+  voice is a mispronunciation, and the meaning is the answer.
+- **Nothing appears until a voice is configured.** Study screens render no audio
+  control at all unless `SPEECH_PROVIDER=polly` is set. The placeholder provider
+  speaks silence, and a button that plays nothing is worse than no button.
+- **"Read aloud" on a question.** A question page offers the stem, spoken by an
+  English voice. The choices are not synthesized: they are read on screen, and
+  speaking them would bill for four more clips and read the distractors aloud in a
+  fixed order.
+- **A clip is made once and kept.** Clips are cached by a SHA-256 of the exact
+  text, voice, engine, language, and rate, so the same phrase is never paid for
+  twice — opening a page only reads the cache and can never bill. Files live in
+  `./data/audio/`; only their metadata is in the database.
+- **Nothing is spoken until you ask.** There is no automatic synthesis anywhere: a
+  clip exists because a button was pressed.
+- `/settings/audio` lists every clip with its voice, language, and size, reports
+  the total on disk, and is **the only place a clip can be removed** — a mis-tap on
+  a card should not destroy something you paid for.
+
+Basic, reversed, cloze, and scenario cards offer no audio, audio study packs and
+listening-comprehension questions are not part of this milestone, and printable
+artifacts still arrive later.
+
 ### Added after D6, outside a milestone
 
 Work on the owner's own imported HSK track, authorized separately from the
@@ -163,9 +204,8 @@ offered in a session. Sessions are composed by a deterministic strategy that
 reads only the bank: **no AI is involved in starting a session**. AI generation
 creates only drafts, and the one flow that touches content you already have —
 enrichment — appends a revision and never rewrites one. There is no AI tutor, no
-explanation-on-demand, no source
-import or grounded generation, no printable artifacts, and no audio yet — those
-arrive in later milestones.
+explanation-on-demand, and no source import, grounded generation, or printable
+artifacts yet — those arrive in later milestones.
 
 See `SPEC.md` for the full specification and `PROGRESS.md` for implementation
 state.
@@ -199,8 +239,15 @@ data is never committed. Migrations run automatically when the application opens
 the database, so no separate migrate step is needed. Tests always use in-memory
 databases and never touch `./data`.
 
+Generated audio is written to `./data/audio/`, one MP3 per clip, created on first
+use. It is ignored by git (`/data/audio/`) for the same reason as the database: a
+clip is your study content read aloud. Set `STUDYBENCH_AUDIO_ROOT` to use another
+root directory. Tests write to temporary directories and never touch `./data`.
+
 To start over, stop the server and delete `data/study-bench.db` (plus any
-`-shm`/`-wal` files). This destroys local data and cannot be undone.
+`-shm`/`-wal` files). Delete `data/audio/` too — an orphaned file is harmless but
+a database without its files would show players that fail to load. This destroys
+local data and cannot be undone.
 
 ## Commands
 
@@ -358,18 +405,87 @@ The cards are chosen for you: the next active vocabulary cards that still have o
 a gloss, in a deterministic order. Run it repeatedly to walk the list. When every
 card already has its detail, the page says so and makes no model call.
 
-### Live provider tests
+## Spoken audio
 
-`npm test` never calls AWS. The one test that does is excluded twice over: it
-lives outside `src/`, which the default Vitest configuration does not scan, and
-every case skips unless `STUDYBENCH_LIVE_AI_TESTS=1` is set.
+Speech is configured the same way generation is, with its own variables. **None of
+them is a secret**; the Polly client resolves credentials through the AWS default
+provider chain, and StudyBench never reads, stores, logs, or renders one.
+
+| Variable                | Default                 | Purpose                              |
+| ----------------------- | ----------------------- | ------------------------------------ |
+| `SPEECH_PROVIDER`       | `fake`                  | `polly` enables audio; `fake` is off |
+| `POLLY_VOICE_ID_ZH`     | `Zhiyu`                 | The voice for Mandarin clips         |
+| `POLLY_VOICE_ID_EN`     | `Joanna`                | The voice for English clips          |
+| `POLLY_ENGINE`          | `neural`                | `neural` or `standard`               |
+| `AWS_REGION`            | resolved by the AWS SDK | Passed to the Polly client when set  |
+| `STUDYBENCH_AUDIO_ROOT` | `./data`                | Root under which `audio/` is written |
+
+**Off by default, on purpose.** Until `SPEECH_PROVIDER=polly` is set, no study
+screen shows an audio control at all, and `/settings/audio` explains what to add
+instead of listing voices. The default provider produces a valid MP3 of _silence_,
+which is what tests need and exactly what a person does not: a button that accepts
+the press, stores a clip, and plays nothing is indistinguishable from a broken
+feature. So the feature stays invisible rather than mute.
+
+To use real voices:
+
+```bash
+SPEECH_PROVIDER=polly AWS_PROFILE=your-profile npm run dev
+```
+
+Your account needs `polly:SynthesizeSpeech` in the configured region.
+
+**One press.** The first press on a clip asks the server for it, waits — the button
+shows a spinner — and plays it as soon as it exists; every press after that plays
+immediately. There is no separate step to create a clip, and no native transport bar
+on a study screen: just a speaker button beside the phrase. If anything fails, the
+button says "Audio unavailable" and nothing else; the reason is a server concern.
+
+**What it costs.** Polly bills per character, and neural voices are roughly
+$16 per million characters. A vocabulary term is two or three characters, and it is
+the only thing a card offers, so a thousand cards is measured in cents; a question
+stem is a sentence and costs proportionally more. Every clip is cached by its exact
+text, voice, engine, language, and rate, so re-opening a card, revisiting it in
+review, or asking again months later costs nothing — the same phrase is synthesized
+once and never again. Nothing is ever synthesized in bulk or in the background: one
+press of one button is one clip.
+
+Which voice speaks is decided by the content, never by the provider setting: a
+card's own content language when it has one, otherwise the track's study type — a
+`LANGUAGE_PROFICIENCY` track speaks Mandarin, everything else English. A question
+stem is always English.
+
+`APP_ENV=production` with anything other than `SPEECH_PROVIDER=polly` **fails
+loudly** at composition, naming the variable to fix, for the same reason the
+generation guard does.
+
+### Removing clips
+
+`/settings/audio` is the only place a clip can be removed. It lists every clip with
+its voice, language, and size, plays it in a normal player, and "Remove audio"
+deletes both the file and its row. Study screens deliberately offer no removal: the
+card you are learning from is the worst place to lose a clip to a mis-tap, and
+deletion is a management action, not a study one.
+
+Removal is not permanent in the sense you might expect: a clip is keyed by the text
+it speaks, not by the card it came from, so pressing play on that card again makes it
+again — and pays for it again. That keying is also why editing a card's term does not
+invalidate anything: the new term is simply a different key, with no clip yet. The
+old clip stays on disk until it is removed here.
+
+## Live provider tests
+
+`npm test` never calls AWS. The tests that do are excluded twice over: they live
+outside `src/`, which the default Vitest configuration does not scan, and every
+case skips unless `STUDYBENCH_LIVE_AI_TESTS=1` is set.
 
 ```bash
 STUDYBENCH_LIVE_AI_TESTS=1 LANGUAGE_MODEL_PROVIDER=bedrock npm run test:live
+STUDYBENCH_LIVE_AI_TESTS=1 SPEECH_PROVIDER=polly npm run test:live
 ```
 
-It generates one question. It is a smoke test, not a milestone gate, and it costs
-whatever one small request costs.
+They generate one question and synthesize one short phrase. They are smoke tests,
+not milestone gates, and they cost whatever one small request costs.
 
 ## Local verification
 
@@ -435,6 +551,35 @@ With `npm run seed` followed by `npm run dev`:
   a single "Generate with AI"
 - Archive the HSK demo track — neither action is offered while it is archived
 
+Audio, with no provider configured (the default, so no AWS account and no spend):
+
+- Open the vocabulary card you wrote on the HSK track — there is no "Listen" section
+  and no play button anywhere
+- Open `/settings/audio` — it says audio is not configured and names
+  `SPEECH_PROVIDER=polly` as what to add
+
+Audio, with `SPEECH_PROVIDER=polly AWS_PROFILE=your-profile npm run dev` (this
+spends money, a fraction of a cent per clip):
+
+- Open the same card — a "Listen" section shows the term with a small speaker button
+  beside it, and exactly one button: nothing offers to speak the example sentence, the
+  pinyin, or the meaning
+- Press it: a spinner briefly, then you hear the word in Mandarin; the button becomes
+  a pause control while it plays
+- Press it again — it plays immediately, and `/settings/audio` still shows one clip
+- Reload the page and press it — still one clip, so the second press cost nothing
+- Open the card in "Review 1 due" — no audio is offered until "Show answer", then
+  the same button appears
+- Open a basic or cloze card — there is no "Listen" section at all
+- Open an active question — "Read aloud" offers the stem and nothing else; press it
+  and you hear it in English
+- Confirm no card, review, or session screen offers to remove a clip
+- Open `/settings/audio` — every clip with its voice, language, size, and the total;
+  "Remove audio" removes one and the count drops
+- Go back to the card and press play again — it is made again, which is what
+  content-keyed caching means
+- At a 360px viewport width, every control is reachable and nothing overflows
+
 With your own material imported (`npm run import:real`, then
 `npm run import:hsk-syllabus`, then `npm run dev`):
 
@@ -475,6 +620,8 @@ src/
 │   ├── clock.ts                      injectable UTC clock port
 │   ├── id-generator.ts               injectable ID port (crypto.randomUUID)
 │   ├── hash.ts                       SHA-256, for request fingerprints
+│   ├── storage/                      object-storage port and its local
+│   │                                 filesystem adapter
 │   └── database/                     connection, config, migrations, runner,
 │                                     shared connection composition
 ├── seed/                             demo bank content and its wiring
@@ -485,8 +632,10 @@ src/
     ├── question-bank/                questions and their revisions
     ├── flashcards/                   cards, revisions, review scheduling
     ├── study-sessions/               sessions, attempts, progress measures
-    └── ai-generation/                personas, prompt templates, model gateway,
-                                      generation runs
+    ├── ai-generation/                personas, prompt templates, model gateway,
+    │                                 generation runs
+    └── audio/                        speech requests, voice selection, media
+                                      assets, the speech gateway
 ```
 
 Each module has the same five layers plus a composition root:
@@ -504,17 +653,20 @@ Each module has the same five layers plus a composition root:
     └── composition.ts                server-only composition root
 ```
 
-All five modules share one database connection and one transaction runner from
+All six modules share one database connection and one transaction runner from
 `platform/database/composition.ts`, so migrations run once and writes serialise
 across modules.
 
 The module dependency direction is
-`certifications ← question-bank ← flashcards ← ai-generation`. Generation reads
-and writes both banks; neither bank, nor the study-sessions module, knows that
-generation exists. That direction is asserted by a source scan in
-`modules/ai-generation/module-boundaries.test.ts`, which also checks that the AWS
-SDK appears in exactly one adapter, that the domain imports no framework, and that
-nothing in the module logs.
+`certifications ← question-bank ← flashcards ← {ai-generation, audio}`. Generation
+reads and writes both banks; audio reads card and question content, passed in by the
+page, and writes only its own table. No bank, and neither the study-sessions module
+nor generation, knows that either exists. Those directions are asserted by source
+scans in `modules/ai-generation/module-boundaries.test.ts` and
+`modules/audio/module-boundaries.test.ts`, which also check that each AWS SDK
+appears in exactly one adapter, that the domain imports no framework and no
+filesystem, that nothing below composition reads `process.env`, that application
+code never imports `infrastructure/`, and that nothing in either module logs.
 
 Question and card content are discriminated unions per type, stored as validated
 JSON with the type in its own column. Revisions are append-only: the repository
@@ -575,6 +727,37 @@ could contradict. Which first action a track page offers is derived the same way
 from the study type (`studyMaterialStyleFor`). Both are exhaustive switches, so a
 new study type or a new objective kind has to decide rather than falling into a
 default, and neither ever looks at a track's provider, name, or slug.
+
+Speech sits behind its own port
+(`modules/audio/ports/speech-synthesis-gateway.ts`) with the same two-adapter shape:
+a Polly adapter and a deterministic fake, chosen once in
+`modules/audio/composition.ts`. The bytes go through a second port,
+`platform/storage/object-storage.ts`, whose only adapter today writes files under
+`./data/audio/`; D13 adds an S3 one, and nothing above the port changes. The
+database holds metadata and an object key — never audio — exactly as
+`spec/ARCHITECTURE.md` section 7.7 requires.
+
+An asset's identity is a **content** hash, not an entity reference: the cache key is
+a SHA-256 over the normalized text, language, voice, engine, rate, and output format
+(`modules/audio/domain/speech-request.ts`), so two cards sharing a term share one
+clip, editing a card invalidates nothing, and re-asking for a phrase is free. Only
+whitespace is normalized — folding case or punctuation would make two genuinely
+different utterances collide and serve the wrong audio. The `media_assets.cache_key`
+column is `UNIQUE`, so two concurrent presses of the same button cannot produce two
+paid-for rows.
+
+Which voice speaks is derived, never configured per card: the revision's own content
+language when it has one, otherwise the track's study type, through two exhaustive
+switches (`modules/audio/domain/voice-selection.ts`). Nothing looks at a track's
+name, slug, or provider.
+
+Synthesis is a Server Action, because it is a paid write; playback is a route handler
+(`app/api/audio/[assetId]/route.ts`) that does nothing but look an asset up and
+stream it. A page render only ever reads the cache, so no refresh, no crawler, and
+no accidental reload can spend money. The route takes an asset **id** and reads the
+object key from the row, and the storage adapter independently refuses any key that
+is not a plain relative path under its root — so a path a request controls never
+reaches the filesystem.
 
 Enrichment records its provenance on the **revision**, not the card: the card was
 written by you and stays yours, and one particular revision of it was written by a

@@ -1,10 +1,14 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import type { ReactNode } from "react";
 import { parseInput } from "@/shared/parse-input";
 import { getFlashcardFacade } from "@/modules/flashcards/composition";
 import { flashcardFilterSchema } from "@/modules/flashcards/application/schemas";
 import { FlashcardBankList } from "@/modules/flashcards/ui/flashcard-bank-list";
 import { FlashcardFilterForm } from "@/modules/flashcards/ui/flashcard-filter-form";
+import { getAudioFacade, isAudioEnabled } from "@/modules/audio/composition";
+import type { SpeechClip } from "@/modules/audio/domain/speech-clip";
+import { AudioInlinePlay } from "@/modules/audio/ui/audio-inline-play";
 
 interface FlashcardBankPageProps {
   readonly params: Promise<{ readonly slug: string }>;
@@ -40,6 +44,22 @@ export default async function FlashcardBankPage({
   const trackPath = `/study-tracks/${view.certification.slug}`;
   const bankPath = `${trackPath}/flashcards`;
   const isFiltered = view.totalCount !== view.unfilteredCount;
+  // Pronunciation directly in the list, so the owner can play across vocabulary
+  // without opening each card. One batched cache read for the whole page — never a
+  // synthesis (a card without a clip yet still shows the button; the first tap
+  // synthesizes). Same enabled gate as every study surface.
+  const audioByCard = isAudioEnabled()
+    ? buildAudioControls(
+        await getAudioFacade().findFlashcardClipsByCard(
+          view.items.map(({ flashcard, revision }) => ({
+            id: flashcard.id,
+            content: revision.content,
+            contentLanguage: revision.language,
+            studyType: view.certification.studyType,
+          })),
+        ),
+      )
+    : undefined;
 
   return (
     <main className="page">
@@ -100,6 +120,7 @@ export default async function FlashcardBankPage({
           <FlashcardBankList
             slug={view.certification.slug}
             items={view.items}
+            audioByCard={audioByCard}
           />
         )}
 
@@ -126,6 +147,26 @@ export default async function FlashcardBankPage({
       </section>
     </main>
   );
+}
+
+/** One play control per card that offers a clip; cards without one get no entry. */
+function buildAudioControls(
+  clipsByCard: ReadonlyMap<string, readonly SpeechClip[]>,
+): ReadonlyMap<string, ReactNode> {
+  const controls = new Map<string, ReactNode>();
+
+  for (const [cardId, clips] of clipsByCard) {
+    const clip = clips[0];
+
+    if (clip !== undefined) {
+      controls.set(
+        cardId,
+        <AudioInlinePlay clip={clip} idPrefix={`bank-${cardId}`} />,
+      );
+    }
+  }
+
+  return controls;
 }
 
 function firstValue(value: string | string[] | undefined): string {

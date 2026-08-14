@@ -13,6 +13,11 @@
 /data/*.db-shm
 /data/*.db-wal
 
+# synthesized audio (D10) — object storage keeps the bytes, the database keeps
+# the keys. Regenerating an asset is one Polly call, so the files are never
+# committed (`SPEC.md` section 9.1).
+/data/audio/
+
 # next.js
 /.next/
 /out/

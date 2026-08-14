@@ -1,5 +1,6 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { useActionState, useState } from "react";
 import { FieldErrors } from "@/shared/ui/field-errors";
 import type { FormState } from "@/shared/ui/form-state";
@@ -19,6 +20,14 @@ interface SessionCardItemProps {
   readonly itemId: string;
   /** The revision the session froze, which is the text being read. */
   readonly revision: FlashcardRevision;
+  /**
+   * Pronunciation controls for this card, rendered by the page.
+   *
+   * Passed as a node for the same reason as on the review screen: the controls are a
+   * server component built from a cache lookup, and this is a Client Component. Shown
+   * only once the answer is revealed, so hearing the term cannot pre-empt recalling it.
+   */
+  readonly audio?: ReactNode;
 }
 
 /**
@@ -39,6 +48,7 @@ export function SessionCardItem({
   sessionId,
   itemId,
   revision,
+  audio,
 }: SessionCardItemProps) {
   const [state, formAction, isPending] = useActionState(
     action,
@@ -59,6 +69,8 @@ export function SessionCardItem({
       ) : null}
 
       <CardFace content={revision.content} revealAnswer={revealed} />
+
+      {revealed ? audio : null}
 
       {revealed ? (
         <form action={formAction} className="review-ratings">

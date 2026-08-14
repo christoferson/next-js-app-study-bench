@@ -1,5 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { getAudioFacade, isAudioEnabled } from "@/modules/audio/composition";
+import { AudioClipList } from "@/modules/audio/ui/audio-clip-list";
 import { getFlashcardFacade } from "@/modules/flashcards/composition";
 import { reviewFlashcardAction } from "@/modules/flashcards/ui/actions";
 import { ReviewCard } from "@/modules/flashcards/ui/review-card";
@@ -30,6 +32,20 @@ export default async function ReviewPage({ params }: ReviewPageProps) {
 
   const trackPath = `/study-tracks/${view.certification.slug}`;
   const bankPath = `${trackPath}/flashcards`;
+  // Resolved for the card on screen only, and only against the cache. Playing a clip
+  // never revalidates this page — the button holds the source it was given — so the card
+  // being studied stays on screen and the deterministic queue is not disturbed.
+  //
+  // Nothing at all when speech is unconfigured: mid-review is the worst place to discover
+  // that a play button makes no sound.
+  const clips =
+    view.card === null || !isAudioEnabled()
+      ? []
+      : await getAudioFacade().findFlashcardClips({
+          content: view.card.revision.content,
+          contentLanguage: view.card.revision.language,
+          studyType: view.certification.studyType,
+        });
 
   return (
     <main className="page">
@@ -66,6 +82,13 @@ export default async function ReviewPage({ params }: ReviewPageProps) {
           revision={view.card.revision}
           schedule={view.card.schedule}
           remainingCount={view.remainingCount}
+          audio={
+            <AudioClipList
+              clips={clips}
+              idPrefix="review-audio"
+              heading="Listen"
+            />
+          }
         />
       )}
     </main>

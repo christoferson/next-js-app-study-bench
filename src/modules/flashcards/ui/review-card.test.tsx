@@ -265,4 +265,58 @@ describe("ReviewCard", () => {
 
     expect(screen.queryByText(/your note on this card/i)).toBeNull();
   });
+
+  describe("pronunciation", () => {
+    /** What the page passes in: a rendered clip list, opaque to this component. */
+    const audio = <p data-testid="audio">Listen</p>;
+
+    it("keeps the audio off screen until the answer is revealed", () => {
+      // Hearing the term is a strong hint on a card prompting with the meaning, so a
+      // control under the prompt would put the answer one tap from a recall test.
+      render(
+        <ReviewCard
+          action={ratingAction()}
+          slug="demo"
+          flashcard={flashcardFixture({ lifecycleStatus: "ACTIVE" })}
+          revision={cardRevisionFixture({ content: vocabularyContent() })}
+          schedule={null}
+          remainingCount={1}
+          audio={audio}
+        />,
+      );
+
+      expect(screen.queryByTestId("audio")).toBeNull();
+    });
+
+    it("offers the audio once the answer has been seen", async () => {
+      render(
+        <ReviewCard
+          action={ratingAction()}
+          slug="demo"
+          flashcard={flashcardFixture({ lifecycleStatus: "ACTIVE" })}
+          revision={cardRevisionFixture({ content: vocabularyContent() })}
+          schedule={null}
+          remainingCount={1}
+          audio={audio}
+        />,
+      );
+
+      const user = userEvent.setup();
+
+      await user.click(screen.getByRole("button", { name: /show answer/i }));
+
+      expect(screen.getByTestId("audio")).toBeVisible();
+    });
+
+    it("reviews a card the same way when there is no audio for it", async () => {
+      // A basic card has nothing to pronounce, and the page passes nothing.
+      renderReview();
+
+      const user = userEvent.setup();
+
+      await user.click(screen.getByRole("button", { name: /show answer/i }));
+
+      expect(screen.getByRole("button", { name: /^Good/ })).toBeInTheDocument();
+    });
+  });
 });

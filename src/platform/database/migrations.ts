@@ -570,4 +570,57 @@ CREATE INDEX flashcard_revisions_generation_run_idx
   ON flashcard_revisions (generation_run_id);
 `,
   },
+  {
+    id: "0007",
+    description: "media_assets: cached synthesized audio",
+    sql: `
+-- Synthesized audio (SPEC 10, "media_assets"; SPEC 12.1 and 12.3).
+--
+-- The row is metadata and a key; the bytes live on the filesystem locally and in
+-- S3 in production (\`spec/ARCHITECTURE.md\` section 7.7). Storing an MP3 in a
+-- STRICT text column would make every bank query carry audio, and it would make
+-- the S3 move a data migration rather than an adapter swap.
+--
+-- cache_key is the whole point of the table. It is the SPEC 12.3 digest —
+-- sha256 over normalized text, language, voice, engine, speech rate, and the
+-- remaining speech configuration — and its UNIQUE constraint is what makes
+-- "identical synthesis requests reuse cached audio" a property of the schema
+-- rather than of a check someone remembered to write. Two concurrent requests
+-- for the same phrase cannot both insert.
+--
+-- There is deliberately no reference to a flashcard, a revision, or a question.
+-- An asset is keyed by what was spoken, not by what happened to ask for it, so
+-- the same term on two cards is synthesized once and editing a card neither
+-- orphans nor invalidates audio for text that is still correct. The cost is that
+-- deleting a card does not delete its audio; that is what the owner-facing
+-- delete control is for.
+--
+-- duration_seconds is nullable because the SynthesizeSpeech response does not
+-- report it: Polly returns an audio stream and a request-character count, and
+-- getting a duration would mean decoding the MP3 or asking for speech marks in a
+-- second billed call. A null here means "not measured", which is honest, and no
+-- feature in this milestone needs the number.
+CREATE TABLE media_assets (
+  id TEXT PRIMARY KEY,
+  cache_key TEXT NOT NULL UNIQUE,
+  -- Relative to the storage root, never an absolute path and never anything the
+  -- browser sent. The playback route reads it from this column only.
+  object_key TEXT NOT NULL,
+  content_type TEXT NOT NULL,
+  byte_size INTEGER NOT NULL CHECK (byte_size > 0),
+  duration_seconds REAL
+    CHECK (duration_seconds IS NULL OR duration_seconds > 0),
+  voice_id TEXT NOT NULL,
+  engine TEXT NOT NULL,
+  language TEXT NOT NULL,
+  -- Stored as the SSML-style rate word or percentage that was requested, so the
+  -- row explains its own cache key.
+  speech_rate TEXT NOT NULL,
+  created_at TEXT NOT NULL
+) STRICT;
+
+-- Newest first, for the owner's audio list and its size total.
+CREATE INDEX media_assets_created_idx ON media_assets (created_at DESC);
+`,
+  },
 ];

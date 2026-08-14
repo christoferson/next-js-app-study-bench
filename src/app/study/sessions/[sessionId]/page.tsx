@@ -1,5 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { getAudioFacade, isAudioEnabled } from "@/modules/audio/composition";
+import { AudioClipList } from "@/modules/audio/ui/audio-clip-list";
 import { getStudyFacade } from "@/modules/study-sessions/composition";
 import {
   finishSessionAction,
@@ -81,6 +83,26 @@ export default async function StudySessionPage({
   }
 
   const current = view.current;
+  // Cards only. A question's stem is offered on its bank page, where the owner is
+  // reading rather than being tested; mid-session it would be one more control on a
+  // screen whose job is to take an answer.
+  //
+  // The track comes from the card's own `certificationId` rather than from the first of
+  // `view.tracks`, because a mixed-track session holds cards from several tracks and the
+  // voice must follow the card.
+  //
+  // Nothing at all when speech is unconfigured, for the reason the review screen gives.
+  const clips =
+    current === null || current.itemType !== "FLASHCARD" || !isAudioEnabled()
+      ? []
+      : await getAudioFacade().findFlashcardClips({
+          content: current.revision.content,
+          contentLanguage: current.revision.language,
+          studyType:
+            view.tracks.find(
+              (track) => track.id === current.card.flashcard.certificationId,
+            )?.studyType ?? "GENERAL",
+        });
 
   return (
     <main className="page">
@@ -152,6 +174,13 @@ export default async function StudySessionPage({
                 sessionId={sessionId}
                 itemId={current.item.id}
                 revision={current.revision}
+                audio={
+                  <AudioClipList
+                    clips={clips}
+                    idPrefix="session-audio"
+                    heading="Listen"
+                  />
+                }
               />
             )}
           </section>

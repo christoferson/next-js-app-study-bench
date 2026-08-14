@@ -969,6 +969,153 @@ a:hover {
   margin-inline-start: var(--space-6);
 }
 
+/* Audio */
+
+.audio-clips {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.audio-clips-heading {
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+.audio-clip-rows {
+  display: grid;
+  gap: var(--space-3);
+  margin: 0;
+  padding-left: 0;
+  list-style: none;
+}
+
+/* Text, then a small button on the same line. No border and no panel: at 360px this has
+   to read as a sentence with a speaker beside it, not as a card inside a card. The
+   button never wraps away from its phrase, which is what `align-items: baseline` and a
+   non-shrinking control buy. */
+.audio-clip-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+/* The phrase that will be spoken, at card-text size: it is target-language text, so it
+   has to be legible enough to read along with while it plays. */
+.audio-clip-phrase {
+  max-width: 34ch;
+  font-size: 1.125rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+/* The play control: a small glyph with a large hit area.
+   The visual size is the glyph; the touch target is padding around it, which is how the
+   2.75rem minimum is met without a button the size of the word it plays
+   (`spec/UI-GUIDELINES.md`). Negative margins keep that padding from pushing the text
+   line apart. */
+.audio-play {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: none;
+}
+
+/* The play control lives at the far right of a bank row's badge line — a consistent
+   home on every card, clear of the title text. */
+.card-heading-audio {
+  margin-left: auto;
+  align-self: center;
+}
+
+.audio-play-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 2.75rem;
+  min-height: 2.75rem;
+  margin: -0.6875rem 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--color-accent);
+  cursor: pointer;
+}
+
+.audio-play-button:hover:not(:disabled) {
+  color: var(--color-focus);
+}
+
+.audio-play-button:disabled {
+  cursor: progress;
+  color: var(--color-text-muted);
+}
+
+.audio-play-glyph {
+  width: 1rem;
+  height: 1rem;
+}
+
+/* Pending: the button keeps its footprint and shows a ring turning. Reduced motion gets
+   a static ring — the button is also disabled and `aria-busy`, so the spin is never the
+   only signal that something is happening. */
+.audio-play-spinner {
+  width: 1.125rem;
+  height: 1.125rem;
+  border: 2px solid var(--color-border);
+  border-top-color: var(--color-accent);
+  border-radius: 50%;
+  animation: audio-play-spin 0.8s linear infinite;
+}
+
+@keyframes audio-play-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .audio-play-spinner {
+    animation: none;
+  }
+}
+
+/* "Audio unavailable", and nothing more technical than that. */
+.audio-play-error {
+  font-size: 0.8125rem;
+  color: var(--color-error);
+}
+
+/* The element that holds the bytes. Present in the tree so `play()` has something to
+   call in the same gesture, and never visible: the button is the whole interface. */
+.audio-play-media {
+  display: none;
+}
+
+/* The native player, on `/settings/audio` only. That page has to let a clip be
+   identified before it is deleted, and since the text is not stored the only way is to
+   listen — a transport bar is the right control for that, and the wrong one beside a
+   vocabulary term. Its own control sizes are the platform's and already meet the touch
+   minimum; the width is set so it does not shrink to its intrinsic size on a narrow
+   screen. */
+.audio-clip-player {
+  width: 100%;
+  max-width: 20rem;
+  min-height: 2.5rem;
+}
+
+/* Removal is the quietest thing in the row: it is beside a player the owner came here
+   to press, and it destroys something a moment of Polly time paid for. */
+.audio-clip-remove {
+  align-self: flex-start;
+  min-height: 2.75rem;
+  font-size: 0.8125rem;
+  color: var(--color-text-muted);
+}
+
 code {
   padding: 0.0625rem var(--space-1);
   background-color: var(--color-badge-bg);
@@ -1025,4 +1172,7 @@ code {
   .study-self-grade-buttons {
     grid-template-columns: 1fr 1fr;
   }
+
+  /* Nothing to widen: the clip row is one line at every width, which is the point of
+     replacing the player with a glyph. */
 }

@@ -66,6 +66,11 @@ export default async function HomePage({ searchParams }: HomePageProps) {
           <Link className="button-quiet" href="/progress">
             Progress
           </Link>
+          {/* Audio is generated from a card and listened to there; this is the one
+              place that lists what is stored, so it needs a way in. */}
+          <Link className="button-quiet" href="/settings/audio">
+            Audio
+          </Link>
         </div>
       </section>
 

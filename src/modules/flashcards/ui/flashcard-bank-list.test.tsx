@@ -123,6 +123,42 @@ describe("FlashcardBankList", () => {
 
     expect(screen.queryAllByRole("listitem")).toHaveLength(0);
   });
+
+  it("renders a card's audio control on its badge row, and none where absent", () => {
+    // The node is opaque to this module (same contract as the review screen): the
+    // page decides which cards get one, this component only places it on the row.
+    const audioByCard = new Map([
+      ["card-converted", <button key="a">Play 学习</button>],
+    ]);
+
+    render(
+      <FlashcardBankList slug="demo" items={BANK} audioByCard={audioByCard} />,
+    );
+
+    const vocabularyRow = screen
+      .getByRole("link", { name: "学习" })
+      .closest("li");
+
+    expect(vocabularyRow).not.toBeNull();
+    const control = screen.getByRole("button", { name: "Play 学习" });
+
+    expect(control.closest("li")).toBe(vocabularyRow);
+    // On the badge line at the top of the card, not inside the title link's heading.
+    expect(control.closest(".card-heading")).not.toBeNull();
+    expect(control.closest("h3")).toBeNull();
+    // The basic card got no entry, so its row has no button.
+    const basicRow = screen
+      .getByRole("link", { name: "What does S3 stand for?" })
+      .closest("li");
+
+    expect(basicRow?.querySelector("button")).toBeNull();
+  });
+
+  it("renders no audio control at all when the page passes none", () => {
+    render(<FlashcardBankList slug="demo" items={BANK} />);
+
+    expect(screen.queryByRole("button")).toBeNull();
+  });
 });
 
 const OBJECTIVES = [

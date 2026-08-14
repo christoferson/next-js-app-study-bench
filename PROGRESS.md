@@ -296,10 +296,36 @@ Completed on 2026-08-12. Awaiting explicit authorization for D7.
   enriched (93 succeeded, ~48.7k tokens; 7 rejected — numbered homograph
   terms like `本2` cannot pass the example-uses-the-word check, fix deferred
   to import normalization) plus 2 drill runs (10 drafts).
+- 2026-08-14 (D10 brought forward, user-authorized): Polly audio, scoped to
+  what exists today. New `src/modules/audio/` module:
+  `SpeechSynthesisGateway` port with `PollySpeechSynthesisGateway`
+  (@aws-sdk/client-polly, confined to the adapter by a module-boundary
+  test) and a deterministic fake; `SPEECH_PROVIDER` (fake|polly, fake by
+  default, production fail-loud), `POLLY_VOICE_ID_ZH` (Zhiyu),
+  `POLLY_VOICE_ID_EN` (Joanna), `POLLY_ENGINE` (neural; no silent fallback —
+  unsupported engine surfaces a clear error). Migration `0007` adds STRICT
+  `media_assets` with UNIQUE `cache_key` (sha256 over normalized text +
+  language + voice + engine + rate + configuration per SPEC 12.3; the
+  provider is part of the configuration slot so a fake-provider clip can
+  never cache-hit a Polly request — defect found and fixed during live
+  verification). MP3s live under `./data/audio/` (git-ignored) via a
+  platform `LocalFileObjectStorage` (port ready for D13 S3), atomic writes,
+  two traversal guards. Playback via `GET /api/audio/[assetId]` (immutable
+  cache headers, 404 unknown). Explicit "Generate audio" buttons (server
+  actions — page renders never bill); players on vocabulary cards (term +
+  example sentences; readings/meanings deliberately not spoken), question
+  stems (read-aloud), review screen (reveal-gated), and sessions. Voice
+  chosen by content language / study type — no provider string checks.
+  Per-clip delete plus `/settings/audio` asset library (assets are keyed by
+  spoken text, independent of cards). Live-verified with two Polly calls
+  (学习 → Zhiyu neural 4.5 KB; an English stem → Joanna neural 18.8 KB;
+  third request cache-hit). Deferred to their milestones: audio study packs
+  (D9), LISTENING_COMPREHENSION question type, dedicated audio card type,
+  S3 storage (D13).
 - Known deferred items: ORDERING question type (needed for HSK Writing
   Part 1 word-ordering drills), homograph numbering normalization at import,
   enrichment of the remaining ~1,500 vocabulary words pending owner quality
-  review of the pilot.
+  review of the pilot, real-device (iOS/Android) audio playback check.
 
 ## Deviations
 

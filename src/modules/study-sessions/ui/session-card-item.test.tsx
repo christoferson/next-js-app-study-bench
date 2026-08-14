@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -42,6 +43,8 @@ function renderCardItem(
     readonly content?: FlashcardContent;
     readonly notes?: string | null;
     readonly action?: ReturnType<typeof ratingAction>;
+    /** What the page passes in as pronunciation controls, opaque to the component. */
+    readonly audio?: ReactNode;
   } = {},
 ): void {
   render(
@@ -53,6 +56,7 @@ function renderCardItem(
         ...(options.content === undefined ? {} : { content: options.content }),
         notes: options.notes ?? null,
       })}
+      {...(options.audio === undefined ? {} : { audio: options.audio })}
     />,
   );
 }
@@ -138,5 +142,26 @@ describe("SessionCardItem", () => {
     renderCardItem({ notes: null });
 
     expect(screen.queryByText(/your note on this card/i)).toBeNull();
+  });
+
+  describe("pronunciation", () => {
+    const audio = <p data-testid="audio">Listen</p>;
+
+    it("keeps the audio off screen until the answer is revealed", () => {
+      // Same rule as the review screen: hearing the term must not pre-empt recalling it.
+      renderCardItem({ audio });
+
+      expect(screen.queryByTestId("audio")).toBeNull();
+    });
+
+    it("offers the audio once the answer has been seen", async () => {
+      renderCardItem({ audio });
+
+      const user = userEvent.setup();
+
+      await user.click(screen.getByRole("button", { name: /show answer/i }));
+
+      expect(screen.getByTestId("audio")).toBeVisible();
+    });
   });
 });

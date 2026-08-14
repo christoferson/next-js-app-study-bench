@@ -11,6 +11,8 @@ import {
   ConvertedBadge,
   FlashcardLifecycleBadge,
 } from "@/modules/flashcards/ui/flashcard-badges";
+import { getAudioFacade, isAudioEnabled } from "@/modules/audio/composition";
+import { AudioClipList } from "@/modules/audio/ui/audio-clip-list";
 import { ProvenanceBadge } from "@/modules/question-bank/ui/question-badges";
 import { CardFace } from "@/modules/flashcards/ui/card-face";
 import { FlashcardObjectiveLinkForm } from "@/modules/flashcards/ui/flashcard-objective-link-form";
@@ -47,6 +49,19 @@ export default async function FlashcardDetailPage({
   const { certification, flashcard, currentRevision } = view;
   const bankPath = `/study-tracks/${certification.slug}/flashcards`;
   const cardPath = `${bankPath}/${flashcard.id}`;
+  // Only when a real voice is configured. Unconfigured, the placeholder provider would
+  // synthesize silence, and a play button that produces nothing is worse than no button
+  // at all — `/settings/audio` is where that is explained.
+  //
+  // A cache read, never a synthesis: opening this page costs nothing however often it is
+  // refreshed, and a clip that already exists plays on the first tap with no round trip.
+  const clips = isAudioEnabled()
+    ? await getAudioFacade().findFlashcardClips({
+        content: currentRevision.content,
+        contentLanguage: currentRevision.language,
+        studyType: certification.studyType,
+      })
+    : [];
 
   return (
     <main className="page">
@@ -123,6 +138,22 @@ export default async function FlashcardDetailPage({
           <CardFace content={currentRevision.content} revealAnswer />
         </details>
       </section>
+
+      {clips.length === 0 ? null : (
+        <section aria-labelledby="listen-heading" className="section">
+          <div className="section-heading">
+            <h2 id="listen-heading">Listen</h2>
+            <p className="section-note">
+              The reading is never spoken: a romanisation read by a Mandarin
+              voice teaches the wrong sound.
+            </p>
+          </div>
+          {/* After the answer section on purpose. Nothing here spoils the card —
+              the only clip is the term, never a meaning — but target-language
+              text belongs below the reveal, not above it. */}
+          <AudioClipList clips={clips} idPrefix="card-audio" />
+        </section>
+      )}
 
       {currentRevision.notes !== null ? (
         <section aria-labelledby="notes-heading" className="section">

@@ -17,7 +17,9 @@ import {
   cardRevisionFixture,
   clozeContent,
   contentFixtures,
+  enrichedVocabularyContent,
   flashcardFixture,
+  hintedClozeContent,
   reviewRecordFixture,
   scenarioContent,
   scheduleFixture,
@@ -108,6 +110,55 @@ export function describeFlashcardRepositoryContract(
       await expect(
         subject.flashcards.countsByCertification(certificationFixture().id),
       ).resolves.toEqual({ total: 5, active: 0 });
+    });
+
+    it("round-trips an enriched vocabulary card field for field", async () => {
+      await subject.flashcards.create(
+        flashcardFixture(),
+        cardRevisionFixture({ content: enrichedVocabularyContent() }),
+      );
+
+      const found = await subject.flashcards.findWithCurrentRevision(
+        flashcardFixture().id,
+      );
+
+      expect(found?.revision.content).toEqual(enrichedVocabularyContent());
+    });
+
+    it("reads a card stored before the richer fields existed without inventing them", async () => {
+      // The back-compatibility guarantee for the owner's imported bank: a payload
+      // with none of the new keys comes back with none of them, not with empty
+      // lists that would render as blank rows.
+      await subject.flashcards.create(
+        flashcardFixture(),
+        cardRevisionFixture({ content: vocabularyContent() }),
+      );
+
+      const found = await subject.flashcards.findWithCurrentRevision(
+        flashcardFixture().id,
+      );
+
+      expect(found?.revision.content).toEqual(vocabularyContent());
+      expect(Object.keys(found?.revision.content ?? {}).sort()).toEqual([
+        "exampleSentence",
+        "meaning",
+        "reading",
+        "term",
+        "type",
+      ]);
+    });
+
+    it("keeps a cloze hint through a round trip", async () => {
+      await subject.flashcards.create(
+        flashcardFixture(),
+        cardRevisionFixture({ content: hintedClozeContent() }),
+      );
+
+      const found = await subject.flashcards.findWithCurrentRevision(
+        flashcardFixture().id,
+      );
+
+      expect(found?.revision.content).toEqual(hintedClozeContent());
     });
 
     it("keeps a vocabulary card's optional fields distinguishable from blank", async () => {

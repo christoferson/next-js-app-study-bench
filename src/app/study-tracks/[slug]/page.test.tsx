@@ -251,6 +251,100 @@ describe("Study-track detail page", () => {
     expect(screen.getByText(/No flashcards yet/)).toBeVisible();
   });
 
+  /**
+   * The AI entry points, which differ by how the track is studied.
+   *
+   * Asserted through the study type only. No test here sets a provider or a name, so a
+   * regression that started keying on "HSK" would not be covered by these assertions.
+   */
+  describe("building study material", () => {
+    it("leads a language track with enrichment and drills", async () => {
+      stubDetail({
+        certification: certificationFixture({
+          slug: "demo-hsk-2",
+          studyType: "LANGUAGE_PROFICIENCY",
+        }),
+      });
+
+      await renderTrackPage("demo-hsk-2");
+
+      expect(
+        screen.getByRole("heading", { level: 2, name: "Build study material" }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("link", { name: "Enrich vocabulary with AI" }),
+      ).toHaveAttribute("href", "/study-tracks/demo-hsk-2/enrich");
+      expect(
+        screen.getByRole("link", { name: "Generate drills" }),
+      ).toHaveAttribute("href", "/study-tracks/demo-hsk-2/generate");
+      expect(screen.getByRole("link", { name: "Past runs" })).toHaveAttribute(
+        "href",
+        "/study-tracks/demo-hsk-2/generation-runs",
+      );
+      expect(
+        screen.queryByRole("link", { name: "Generate with AI" }),
+      ).toBeNull();
+    });
+
+    it("keeps a technical certification's single generate entry point", async () => {
+      stubDetail();
+
+      await renderTrackPage("demo-cloud-practitioner");
+
+      expect(
+        screen.getByRole("heading", { level: 2, name: "Generate with AI" }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("link", { name: "Generate with AI" }),
+      ).toHaveAttribute(
+        "href",
+        "/study-tracks/demo-cloud-practitioner/generate",
+      );
+      expect(
+        screen.queryByRole("link", { name: "Enrich vocabulary with AI" }),
+      ).toBeNull();
+      expect(
+        screen.queryByRole("link", { name: "Generate drills" }),
+      ).toBeNull();
+    });
+
+    it("leads a general track with generation, like a certification", async () => {
+      stubDetail({
+        certification: certificationFixture({ studyType: "GENERAL" }),
+      });
+
+      await renderTrackPage("demo-cloud-practitioner");
+
+      expect(
+        screen.getByRole("link", { name: "Generate with AI" }),
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByRole("link", { name: "Enrich vocabulary with AI" }),
+      ).toBeNull();
+    });
+
+    it("offers neither on an archived language track", async () => {
+      stubDetail({
+        certification: certificationFixture({
+          studyType: "LANGUAGE_PROFICIENCY",
+          status: "ARCHIVED",
+        }),
+      });
+
+      await renderTrackPage("demo-hsk-2");
+
+      expect(
+        screen.queryByRole("heading", {
+          level: 2,
+          name: "Build study material",
+        }),
+      ).toBeNull();
+      expect(
+        screen.queryByRole("link", { name: "Enrich vocabulary with AI" }),
+      ).toBeNull();
+    });
+  });
+
   it("triggers the not-found path for an unknown slug", async () => {
     findDetailBySlug.mockResolvedValue(null);
 

@@ -6,10 +6,13 @@ import {
   questionPayloadItem,
 } from "@/modules/ai-generation/infrastructure/test-support";
 import {
+  ENRICHMENT_SCHEMA_NAME,
   FLASHCARD_SCHEMA_NAME,
   QUESTION_SCHEMA_NAME,
+  enrichmentOutputJsonSchema,
   flashcardOutputJsonSchema,
   questionOutputJsonSchema,
+  validateEnrichmentOutput,
   validateFlashcardOutput,
   validateQuestionOutput,
 } from "./output-schemas";
@@ -321,10 +324,226 @@ describe("validateFlashcardOutput", () => {
   });
 });
 
+describe("validateEnrichmentOutput", () => {
+  function validWords(items: readonly Record<string, unknown>[]) {
+    return validateEnrichmentOutput({ words: items });
+  }
+
+  function enrichmentPayloadItem(
+    overrides: Record<string, unknown> = {},
+  ): Record<string, unknown> {
+    return {
+      term: "学习",
+      meanings: ["to study", "to learn"],
+      synonyms: ["念书"],
+      antonyms: [],
+      examples: [
+        {
+          text: "我每天学习汉语。",
+          reading: "wǒ měi tiān xuéxí hànyǔ.",
+          translation: "I study Chinese every day.",
+        },
+      ],
+      usageNotes: "Neutral register.",
+      ...overrides,
+    };
+  }
+
+  it("reads a well-formed entry into a draft", () => {
+    const result = validWords([enrichmentPayloadItem()]);
+
+    expect(result.ok).toBe(true);
+
+    if (result.ok) {
+      expect(result.value[0]).toEqual({
+        term: "学习",
+        meanings: ["to study", "to learn"],
+        synonyms: ["念书"],
+        antonyms: [],
+        examples: [
+          {
+            text: "我每天学习汉语。",
+            reading: "wǒ měi tiān xuéxí hànyǔ.",
+            translation: "I study Chinese every day.",
+          },
+        ],
+        usageNotes: "Neutral register.",
+      });
+    }
+  });
+
+  it("treats an absent, null, and empty list as the same answer", () => {
+    // "This word has no antonym" is a real answer, and refusing it would cost the
+    // card for being honest. Which of the three ways the model says it is not a
+    // difference the domain should see.
+    for (const antonyms of [undefined, null, []]) {
+      const item = enrichmentPayloadItem();
+
+      if (antonyms === undefined) {
+        delete item.antonyms;
+      } else {
+        item.antonyms = antonyms;
+      }
+
+      const result = validWords([item]);
+
+      expect(result.ok).toBe(true);
+
+      if (result.ok) {
+        expect(result.value[0]?.antonyms).toEqual([]);
+      }
+    }
+  });
+
+  it("drops blank entries and collapses repeats within a list", () => {
+    const result = validWords([
+      enrichmentPayloadItem({
+        meanings: [" to study ", "to study", "TO STUDY", "  ", "to learn"],
+      }),
+    ]);
+
+    expect(result.ok).toBe(true);
+
+    if (result.ok) {
+      expect(result.value[0]?.meanings).toEqual(["to study", "to learn"]);
+    }
+  });
+
+  it("treats an absent, null, and blank usage note as the same answer", () => {
+    for (const usageNotes of [undefined, null, "   "]) {
+      const item = enrichmentPayloadItem();
+
+      if (usageNotes === undefined) {
+        delete item.usageNotes;
+      } else {
+        item.usageNotes = usageNotes;
+      }
+
+      const result = validWords([item]);
+
+      expect(result.ok).toBe(true);
+
+      if (result.ok) {
+        expect(result.value[0]?.usageNotes).toBeNull();
+      }
+    }
+  });
+
+  it("reads an example with no reading or translation", () => {
+    const result = validWords([
+      enrichmentPayloadItem({ examples: [{ text: "我学习。" }] }),
+    ]);
+
+    expect(result.ok).toBe(true);
+
+    if (result.ok) {
+      expect(result.value[0]?.examples[0]).toEqual({
+        text: "我学习。",
+        reading: null,
+        translation: null,
+      });
+    }
+  });
+
+  it("accepts an entry with no examples so the checks can refuse it for that", () => {
+    // Shape-valid, then rejected by `matchEnrichments` for having too few examples:
+    // the count rule belongs to the domain, not to the wire format, so the owner is
+    // told which card failed rather than that the whole answer was malformed.
+    const result = validWords([enrichmentPayloadItem({ examples: null })]);
+
+    expect(result.ok).toBe(true);
+
+    if (result.ok) {
+      expect(result.value[0]?.examples).toEqual([]);
+    }
+  });
+
+  it("refuses an answer that is not the right shape at all", () => {
+    expect(validateEnrichmentOutput({ words: "several" }).ok).toBe(false);
+    expect(validateEnrichmentOutput(null).ok).toBe(false);
+    expect(validateEnrichmentOutput({}).ok).toBe(false);
+  });
+
+  it("refuses an entry with no term at all", () => {
+    const item = enrichmentPayloadItem();
+
+    delete item.term;
+
+    expect(validWords([item]).ok).toBe(false);
+    expect(validWords([enrichmentPayloadItem({ term: 42 })]).ok).toBe(false);
+  });
+
+  it("passes a blank term through for the checks to reject", () => {
+    // Shape-valid but unmatchable: a blank term matches no card, so `matchEnrichments`
+    // rejects that one entry. Failing the whole answer here would lose the other
+    // nineteen words for one bad echo.
+    const result = validWords([enrichmentPayloadItem({ term: "   " })]);
+
+    expect(result.ok).toBe(true);
+
+    if (result.ok) {
+      expect(result.value[0]?.term).toBe("");
+    }
+  });
+
+  it("refuses an example whose sentence is not text", () => {
+    expect(
+      validWords([
+        enrichmentPayloadItem({ examples: [{ text: 7, reading: "wǒ" }] }),
+      ]).ok,
+    ).toBe(false);
+  });
+
+  it("refuses a list longer than the domain could store", () => {
+    const meanings = Array.from({ length: 13 }, (_unused, i) => `sense ${i}`);
+
+    expect(validWords([enrichmentPayloadItem({ meanings })]).ok).toBe(false);
+  });
+
+  it("refuses more entries than any run could have asked for", () => {
+    const items = Array.from({ length: 26 }, () => enrichmentPayloadItem());
+
+    expect(validWords(items).ok).toBe(false);
+  });
+
+  it("never echoes the offending value back to the provider", () => {
+    const secret = "a-value-that-must-not-be-echoed";
+    const result = validWords([
+      enrichmentPayloadItem({ meanings: [secret.repeat(60)] }),
+    ]);
+
+    expect(result.ok).toBe(false);
+
+    if (!result.ok) {
+      expect(result.errors.join(" ")).not.toContain(secret);
+    }
+  });
+
+  it("accepts an empty answer as well-formed but empty", () => {
+    const result = validWords([]);
+
+    expect(result.ok).toBe(true);
+
+    if (result.ok) {
+      expect(result.value).toEqual([]);
+    }
+  });
+});
+
 describe("provider-facing JSON schemas", () => {
   it("names one tool per item kind", () => {
     expect(QUESTION_SCHEMA_NAME).toBe("practice_questions");
     expect(FLASHCARD_SCHEMA_NAME).toBe("study_flashcards");
+    expect(ENRICHMENT_SCHEMA_NAME).toBe("enriched_vocabulary");
+  });
+
+  it("requires the term the enrichment is matched back by", () => {
+    const items = enrichmentOutputJsonSchema().properties?.words?.items;
+
+    expect(items?.required).toContain("term");
+    expect(items?.properties?.term?.description ?? "").toMatch(
+      /copied exactly as it was given/i,
+    );
   });
 
   it("describes only the types the request allows", () => {

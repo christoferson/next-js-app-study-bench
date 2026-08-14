@@ -9,13 +9,20 @@ import {
   clozeContent,
   vocabularyContent,
 } from "@/modules/flashcards/infrastructure/test-support";
+import { assertValidContent as assertValidCardContent } from "@/modules/flashcards/domain/flashcard-content";
+import type { VocabularyContent } from "@/modules/flashcards/domain/flashcard-content";
 import type {
   GeneratedFlashcardDraft,
   GeneratedQuestionDraft,
+  VocabularyEnrichmentDraft,
+  VocabularyEnrichmentTarget,
 } from "./generated-draft";
 import {
+  MIN_ENRICHED_EXAMPLES,
   checkFlashcardDrafts,
   checkQuestionDrafts,
+  matchEnrichments,
+  mergeEnrichment,
 } from "./deterministic-checks";
 import type { CheckContext } from "./deterministic-checks";
 
@@ -407,5 +414,321 @@ describe("checkFlashcardDrafts", () => {
     expect(result.rejected).toEqual([
       { position: 2, reason: expect.stringMatching(/do not exist/i) },
     ]);
+  });
+});
+
+/**
+ * Enrichment fixtures.
+ *
+ * Synthetic words, so what is asserted below is the matching and merging rules and
+ * not anyone's syllabus. The terms are single characters that are easy to embed in a
+ * sentence, because several rules turn on whether an example contains its word.
+ */
+function target(
+  overrides: Partial<VocabularyContent> = {},
+  flashcardId = "card-1",
+): VocabularyEnrichmentTarget {
+  return {
+    flashcardId,
+    content: {
+      type: "VOCABULARY",
+      term: "甲",
+      reading: "jiǎ",
+      meaning: "the first demo word",
+      exampleSentence: null,
+      ...overrides,
+    },
+  };
+}
+
+function enrichment(
+  overrides: Partial<VocabularyEnrichmentDraft> = {},
+): VocabularyEnrichmentDraft {
+  return {
+    term: "甲",
+    meanings: ["first sense", "second sense"],
+    synonyms: ["乙"],
+    antonyms: [],
+    examples: [
+      { text: "这是甲。", reading: "zhè shì jiǎ.", translation: "This is A." },
+      { text: "甲很好。", reading: "jiǎ hěn hǎo.", translation: "A is good." },
+    ],
+    usageNotes: "Written register.",
+    ...overrides,
+  };
+}
+
+/** The single reason a one-answer batch was refused. */
+function enrichmentRefusal(
+  draft: VocabularyEnrichmentDraft,
+  card = target(),
+): string {
+  const result = matchEnrichments([card], [draft]);
+
+  expect(result.matched).toHaveLength(0);
+  expect(result.rejected).toHaveLength(1);
+  // A refused answer must leave its card reported as untouched, never silently
+  // dropped: that count is what the run row shows the owner.
+  expect(result.unmatched).toEqual([card]);
+
+  return result.rejected[0]?.reason ?? "";
+}
+
+describe("matchEnrichments", () => {
+  it("matches an answer to its card by the term it echoed back", () => {
+    const cards = [target({}, "card-1"), target({ term: "乙" }, "card-2")];
+    const result = matchEnrichments(cards, [
+      enrichment({ term: "乙", examples: exampleFor("乙") }),
+      enrichment({ term: "甲" }),
+    ]);
+
+    expect(result.rejected).toEqual([]);
+    expect(result.unmatched).toEqual([]);
+    // Order follows the model's answer, not the request, and each answer landed on
+    // its own card rather than on the one at the same position.
+    expect(result.matched.map((item) => item.target.flashcardId)).toEqual([
+      "card-2",
+      "card-1",
+    ]);
+  });
+
+  it("rejects an answer for a word the run never asked about", () => {
+    const result = matchEnrichments(
+      [target()],
+      [enrichment({ term: "丙", examples: exampleFor("丙") })],
+    );
+
+    expect(result.matched).toEqual([]);
+    expect(result.rejected[0]?.reason).toMatch(/not one of the words/i);
+    expect(result.unmatched).toHaveLength(1);
+  });
+
+  it("reports the card a drifting answer left behind", () => {
+    const cards = [target({}, "card-1"), target({ term: "乙" }, "card-2")];
+    const result = matchEnrichments(cards, [
+      enrichment({ term: "甲" }),
+      enrichment({ term: "丙", examples: exampleFor("丙") }),
+    ]);
+
+    expect(result.matched).toHaveLength(1);
+    expect(result.unmatched.map((item) => item.flashcardId)).toEqual([
+      "card-2",
+    ]);
+  });
+
+  it("numbers a rejection by its position in the model's answer", () => {
+    const result = matchEnrichments(
+      [target()],
+      [
+        enrichment({ term: "丙", examples: exampleFor("丙") }),
+        enrichment({ term: "丁", examples: exampleFor("丁") }),
+      ],
+    );
+
+    expect(result.rejected.map((item) => item.position)).toEqual([1, 2]);
+  });
+
+  it("tolerates surrounding whitespace in the echoed term", () => {
+    const result = matchEnrichments([target()], [enrichment({ term: " 甲 " })]);
+
+    expect(result.matched).toHaveLength(1);
+  });
+
+  it("does not match a different character", () => {
+    // Case-insensitive or normalising matching would be wrong for a language where
+    // a differing character is a differing word.
+    expect(
+      matchEnrichments(
+        [target({ term: "干" })],
+        [enrichment({ term: "千", examples: exampleFor("千") })],
+      ).matched,
+    ).toEqual([]);
+  });
+
+  it("lets one card absorb only one answer", () => {
+    const result = matchEnrichments(
+      [target()],
+      [enrichment(), enrichment({ meanings: ["a later sense"] })],
+    );
+
+    expect(result.matched).toHaveLength(1);
+    expect(result.rejected).toHaveLength(1);
+    expect(result.rejected[0]?.position).toBe(2);
+  });
+
+  it("returns every card unmatched when the model answered nothing", () => {
+    const cards = [target({}, "card-1"), target({ term: "乙" }, "card-2")];
+
+    expect(matchEnrichments(cards, []).unmatched).toEqual(cards);
+  });
+
+  it("refuses an answer with no meanings", () => {
+    expect(enrichmentRefusal(enrichment({ meanings: [] }))).toMatch(
+      /no meanings/i,
+    );
+  });
+
+  it("refuses an answer with too few examples", () => {
+    expect(
+      enrichmentRefusal(enrichment({ examples: exampleFor("甲").slice(0, 1) })),
+    ).toMatch(/fewer than 2 example/i);
+    expect(MIN_ENRICHED_EXAMPLES).toBe(2);
+  });
+
+  it("refuses examples that never use the word", () => {
+    const draft = enrichment({
+      examples: [
+        { text: "这是别的词。", reading: null, translation: null },
+        { text: "还有一个句子。", reading: null, translation: null },
+      ],
+    });
+
+    expect(enrichmentRefusal(draft)).toMatch(/No example sentence uses/i);
+  });
+
+  it("refuses an answer the flashcard domain would refuse", () => {
+    // Nine meanings is past the domain's own list bound, so the merged card would
+    // not be storable. Checked through the domain rather than restated here.
+    const draft = enrichment({
+      meanings: Array.from({ length: 9 }, (_unused, index) => `sense ${index}`),
+    });
+
+    expect(enrichmentRefusal(draft).length).toBeGreaterThan(0);
+  });
+
+  it("refuses an answer that claims official status", () => {
+    const draft = enrichment({
+      usageNotes: "This is an actual exam question about 甲.",
+    });
+
+    expect(enrichmentRefusal(draft)).toMatch(/official or real/i);
+  });
+});
+
+/** Two examples that both contain the given word, so only the rule under test fails. */
+function exampleFor(term: string): VocabularyEnrichmentDraft["examples"] {
+  return [
+    { text: `这是${term}。`, reading: null, translation: null },
+    { text: `${term}很好。`, reading: null, translation: null },
+  ];
+}
+
+describe("mergeEnrichment", () => {
+  it("never replaces what the card already said", () => {
+    const merged = mergeEnrichment(
+      target({ exampleSentence: "甲是原来的句子。" }).content,
+      enrichment(),
+    );
+
+    expect(merged.term).toBe("甲");
+    expect(merged.reading).toBe("jiǎ");
+    expect(merged.meaning).toBe("the first demo word");
+    expect(merged.exampleSentence).toBe("甲是原来的句子。");
+  });
+
+  it("adds the model's senses, synonyms, antonyms, and examples", () => {
+    const merged = mergeEnrichment(
+      target().content,
+      enrichment({ antonyms: ["丙"] }),
+    );
+
+    expect(merged.meanings).toEqual(["first sense", "second sense"]);
+    expect(merged.synonyms).toEqual(["乙"]);
+    expect(merged.antonyms).toEqual(["丙"]);
+    expect(merged.examples).toHaveLength(2);
+    expect(merged.examples?.[0]).toEqual({
+      text: "这是甲。",
+      reading: "zhè shì jiǎ.",
+      translation: "This is A.",
+    });
+  });
+
+  it("keeps existing entries first and appends only new ones", () => {
+    const merged = mergeEnrichment(
+      target({ meanings: ["an owner sense", "first sense"] }).content,
+      enrichment(),
+    );
+
+    // "first sense" is already there, so it is not repeated.
+    expect(merged.meanings).toEqual([
+      "an owner sense",
+      "first sense",
+      "second sense",
+    ]);
+  });
+
+  it("ignores a repeat that differs only in case or spacing", () => {
+    const merged = mergeEnrichment(
+      target({ synonyms: ["Study"] }).content,
+      enrichment({ synonyms: [" study "] }),
+    );
+
+    expect(merged.synonyms).toEqual(["Study"]);
+  });
+
+  it("does not store the card's own example sentence twice", () => {
+    const merged = mergeEnrichment(
+      target({ exampleSentence: "这是甲。" }).content,
+      enrichment(),
+    );
+
+    expect(merged.exampleSentence).toBe("这是甲。");
+    expect(merged.examples?.map((example) => example.text)).toEqual([
+      "甲很好。",
+    ]);
+  });
+
+  it("omits a list the model left empty rather than storing it empty", () => {
+    const merged = mergeEnrichment(
+      target().content,
+      enrichment({ synonyms: [], antonyms: [] }),
+    );
+
+    // The domain refuses a present-but-empty list, and an absent field is what an
+    // unenriched card looks like for that field.
+    expect("synonyms" in merged).toBe(false);
+    expect("antonyms" in merged).toBe(false);
+  });
+
+  it("drops an example's reading and translation when the model gave none", () => {
+    const merged = mergeEnrichment(
+      target().content,
+      enrichment({ examples: exampleFor("甲") }),
+    );
+
+    expect(merged.examples?.[0]).toEqual({ text: "这是甲。" });
+  });
+
+  it("prefers the model's usage notes over the card's", () => {
+    const merged = mergeEnrichment(
+      target({ usageNotes: "an older note" }).content,
+      enrichment({ usageNotes: "a newer note" }),
+    );
+
+    expect(merged.usageNotes).toBe("a newer note");
+  });
+
+  it("keeps the card's usage notes when the model gave none", () => {
+    const merged = mergeEnrichment(
+      target({ usageNotes: "an older note" }).content,
+      enrichment({ usageNotes: null }),
+    );
+
+    expect(merged.usageNotes).toBe("an older note");
+  });
+
+  it("leaves usage notes absent when neither side has any", () => {
+    const merged = mergeEnrichment(
+      target().content,
+      enrichment({ usageNotes: null }),
+    );
+
+    expect("usageNotes" in merged).toBe(false);
+  });
+
+  it("produces content the flashcard domain accepts", () => {
+    expect(() =>
+      assertValidCardContent(mergeEnrichment(target().content, enrichment())),
+    ).not.toThrow();
   });
 });

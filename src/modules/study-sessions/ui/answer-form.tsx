@@ -10,7 +10,10 @@ import {
 } from "@/shared/ui/form-state";
 import type { QuestionRevision } from "@/modules/question-bank/domain/question";
 import { contentChoices } from "@/modules/question-bank/domain/question";
-import { describeAnswerRule } from "@/modules/question-bank/domain/question-content";
+import {
+  choiceLetter,
+  describeAnswerRule,
+} from "@/modules/question-bank/domain/question-content";
 import {
   ANSWER_CONFIDENCES,
   describeConfidence,
@@ -100,8 +103,11 @@ export function AnswerForm({
           </div>
         ) : (
           <ul className="choice-list">
-            {choices.map((choice) => (
+            {choices.map((choice, index) => (
               <li className="choice-row" key={choice.id}>
+                {/* The letter is part of the label text rather than a sibling of
+                    it, so it is inside the control's accessible name and clicking
+                    it selects the choice. */}
                 <label className="choice-label study-choice">
                   <input
                     type={isMultiple ? "checkbox" : "radio"}
@@ -109,7 +115,12 @@ export function AnswerForm({
                     value={choice.id}
                     aria-describedby="answer-errors"
                   />
-                  <span>{choice.text}</span>
+                  <span>
+                    <span className="choice-letter">
+                      {choiceLetter(index)}.
+                    </span>{" "}
+                    {choice.text}
+                  </span>
                 </label>
               </li>
             ))}

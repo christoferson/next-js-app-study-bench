@@ -1,9 +1,13 @@
 import type { Objective } from "@/modules/certifications/domain/objective";
+import {
+  describeObjectiveOption,
+  listObjectiveOptions,
+} from "@/modules/certifications/domain/objective";
 import type { FlashcardFilterInput } from "@/modules/flashcards/application/schemas";
 import {
   CARD_TYPES,
   FLASHCARD_LIFECYCLE_STATUSES,
-  describeCardType,
+  describeCardTypeChoice,
   describeFlashcardLifecycleStatus,
 } from "@/modules/flashcards/domain/flashcard";
 
@@ -61,7 +65,7 @@ export function FlashcardFilterForm({
             <option value="">Any type</option>
             {CARD_TYPES.map((cardType) => (
               <option key={cardType} value={cardType}>
-                {describeCardType(cardType)}
+                {describeCardTypeChoice(cardType)}
               </option>
             ))}
           </select>
@@ -75,9 +79,9 @@ export function FlashcardFilterForm({
             defaultValue={filters.objective ?? ""}
           >
             <option value="">Any objective</option>
-            {objectives.map((objective) => (
-              <option key={objective.id} value={objective.id}>
-                {objectiveLabel(objective)}
+            {listObjectiveOptions(objectives).map((option) => (
+              <option key={option.objective.id} value={option.objective.id}>
+                {describeObjectiveOption(option)}
               </option>
             ))}
           </select>
@@ -96,11 +100,4 @@ export function FlashcardFilterForm({
       </div>
     </form>
   );
-}
-
-function objectiveLabel(objective: Objective): string {
-  const prefix = objective.code === null ? "" : `${objective.code} — `;
-  const suffix = objective.status === "ARCHIVED" ? " (archived)" : "";
-
-  return `${prefix}${objective.title}${suffix}`;
 }

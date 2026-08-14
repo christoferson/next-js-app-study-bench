@@ -17,13 +17,61 @@ import type { GenerationMode } from "@/modules/question-bank/domain/question";
 
 export type GenerationRunId = string;
 
-/** What a run was asked to produce. One kind per run. */
-export type GeneratedItemKind = "QUESTION" | "FLASHCARD";
+/**
+ * The provider name the built-in test gateway records.
+ *
+ * Named here, in the domain, because `modelProvider` is provenance: a run row says
+ * which provider wrote its items, and "was this real?" is a question about that
+ * recorded value rather than about how the application happens to be configured
+ * right now. The gateway, the composition root, and the screens that warn about
+ * placeholder output all read the same constant, so none of them can disagree.
+ */
+export const FAKE_MODEL_PROVIDER = "fake";
+
+/**
+ * Whether a provider name means "nothing was actually generated".
+ *
+ * A predicate rather than an equality check at each call site, so the screens that
+ * warn the owner do not have to know the spelling.
+ */
+export function isFakeModelProvider(provider: string): boolean {
+  return provider === FAKE_MODEL_PROVIDER;
+}
+
+/**
+ * What a run was asked to produce. One kind per run.
+ *
+ * `ENRICH_VOCABULARY` is the odd one out and deliberately so: it creates no new
+ * items, it appends a revision to vocabulary cards the owner already has. It is
+ * still a run rather than a separate concept because everything a run exists for
+ * applies unchanged — a model was called, tokens were spent, output was validated,
+ * per-item outcomes were counted, and the result needs a page the owner can read.
+ * A parallel "enrichment run" table would duplicate all of that.
+ */
+export type GeneratedItemKind = "QUESTION" | "FLASHCARD" | "ENRICH_VOCABULARY";
 
 export const GENERATED_ITEM_KINDS: readonly GeneratedItemKind[] = [
   "QUESTION",
   "FLASHCARD",
+  "ENRICH_VOCABULARY",
 ];
+
+/**
+ * Whether a run rewrites existing items rather than creating them.
+ *
+ * A predicate on the kind rather than a check spelled out at each call site, so
+ * the review screen, the repository, and the facade agree about which runs own
+ * their items and which only touched them.
+ */
+export function revisesExistingItems(kind: GeneratedItemKind): boolean {
+  switch (kind) {
+    case "QUESTION":
+    case "FLASHCARD":
+      return false;
+    case "ENRICH_VOCABULARY":
+      return true;
+  }
+}
 
 /**
  * Run status.
@@ -121,6 +169,8 @@ export function describeItemKind(kind: GeneratedItemKind): string {
       return "Questions";
     case "FLASHCARD":
       return "Flashcards";
+    case "ENRICH_VOCABULARY":
+      return "Enriched vocabulary";
   }
 }
 
@@ -130,6 +180,8 @@ export function describeItemKindSingular(kind: GeneratedItemKind): string {
       return "question";
     case "FLASHCARD":
       return "flashcard";
+    case "ENRICH_VOCABULARY":
+      return "enriched card";
   }
 }
 

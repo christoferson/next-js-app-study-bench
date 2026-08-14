@@ -406,6 +406,8 @@ export class FlashcardFacade {
           notes: input.notes,
           tags: input.tags,
           language: input.language,
+          // The owner wrote this text, so no run wrote it.
+          generationRunId: null,
           createdAt: now,
         });
 
@@ -453,6 +455,8 @@ export class FlashcardFacade {
         notes: input.notes,
         tags: input.tags,
         language: input.language,
+        // A hand edit, even to a card a run created: this text is the owner's.
+        generationRunId: null,
         createdAt: now,
       };
 
@@ -659,6 +663,8 @@ export class FlashcardFacade {
           notes: found.revision.explanation,
           tags: found.revision.tags,
           language: found.revision.language,
+          // Copied owner-authored text, for the same reason the card is `MANUAL`.
+          generationRunId: null,
           createdAt: now,
         });
 
@@ -776,6 +782,17 @@ function toContent(input: FlashcardInput): FlashcardContent {
         reading: input.reading,
         meaning: input.meaning,
         exampleSentence: input.exampleSentence,
+        // An absent or empty list means the field was left blank, which is the
+        // card not carrying that field rather than carrying an empty one.
+        // Omitting the key keeps a hand-written card's payload identical to what
+        // it was before these fields existed.
+        ...optionalList("meanings", input.meanings),
+        ...optionalList("synonyms", input.synonyms),
+        ...optionalList("antonyms", input.antonyms),
+        ...optionalList("examples", input.examples),
+        ...(input.usageNotes === undefined || input.usageNotes === null
+          ? {}
+          : { usageNotes: input.usageNotes }),
       };
     case "SCENARIO":
       return {
@@ -785,6 +802,22 @@ function toContent(input: FlashcardInput): FlashcardContent {
         answer: input.answer,
       };
   }
+}
+
+/**
+ * One optional list field, present only when it has entries.
+ *
+ * `{ examples: [] }` and no `examples` key are the same card, and a stored empty
+ * array would make one card's payload differ from another's for no reason the
+ * owner could see, so the empty case omits the key.
+ */
+function optionalList<Key extends string, Entry>(
+  key: Key,
+  entries: readonly Entry[] | undefined,
+): Partial<Record<Key, readonly Entry[]>> {
+  return entries === undefined || entries.length === 0
+    ? {}
+    : ({ [key]: entries } as Record<Key, readonly Entry[]>);
 }
 
 /**

@@ -159,3 +159,23 @@ export function describeAnswerRule(questionType: QuestionType): string {
 export function choiceId(index: number): string {
   return `choice-${index + 1}`;
 }
+
+/**
+ * The letter a choice is presented under: `a`, `b`, `c`, ...
+ *
+ * Derived from the position at render time and deliberately not persisted. A stored
+ * letter would be a second identity for a choice that could disagree with the stored
+ * id, and it would freeze the order a revision was written in. The id stays
+ * `choice-n`, so an attempt recorded before this label existed still names the same
+ * choice.
+ *
+ * Past the alphabet the number is used instead of wrapping round to `a` again, so no
+ * two choices of one question can ever share a label. `MAX_CHOICES` is 8, so this is
+ * defensive rather than reachable through the forms.
+ */
+export function choiceLetter(index: number): string {
+  const LETTERS = "abcdefghijklmnopqrstuvwxyz";
+  const letter = LETTERS[index];
+
+  return letter ?? String(index + 1);
+}

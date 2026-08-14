@@ -3,7 +3,10 @@ import {
   contentChoices,
   correctChoiceIds,
 } from "@/modules/question-bank/domain/question";
-import { describeAnswerRule } from "@/modules/question-bank/domain/question-content";
+import {
+  choiceLetter,
+  describeAnswerRule,
+} from "@/modules/question-bank/domain/question-content";
 
 interface QuestionPreviewProps {
   readonly revision: QuestionRevision;
@@ -22,7 +25,13 @@ interface QuestionPreviewProps {
  * answer them, and a disabled answer control would be a dead control for a
  * feature that does not exist yet (`spec/UI-GUIDELINES.md`).
  *
- * Correct answers are marked with a word, never with colour alone.
+ * Each choice carries the letter it is presented under, so a question can be
+ * discussed, printed, or compared against a recorded answer by reference rather
+ * than by repeating its text. The letters come from the position at render time and
+ * are never stored (`choiceLetter`).
+ *
+ * A correct answer is marked with a tick *and* the words "Correct answer", so the
+ * mark survives without colour (`spec/UI-GUIDELINES.md` section 1.3).
  */
 export function QuestionPreview({
   revision,
@@ -40,14 +49,31 @@ export function QuestionPreview({
 
       {choices.length > 0 ? (
         <ol className="question-choices">
-          {choices.map((choice) => (
-            <li className="question-choice" key={choice.id}>
-              <span>{choice.text}</span>
-              {revealAnswer && marked.has(choice.id) ? (
-                <span className="badge">Correct</span>
-              ) : null}
-            </li>
-          ))}
+          {choices.map((choice, index) => {
+            const isCorrect = revealAnswer && marked.has(choice.id);
+
+            return (
+              <li
+                className={
+                  isCorrect
+                    ? "question-choice verdict-correct"
+                    : "question-choice"
+                }
+                key={choice.id}
+              >
+                {isCorrect ? (
+                  <span aria-hidden="true" className="verdict-mark">
+                    ✓
+                  </span>
+                ) : null}
+                <span className="choice-letter">{choiceLetter(index)}.</span>
+                <span className="choice-text">{choice.text}</span>
+                {isCorrect ? (
+                  <span className="visually-hidden">Correct answer</span>
+                ) : null}
+              </li>
+            );
+          })}
         </ol>
       ) : null}
 

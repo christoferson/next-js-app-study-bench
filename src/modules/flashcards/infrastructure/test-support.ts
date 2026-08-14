@@ -52,6 +52,43 @@ export function vocabularyContent(): FlashcardContent {
   };
 }
 
+/**
+ * The same card carrying every optional field.
+ *
+ * A separate fixture rather than a richer default, because the two shapes are both
+ * real: the plain one is what the owner's imported bank holds, and both must round
+ * trip and render.
+ */
+export function enrichedVocabularyContent(): FlashcardContent {
+  return {
+    type: "VOCABULARY",
+    term: "学习",
+    reading: "xuéxí",
+    meaning: "to study; to learn",
+    exampleSentence: "我每天学习汉语。",
+    meanings: ["to imitate a good example"],
+    synonyms: ["念书", "读书"],
+    antonyms: ["玩儿"],
+    examples: [
+      {
+        text: "他在学习开车。",
+        reading: "tā zài xuéxí kāichē.",
+        translation: "He is learning to drive.",
+      },
+      { text: "值得学习。" },
+    ],
+    usageNotes: "Neutral register; also used of learning from an example.",
+  };
+}
+
+/** A cloze card whose blank carries a hint. */
+export function hintedClozeContent(): FlashcardContent {
+  return {
+    type: "CLOZE",
+    text: "An S3 bucket name must be {{globally unique|across every account}}.",
+  };
+}
+
 export function scenarioContent(): FlashcardContent {
   return {
     type: "SCENARIO",
@@ -103,6 +140,7 @@ export function cardRevisionFixture(
     notes: null,
     tags: [],
     language: null,
+    generationRunId: null,
     createdAt: FIXTURE_TIME,
     ...overrides,
   };

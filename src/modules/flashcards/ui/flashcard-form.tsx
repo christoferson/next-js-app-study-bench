@@ -17,8 +17,10 @@ import {
   describeCardPrompting,
   describeCardType,
 } from "@/modules/flashcards/domain/flashcard";
+import type { VocabularyExample } from "@/modules/flashcards/domain/flashcard";
 import {
   CLOZE_CLOSE,
+  CLOZE_HINT_SEPARATOR,
   CLOZE_OPEN,
 } from "@/modules/flashcards/domain/flashcard-content";
 
@@ -149,7 +151,7 @@ export function FlashcardForm({
           label="Sentence"
           required
           rows={4}
-          hint={`Wrap each part to blank out in ${CLOZE_OPEN} and ${CLOZE_CLOSE}, for example: An S3 bucket name must be ${CLOZE_OPEN}globally unique${CLOZE_CLOSE}.`}
+          hint={`Wrap each part to blank out in ${CLOZE_OPEN} and ${CLOZE_CLOSE}, for example: An S3 bucket name must be ${CLOZE_OPEN}globally unique${CLOZE_CLOSE}. Add a hint after a ${CLOZE_HINT_SEPARATOR}: ${CLOZE_OPEN}globally unique${CLOZE_HINT_SEPARATOR}across every account${CLOZE_CLOSE}.`}
           state={state}
           defaultValue={initial(
             "text",
@@ -214,6 +216,83 @@ export function FlashcardForm({
                 : "",
             )}
           />
+
+          {/*
+            The richer fields are collapsed by default so the four fields that
+            make a usable card stay the whole form for anyone typing one by hand.
+            A `details` element rather than a toggle: it needs no client state,
+            and the browser expands it when a field inside it is focused, so a
+            rejected submission still shows the message next to its cause.
+          */}
+          <details
+            className="disclosure"
+            open={hasRicherFields(state, content)}
+          >
+            <summary>More fields</summary>
+            <div className="form-stack">
+              <TextField
+                name="meanings"
+                label="Further meanings"
+                rows={3}
+                hint="Optional, one per line. Other senses of the term, beyond the meaning above."
+                state={state}
+                defaultValue={initial(
+                  "meanings",
+                  vocabularyLines(content, (vocabulary) => vocabulary.meanings),
+                )}
+              />
+              <TextField
+                name="synonyms"
+                label="Synonyms"
+                rows={2}
+                hint="Optional, one per line."
+                state={state}
+                defaultValue={initial(
+                  "synonyms",
+                  vocabularyLines(content, (vocabulary) => vocabulary.synonyms),
+                )}
+              />
+              <TextField
+                name="antonyms"
+                label="Antonyms"
+                rows={2}
+                hint="Optional, one per line."
+                state={state}
+                defaultValue={initial(
+                  "antonyms",
+                  vocabularyLines(content, (vocabulary) => vocabulary.antonyms),
+                )}
+              />
+              <TextField
+                name="examples"
+                label="Further examples"
+                rows={4}
+                hint={`Optional, one per line as sentence ${CLOZE_HINT_SEPARATOR} reading ${CLOZE_HINT_SEPARATOR} translation. The reading and the translation may be left off.`}
+                state={state}
+                defaultValue={initial(
+                  "examples",
+                  exampleLines(
+                    content !== undefined && content.type === "VOCABULARY"
+                      ? content.examples
+                      : undefined,
+                  ),
+                )}
+              />
+              <TextField
+                name="usageNotes"
+                label="Usage notes"
+                rows={3}
+                hint="Optional. Register, collocations, or what to watch out for."
+                state={state}
+                defaultValue={initial(
+                  "usageNotes",
+                  content !== undefined && content.type === "VOCABULARY"
+                    ? (content.usageNotes ?? "")
+                    : "",
+                )}
+              />
+            </div>
+          </details>
         </>
       ) : null}
 
@@ -329,6 +408,77 @@ export function FlashcardForm({
       </div>
     </form>
   );
+}
+
+/** The field names inside the disclosure, so it can open when one is in play. */
+const RICHER_VOCABULARY_FIELDS: readonly string[] = [
+  "meanings",
+  "synonyms",
+  "antonyms",
+  "examples",
+  "usageNotes",
+];
+
+/**
+ * Whether the disclosure starts open.
+ *
+ * Open when the card already carries one of these fields, and open when a
+ * rejected submission has a message or a typed value for one of them — a
+ * validation message hidden inside a collapsed section is a form that looks
+ * broken for no visible reason.
+ */
+function hasRicherFields(
+  state: FormState,
+  content: FlashcardRevision["content"] | undefined,
+): boolean {
+  if (
+    RICHER_VOCABULARY_FIELDS.some(
+      (field) =>
+        fieldErrors(state, field) !== undefined ||
+        (state.values[field] ?? "").trim().length > 0,
+    )
+  ) {
+    return true;
+  }
+
+  if (content === undefined || content.type !== "VOCABULARY") {
+    return false;
+  }
+
+  return (
+    content.meanings !== undefined ||
+    content.synonyms !== undefined ||
+    content.antonyms !== undefined ||
+    content.examples !== undefined ||
+    content.usageNotes !== undefined
+  );
+}
+
+/** One of the card's optional string lists, as one entry per line. */
+function vocabularyLines(
+  content: FlashcardRevision["content"] | undefined,
+  select: (
+    vocabulary: Extract<FlashcardRevision["content"], { type: "VOCABULARY" }>,
+  ) => readonly string[] | undefined,
+): string {
+  if (content === undefined || content.type !== "VOCABULARY") {
+    return "";
+  }
+
+  return (select(content) ?? []).join("\n");
+}
+
+/** Examples as the pipe-separated lines the schema parses back. */
+function exampleLines(
+  examples: readonly VocabularyExample[] | undefined,
+): string {
+  return (examples ?? [])
+    .map((example) =>
+      [example.text, example.reading, example.translation]
+        .filter((part): part is string => part !== undefined)
+        .join(` ${CLOZE_HINT_SEPARATOR} `),
+    )
+    .join("\n");
 }
 
 interface TextFieldProps {

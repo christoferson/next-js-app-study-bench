@@ -8,12 +8,14 @@ import {
   describeFailureCategory,
   describeItemKind,
   describeItemKindSingular,
+  revisesExistingItems,
 } from "@/modules/ai-generation/domain/generation-run";
 import type {
   GeneratedItemReview,
   GenerationRunDetailView,
 } from "@/modules/ai-generation/application/generation-facade";
 import { rejectDraftAction } from "./actions";
+import { FakeProviderNotice } from "./fake-provider-notice";
 import { RejectDraftForm } from "./reject-draft-form";
 import { RunStatusBadge } from "./run-status-badge";
 
@@ -42,6 +44,7 @@ interface GenerationRunReviewProps {
 export function GenerationRunReview({ view }: GenerationRunReviewProps) {
   const { certification, run, counts, items, persona } = view;
   const slug = certification.slug;
+  const revises = revisesExistingItems(run.itemKind);
 
   return (
     <>
@@ -53,9 +56,9 @@ export function GenerationRunReview({ view }: GenerationRunReviewProps) {
           <span className="badge">AI generated — model knowledge</span>
         </div>
         <p className="lede">
-          Written from the model&apos;s own knowledge, with no source consulted
-          and nothing verified. Read each one before you activate it — none of
-          it is official exam material.
+          {revises
+            ? "Written from the model's own knowledge, with no source consulted and nothing verified. Each card below kept everything it already said and gained a new revision with the extra detail, so its previous text is still on its page."
+            : "Written from the model's own knowledge, with no source consulted and nothing verified. Read each one before you activate it — none of it is official exam material."}
         </p>
 
         {run.failureReason === null ? null : (
@@ -63,6 +66,11 @@ export function GenerationRunReview({ view }: GenerationRunReviewProps) {
             {describeFailureCategory(run.failureReason)}
           </p>
         )}
+
+        {/* The run's own recorded provider, not the current configuration: this run
+            was written by whatever was wired in at the time, and switching to Bedrock
+            later does not make these drafts real. */}
+        <FakeProviderNotice provider={run.modelProvider} subject="past" />
 
         <dl className="meta">
           <div className="meta-item">
@@ -73,11 +81,11 @@ export function GenerationRunReview({ view }: GenerationRunReviewProps) {
             </dd>
           </div>
           <div className="meta-item">
-            <dt>Written</dt>
+            <dt>{revises ? "Enriched" : "Written"}</dt>
             <dd>{run.successfulItemCount}</dd>
           </div>
           <div className="meta-item">
-            <dt>Rejected by checks</dt>
+            <dt>{revises ? "Left unchanged" : "Rejected by checks"}</dt>
             <dd>{run.failedItemCount}</dd>
           </div>
           <div className="meta-item">
@@ -136,28 +144,38 @@ export function GenerationRunReview({ view }: GenerationRunReviewProps) {
           </Link>
           <Link
             className="button-quiet"
-            href={`/study-tracks/${slug}/generate`}
+            href={
+              revises
+                ? `/study-tracks/${slug}/enrich`
+                : `/study-tracks/${slug}/generate`
+            }
           >
-            Generate again
+            {revises ? "Enrich more" : "Generate again"}
           </Link>
         </div>
       </header>
 
       <section aria-labelledby="items-heading" className="section">
         <div className="section-heading">
-          <h2 id="items-heading">What the model wrote</h2>
+          <h2 id="items-heading">
+            {revises ? "The cards it enriched" : "What the model wrote"}
+          </h2>
           <p className="section-note">
-            Each one is saved as a draft, so nothing here can appear in a study
-            session until you activate it. Open an item to edit or activate it;
-            reject it to delete it.
+            {revises
+              ? "These cards were already yours, so they keep the lifecycle they had and there is nothing here to accept or reject. Open one to read the new detail, compare it with the revision before it, or edit it."
+              : "Each one is saved as a draft, so nothing here can appear in a study session until you activate it. Open an item to edit or activate it; reject it to delete it."}
           </p>
         </div>
 
         {items.length === 0 ? (
           <p className="empty-state">
             {run.successfulItemCount === 0
-              ? "This run saved nothing."
-              : "Everything this run produced has since been deleted."}
+              ? revises
+                ? "This run enriched nothing."
+                : "This run saved nothing."
+              : revises
+                ? "Every card this run enriched has since been deleted."
+                : "Everything this run produced has since been deleted."}
           </p>
         ) : (
           <ul className="card-list">
@@ -198,13 +216,13 @@ function ReviewRow({ slug, runId, item }: ReviewRowProps) {
   return (
     <li className="card">
       <div className="card-heading">
-        <span className="badge">
-          {item.kind === "QUESTION"
-            ? `Status: ${item.item.question.lifecycleStatus === "DRAFT" ? "Draft" : "Not a draft any more"}`
-            : `Status: ${item.item.flashcard.lifecycleStatus === "DRAFT" ? "Draft" : "Not a draft any more"}`}
-        </span>
+        <span className="badge">{statusBadge(item)}</span>
         {item.changedSinceGeneration ? (
-          <span className="badge">Changed since generation</span>
+          <span className="badge">
+            {item.kind === "ENRICH_VOCABULARY"
+              ? "Edited since enrichment"
+              : "Changed since generation"}
+          </span>
         ) : null}
       </div>
 
@@ -214,9 +232,9 @@ function ReviewRow({ slug, runId, item }: ReviewRowProps) {
 
       {item.changedSinceGeneration ? (
         <p className="card-text">
-          You have edited or activated this since it was generated, so what is
-          shown below is your version, not the model&apos;s first draft. The
-          revision history on its page has the original.
+          {item.kind === "ENRICH_VOCABULARY"
+            ? "This card has a newer revision than the one this run wrote, so what is shown below is that newer version. Its page has the full history."
+            : "You have edited or activated this since it was generated, so what is shown below is your version, not the model's first draft. The revision history on its page has the original."}
         </p>
       ) : null}
 
@@ -240,7 +258,9 @@ function ReviewRow({ slug, runId, item }: ReviewRowProps) {
 
       <div className="section-actions">
         <Link className="button-quiet" href={href}>
-          Open to edit or activate
+          {item.kind === "ENRICH_VOCABULARY"
+            ? "Open the card"
+            : "Open to edit or activate"}
         </Link>
         {item.rejectable ? (
           <RejectDraftForm
@@ -252,13 +272,28 @@ function ReviewRow({ slug, runId, item }: ReviewRowProps) {
           />
         ) : (
           <p className="field-hint">
-            This is no longer a draft, so generation will not delete it. Retire
-            or delete it from its own page.
+            {item.kind === "ENRICH_VOCABULARY"
+              ? "This card was already yours before the run, so enrichment has nothing to take back. Its previous text is in its revision history."
+              : "This is no longer a draft, so generation will not delete it. Retire or delete it from its own page."}
           </p>
         )}
       </div>
     </li>
   );
+}
+
+/** The lifecycle line for one row, in the terms its kind makes sense in. */
+function statusBadge(item: GeneratedItemReview): string {
+  switch (item.kind) {
+    case "QUESTION":
+      return `Status: ${item.item.question.lifecycleStatus === "DRAFT" ? "Draft" : "Not a draft any more"}`;
+    case "FLASHCARD":
+      return `Status: ${item.item.flashcard.lifecycleStatus === "DRAFT" ? "Draft" : "Not a draft any more"}`;
+    // An enriched card was never a draft of this run, so "draft or not" is the
+    // wrong question about it. What matters is the revision the run wrote.
+    case "ENRICH_VOCABULARY":
+      return `Revision ${item.item.revision.revisionNumber}`;
+  }
 }
 
 function itemId(item: GeneratedItemReview): string {

@@ -219,4 +219,31 @@ export interface FlashcardRepository {
 
   /** Cards converted from one question, for provenance and dependency checks. */
   listBySourceQuestion(questionId: QuestionId): Promise<Flashcard[]>;
+
+  /**
+   * Vocabulary cards that have not been enriched yet, oldest first.
+   *
+   * Its own method rather than a flag on `search`, because "not enriched" is a
+   * question about the shape of the stored content rather than about the card's
+   * type, status, or text, and `FlashcardSearchCriteria` has no vocabulary for it.
+   * Keeping it separate also keeps the bank's filters describing what the owner can
+   * filter by.
+   *
+   * The order must be deterministic and stable, so consecutive enrichment runs walk
+   * the bank front to back without repeating or skipping a card: creation time
+   * ascending, with the identifier breaking ties. Draft, retired, and archived cards
+   * are excluded — enrichment spends a model call, and spending it on a card that is
+   * not in study is spending it on nothing.
+   */
+  findUnenrichedVocabulary(
+    criteria: UnenrichedVocabularyCriteria,
+  ): Promise<FlashcardWithRevision[]>;
+  /** How many active vocabulary cards are still unenriched, for the form. */
+  countUnenrichedVocabulary(certificationId: CertificationId): Promise<number>;
+}
+
+/** Bounded selection of the next cards to enrich. */
+export interface UnenrichedVocabularyCriteria {
+  readonly certificationId: CertificationId;
+  readonly limit: number;
 }

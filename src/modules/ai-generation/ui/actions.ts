@@ -7,8 +7,13 @@ import { parseInput } from "@/shared/parse-input";
 import type { FormState } from "@/shared/ui/form-state";
 import { toInvalidFormState } from "@/shared/ui/form-state";
 import { getGenerationFacade } from "@/modules/ai-generation/composition";
-import { isDuplicateBatchNotice } from "@/modules/ai-generation/application/generation-facade";
 import {
+  isDuplicateBatchNotice,
+  isEnrichmentDuplicateNotice,
+  isNothingToEnrichNotice,
+} from "@/modules/ai-generation/application/generation-facade";
+import {
+  enrichmentRequestSchema,
   generationRequestSchema,
   rejectDraftSchema,
 } from "@/modules/ai-generation/application/schemas";
@@ -34,6 +39,10 @@ function trackPath(slug: string): string {
 
 function generatePath(slug: string): string {
   return `/study-tracks/${slug}/generate`;
+}
+
+function enrichPath(slug: string): string {
+  return `/study-tracks/${slug}/enrich`;
 }
 
 function runsPath(slug: string): string {
@@ -111,6 +120,57 @@ export async function requestGenerationAction(
   revalidatePath(trackPath(slug));
   revalidatePath(`${trackPath(slug)}/questions`);
   revalidatePath(`${trackPath(slug)}/flashcards`);
+  revalidatePath(runsPath(slug));
+  redirect(destination);
+}
+
+/**
+ * Enriches the next unenriched vocabulary cards and opens the run.
+ *
+ * Three destinations rather than one, because there are three outcomes and only one
+ * of them is a run: a finished run opens its review page, a duplicate request returns
+ * to the form with the earlier run named, and a track with nothing left to enrich
+ * returns to the form with a flag saying so. The last case is deliberately not an
+ * error — being finished is a good outcome, not a failed submission.
+ */
+export async function requestEnrichmentAction(
+  _state: FormState,
+  form: FormData,
+): Promise<FormState> {
+  const slug = readString(form, "slug");
+  let destination: string;
+
+  try {
+    const input = parseInput(enrichmentRequestSchema, {
+      count: readString(form, "count"),
+      additionalInstructions: readString(form, "additionalInstructions"),
+      generateAnyway: readString(form, "generateAnyway"),
+    });
+    const result = await getGenerationFacade().requestVocabularyEnrichment(
+      slug,
+      input,
+    );
+
+    if (isNothingToEnrichNotice(result)) {
+      destination = `${enrichPath(slug)}?nothingToEnrich=1`;
+    } else if (isEnrichmentDuplicateNotice(result)) {
+      destination = `${enrichPath(slug)}?duplicateOf=${encodeURIComponent(
+        result.duplicateOf.id,
+      )}`;
+    } else {
+      destination = runPath(slug, result.run.id);
+    }
+  } catch (error) {
+    if (isDomainError(error)) {
+      return toInvalidFormState(error, form);
+    }
+    throw error;
+  }
+
+  // The cards themselves changed, so every page that renders card text is stale.
+  revalidatePath(trackPath(slug));
+  revalidatePath(`${trackPath(slug)}/flashcards`);
+  revalidatePath(enrichPath(slug));
   revalidatePath(runsPath(slug));
   redirect(destination);
 }

@@ -8,6 +8,7 @@ import type {
   CertificationSlug,
 } from "@/modules/certifications/domain/certification";
 import type { ObjectiveId } from "@/modules/certifications/domain/objective";
+import { VOCABULARY_LIST_ROOT } from "@/modules/certifications/domain/objective-kind";
 import type { CertificationFacade } from "@/modules/certifications/application/certification-facade";
 import type { CertificationInput } from "@/modules/certifications/application/schemas";
 import type { FlashcardFacade } from "@/modules/flashcards/application/flashcard-facade";
@@ -102,9 +103,14 @@ const AWS_OBJECTIVE_SOURCE = "OFFICIAL_SYLLABUS" as const;
  */
 const HSK_OBJECTIVE_SOURCE = "IMPORTED" as const;
 
-/** The single objective every imported vocabulary card is mapped to. */
-const HSK_OBJECTIVE_CODE = "HSK 5";
-const HSK_OBJECTIVE_TITLE = "HSK 5 vocabulary";
+/**
+ * The single objective every imported vocabulary card is mapped to.
+ *
+ * Named in the domain rather than here, because generation recognises the root by
+ * these names when it decides what kind of drill an objective calls for.
+ */
+const HSK_OBJECTIVE_CODE = VOCABULARY_LIST_ROOT.code;
+const HSK_OBJECTIVE_TITLE = VOCABULARY_LIST_ROOT.title;
 
 /** Language tag recorded on every imported vocabulary card. */
 const HSK_CARD_LANGUAGE = "zh";

@@ -86,6 +86,46 @@ export function flashcardPayloadItem(
   };
 }
 
+/**
+ * One well-formed enrichment entry, as a provider would answer.
+ *
+ * `term` defaults to the word the flashcard fixtures use, because the term is the
+ * join key: an entry whose term matches no card in the run is rejected, so a test
+ * that wants a *matching* answer must echo the card's own word back.
+ */
+export function enrichmentPayloadItem(
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  const term = typeof overrides.term === "string" ? overrides.term : "学习";
+
+  return {
+    term,
+    meanings: ["to study", "to learn as a discipline"],
+    synonyms: ["念书"],
+    antonyms: [],
+    examples: [
+      {
+        text: `我每天${term}。`,
+        reading: "wǒ měi tiān xuéxí.",
+        translation: "I study every day.",
+      },
+      {
+        text: `${term}很重要。`,
+        reading: "xuéxí hěn zhòngyào.",
+        translation: "Studying is important.",
+      },
+    ],
+    usageNotes: "Neutral register; used as both verb and noun.",
+    ...overrides,
+  };
+}
+
+export function enrichmentPayload(
+  items: readonly Record<string, unknown>[],
+): FakeGatewayResponse {
+  return { payload: { words: items } };
+}
+
 /** A scripted turn returning `count` well-formed questions. */
 export function questionPayload(
   items: readonly Record<string, unknown>[],

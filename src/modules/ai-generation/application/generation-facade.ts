@@ -8,6 +8,7 @@ import type {
 } from "@/modules/certifications/domain/certification";
 import { CertificationNotFoundError } from "@/modules/certifications/domain/errors";
 import type { Objective } from "@/modules/certifications/domain/objective";
+import { objectiveKind } from "@/modules/certifications/domain/objective-kind";
 import type { CertificationRepository } from "@/modules/certifications/ports/certification-repository";
 import type { ObjectiveRepository } from "@/modules/certifications/ports/objective-repository";
 import type {
@@ -26,16 +27,24 @@ import {
 import {
   checkFlashcardDrafts,
   checkQuestionDrafts,
+  matchEnrichments,
+  mergeEnrichment,
 } from "@/modules/ai-generation/domain/deterministic-checks";
-import type { CheckContext } from "@/modules/ai-generation/domain/deterministic-checks";
+import type {
+  CheckContext,
+  EnrichmentMatchResult,
+} from "@/modules/ai-generation/domain/deterministic-checks";
 import type {
   GeneratedFlashcardDraft,
   GeneratedQuestionDraft,
   GenerationRequestSpec,
+  MatchedEnrichment,
   RejectedDraft,
+  VocabularyEnrichmentTarget,
 } from "@/modules/ai-generation/domain/generated-draft";
 import {
   MAX_BATCH_ITEMS,
+  MAX_ENRICHMENT_ITEMS,
   maxOutputTokensFor,
 } from "@/modules/ai-generation/domain/generation-limits";
 import type {
@@ -67,14 +76,18 @@ import type {
   GenerationUnitOfWork,
 } from "@/modules/ai-generation/ports/unit-of-work";
 import {
+  ENRICHMENT_SCHEMA_NAME,
   FLASHCARD_SCHEMA_NAME,
   QUESTION_SCHEMA_NAME,
+  enrichmentOutputJsonSchema,
   flashcardOutputJsonSchema,
   questionOutputJsonSchema,
+  validateEnrichmentOutput,
   validateFlashcardOutput,
   validateQuestionOutput,
 } from "./output-schemas";
 import type {
+  EnrichmentRequestInput,
   GenerationRequestInput,
   GenerationRunFilterInput,
 } from "./schemas";
@@ -154,8 +167,78 @@ export interface GeneratedFlashcardReview {
   readonly changedSinceGeneration: boolean;
 }
 
+/**
+ * One card an enrichment run rewrote.
+ *
+ * A third variant rather than reusing `GeneratedFlashcardReview`, because the two
+ * describe different situations and the review screen must not confuse them. An
+ * enriched card is not a draft awaiting acceptance: it is the owner's card, already
+ * in whatever lifecycle it was in, with one more revision on it. So there is nothing
+ * to reject — rejecting would mean deleting a card the owner already had — and the
+ * useful facts are which revision the run wrote and whether it is still the current
+ * one.
+ */
+export interface EnrichedFlashcardReview {
+  readonly kind: "ENRICH_VOCABULARY";
+  readonly item: FlashcardWithRevision;
+  /** Always false: an enriched card predates the run, so it is not the run's to delete. */
+  readonly rejectable: false;
+  /** Set when the owner has edited the card since the run enriched it. */
+  readonly changedSinceGeneration: boolean;
+}
+
 export type GeneratedItemReview =
-  GeneratedQuestionReview | GeneratedFlashcardReview;
+  GeneratedQuestionReview | GeneratedFlashcardReview | EnrichedFlashcardReview;
+
+/** The enrichment form's own view: how much is left, and what it will cost. */
+export interface EnrichmentFormView {
+  readonly certification: Certification;
+  readonly persona: Persona;
+  /** Active vocabulary cards with no `meanings` yet. */
+  readonly unenrichedCount: number;
+  readonly maxItemCount: number;
+  readonly modelProvider: string;
+  readonly modelId: string;
+}
+
+/**
+ * What one enrichment request produced.
+ *
+ * `unenriched` counts the cards the run left untouched — a rejected answer, an answer
+ * that never arrived, or a card that changed while the model was answering. They are
+ * still unenriched, so the next run offers them again.
+ */
+export interface EnrichmentOutcome {
+  readonly run: GenerationRun;
+  readonly rejected: readonly RejectedDraft[];
+  readonly unenriched: number;
+}
+
+/**
+ * There was nothing left to enrich.
+ *
+ * Distinct from a run that enriched nothing: no model was called, so there is no run
+ * to show and nothing was spent. The form says so rather than redirecting to an empty
+ * run page.
+ */
+export interface NothingToEnrichNotice {
+  readonly nothingToEnrich: true;
+}
+
+export type EnrichmentResult =
+  EnrichmentOutcome | DuplicateBatchNotice | NothingToEnrichNotice;
+
+export function isNothingToEnrichNotice(
+  result: EnrichmentResult,
+): result is NothingToEnrichNotice {
+  return "nothingToEnrich" in result;
+}
+
+export function isEnrichmentDuplicateNotice(
+  result: EnrichmentResult,
+): result is DuplicateBatchNotice {
+  return "duplicateOf" in result;
+}
 
 /** The run review screen (`SPEC.md` section 24.2, generation preview). */
 export interface GenerationRunDetailView {
@@ -213,6 +296,12 @@ interface ProducedBatch {
     repositories: GenerationTransactionRepositories,
     run: GenerationRun,
   ): Promise<void>;
+}
+
+/** One enrichment turn's matched answers plus what the provider reported. */
+interface ProducedEnrichment {
+  readonly matched: EnrichmentMatchResult;
+  readonly usage: ProviderUsage | null;
 }
 
 export interface GenerationFacadeDependencies {
@@ -322,7 +411,7 @@ export class GenerationFacade {
       certification,
       run,
       counts,
-      items: await this.loadItems(run.itemKind, itemIds),
+      items: await this.loadItems(run.itemKind, run.id, itemIds),
       persona: findPersonaFor(run),
     };
   }
@@ -347,6 +436,167 @@ export class GenerationFacade {
     input: GenerationRequestInput,
   ): Promise<GenerationResult> {
     return this.generate("FLASHCARD", slug, input);
+  }
+
+  /** What the enrichment form offers: how many cards are left to do. */
+  async findEnrichmentForm(
+    slug: CertificationSlug,
+  ): Promise<EnrichmentFormView | null> {
+    const certification = await this.deps.certifications.findBySlug(slug);
+
+    if (certification === null) {
+      return null;
+    }
+
+    return {
+      certification,
+      persona: personaForStudyType(certification.studyType),
+      unenrichedCount: await this.deps.flashcards.countUnenrichedVocabulary(
+        certification.id,
+      ),
+      maxItemCount: MAX_ENRICHMENT_ITEMS,
+      modelProvider: this.deps.gateway.provider,
+      modelId: this.deps.gateway.modelId,
+    };
+  }
+
+  /**
+   * Enriches the next unenriched vocabulary cards of one track.
+   *
+   * Its own method rather than a third branch of `generate`, because the two differ
+   * everywhere `generate`'s sequence matters. There is no item count the owner
+   * chooses items *for* — the cards are chosen by the bank's own order, so the run's
+   * requested count is however many cards were actually available. There is no
+   * objective mapping, no difficulty, and no content type. And the write is an
+   * appended revision on a card that already exists rather than a new aggregate,
+   * which means `DRAFT` is not involved at all: the card keeps the lifecycle it had,
+   * because an enrichment run must not quietly pull a card the owner is studying out
+   * of study.
+   *
+   * What is shared is what makes a run a run, and it is shared by following the same
+   * order: write the `PENDING` row before the provider is called, call the provider
+   * outside any transaction, then store and complete in one transaction.
+   */
+  async requestVocabularyEnrichment(
+    slug: CertificationSlug,
+    input: EnrichmentRequestInput,
+  ): Promise<EnrichmentResult> {
+    const certification = await this.deps.certifications.findBySlug(slug);
+
+    if (certification === null) {
+      throw new CertificationNotFoundError(slug);
+    }
+
+    if (input.count > MAX_ENRICHMENT_ITEMS) {
+      throw new GenerationBatchTooLargeError(input.count, MAX_ENRICHMENT_ITEMS);
+    }
+
+    const cards = await this.deps.flashcards.findUnenrichedVocabulary({
+      certificationId: certification.id,
+      limit: input.count,
+    });
+    const targets = cards.flatMap(toEnrichmentTarget);
+
+    if (targets.length === 0) {
+      // No run row, because there is nothing to record: no model was called and no
+      // tokens were spent. A run with a requested count of zero would also be a row
+      // the schema refuses, and rightly — it would describe a request nobody made.
+      return { nothingToEnrich: true };
+    }
+
+    const spec: GenerationRequestSpec = {
+      // However many cards were found, which may be fewer than asked for near the
+      // end of the bank. The run then truthfully records what it set out to do.
+      itemCount: targets.length,
+      objectiveIds: [],
+      difficulty: null,
+      additionalInstructions: input.additionalInstructions,
+      questionTypes: [],
+      cardTypes: [],
+    };
+    // The selected cards are part of the fingerprint, because "enrich twenty cards"
+    // is a different request every time it is asked: the scope moves forward as
+    // cards are enriched. Including the identifiers means the duplicate guard can
+    // only fire for the *same* cards, which is what a genuine repeat would be.
+    const inputHash = sha256Hex(
+      [
+        canonicalRequestText({
+          certificationId: certification.id,
+          itemKind: "ENRICH_VOCABULARY",
+          spec,
+        }),
+        `cards=${targets.map((target) => target.flashcardId).join(",")}`,
+      ].join("\n"),
+    );
+
+    if (!input.generateAnyway) {
+      const duplicate = await this.deps.runs.findLatestByInputHash(
+        certification.id,
+        inputHash,
+        "ENRICH_VOCABULARY",
+      );
+
+      if (duplicate !== null) {
+        return { duplicateOf: duplicate };
+      }
+    }
+
+    const persona = personaForStudyType(certification.studyType);
+    const pending: GenerationRun = {
+      id: this.deps.ids.nextId(),
+      certificationId: certification.id,
+      itemKind: "ENRICH_VOCABULARY",
+      generationMode: "MODEL_KNOWLEDGE",
+      modelProvider: this.deps.gateway.provider,
+      modelId: this.deps.gateway.modelId,
+      personaId: persona.id,
+      personaVersion: persona.version,
+      promptTemplateId: templateIdForItemKind("ENRICH_VOCABULARY"),
+      promptTemplateVersion: templateVersionForItemKind("ENRICH_VOCABULARY"),
+      inputHash,
+      selectedSourceSnapshotIds: [],
+      requestedItemCount: spec.itemCount,
+      successfulItemCount: 0,
+      failedItemCount: 0,
+      usageMetadata: null,
+      failureReason: null,
+      startedAt: this.deps.clock.now(),
+      completedAt: null,
+      status: "PENDING",
+    };
+
+    await this.deps.unitOfWork.transaction(async ({ runs }) => {
+      await runs.create(pending);
+    });
+
+    const prompt = renderPrompt("ENRICH_VOCABULARY", {
+      persona,
+      trackName: certification.name,
+      examCode: certification.examCode,
+      // No objectives: an enriched card is the card it already was, and its
+      // objective links are not generation's to change.
+      objectives: [],
+      spec,
+      enrichmentTargets: targets,
+    });
+
+    try {
+      return await this.storeEnrichment(
+        pending,
+        targets,
+        await this.produceEnrichment(prompt, spec, targets),
+      );
+    } catch (error) {
+      if (error instanceof ProviderFailure) {
+        return {
+          run: await this.failRun(pending, error.category, spec.itemCount),
+          rejected: [],
+          unenriched: targets.length,
+        };
+      }
+
+      throw error;
+    }
   }
 
   /**
@@ -494,12 +744,16 @@ export class GenerationFacade {
       persona,
       trackName: certification.name,
       examCode: certification.examCode,
+      // Active objectives only, but the *kind* is judged against the full set: an
+      // archived parent still says which root its children descend from.
       objectives: objectives
         .filter((objective) => objective.status === "ACTIVE")
         .map((objective) => ({
           id: objective.id,
           code: objective.code,
           title: objective.title,
+          description: objective.description,
+          kind: objectiveKind(objectives, objective.id),
         })),
       spec,
     });
@@ -610,6 +864,118 @@ export class GenerationFacade {
         }
       },
     };
+  }
+
+  /** Asks the model to enrich the given cards, then matches its answers to them. */
+  private async produceEnrichment(
+    prompt: RenderedPrompt,
+    spec: GenerationRequestSpec,
+    targets: readonly VocabularyEnrichmentTarget[],
+  ): Promise<ProducedEnrichment> {
+    const result = await this.deps.gateway.generateStructured({
+      system: prompt.system,
+      user: prompt.user,
+      schemaName: ENRICHMENT_SCHEMA_NAME,
+      schemaDescription:
+        "Records the dictionary detail written for these words.",
+      schema: enrichmentOutputJsonSchema(),
+      validate: validateEnrichmentOutput,
+      maxOutputTokens: maxOutputTokensFor("ENRICH_VOCABULARY", spec.itemCount),
+    });
+
+    return {
+      matched: matchEnrichments(targets, result.value),
+      usage: result.usage,
+    };
+  }
+
+  /**
+   * Appends one revision per accepted enrichment and completes the run.
+   *
+   * Every card that failed — a rejected answer, or a card no answer covered — is left
+   * exactly as it was. That is the whole failure mode: enrichment is additive, so
+   * "not enriched" is the same state the card was already in, and the next run picks
+   * it up again because it still has no `meanings`.
+   */
+  private async storeEnrichment(
+    pending: GenerationRun,
+    targets: readonly VocabularyEnrichmentTarget[],
+    produced: ProducedEnrichment,
+  ): Promise<EnrichmentOutcome> {
+    const matched = produced.matched;
+    const successfulItemCount = matched.matched.length;
+    const failedItemCount = targets.length - successfulItemCount;
+    const completed: GenerationRun = {
+      ...pending,
+      successfulItemCount,
+      failedItemCount,
+      usageMetadata: produced.usage,
+      failureReason: successfulItemCount === 0 ? "NO_USABLE_ITEMS" : null,
+      completedAt: this.deps.clock.now(),
+      status: resolveRunStatus({ successfulItemCount, failedItemCount }),
+    };
+
+    await this.deps.unitOfWork.transaction(async ({ runs, flashcards }) => {
+      for (const enrichment of matched.matched) {
+        await this.storeEnrichedRevision(flashcards, pending, enrichment);
+      }
+
+      await runs.complete(completed);
+    });
+
+    return {
+      run: completed,
+      rejected: matched.rejected,
+      unenriched: matched.unmatched.length,
+    };
+  }
+
+  /**
+   * One enrichment as a new revision of the card it belongs to.
+   *
+   * Append-only, like every other card edit (`spec/DOMAIN-RULES.md` section 1.1):
+   * the text the owner or the importer wrote stays readable as the revision before
+   * this one, so an enrichment the owner dislikes is a revision they can compare
+   * against rather than a change they cannot see.
+   *
+   * The card's lifecycle, its own `generationRunId`, its notes, its tags, and its
+   * language are all carried through untouched. Only the content changes, and only
+   * by addition.
+   */
+  private async storeEnrichedRevision(
+    flashcards: FlashcardRepository,
+    run: GenerationRun,
+    enrichment: MatchedEnrichment,
+  ): Promise<void> {
+    const current = await flashcards.findWithCurrentRevision(
+      enrichment.target.flashcardId,
+    );
+
+    // Gone or rewritten since it was selected: another tab retired it, or the owner
+    // edited it while the model was answering. Skipping is right either way, because
+    // the enrichment describes text that is no longer the card's current text.
+    if (current === null || current.revision.cardType !== "VOCABULARY") {
+      return;
+    }
+
+    const now = this.deps.clock.now();
+
+    await flashcards.appendRevision(
+      {
+        id: this.deps.ids.nextId(),
+        flashcardId: current.flashcard.id,
+        revisionNumber: current.revision.revisionNumber + 1,
+        cardType: "VOCABULARY",
+        content: mergeEnrichment(enrichment.target.content, enrichment.draft),
+        notes: current.revision.notes,
+        tags: current.revision.tags,
+        language: current.revision.language,
+        // This revision's text came from the run, even though the card did not.
+        generationRunId: run.id,
+        createdAt: now,
+      },
+      now,
+    );
   }
 
   /**
@@ -733,6 +1099,8 @@ export class GenerationFacade {
         notes: draft.notes,
         tags: draft.tags,
         language: draft.language,
+        // The same run both created the card and wrote its first text.
+        generationRunId: run.id,
         createdAt: now,
       },
     );
@@ -779,6 +1147,7 @@ export class GenerationFacade {
    */
   private async loadItems(
     kind: GeneratedItemKind,
+    runId: GenerationRunId,
     itemIds: readonly string[],
   ): Promise<readonly GeneratedItemReview[]> {
     if (kind === "QUESTION") {
@@ -809,6 +1178,24 @@ export class GenerationFacade {
         this.deps.flashcards.findWithCurrentRevision(id),
       ),
     );
+
+    if (kind === "ENRICH_VOCABULARY") {
+      return loaded.flatMap((found): readonly EnrichedFlashcardReview[] =>
+        found === null
+          ? []
+          : [
+              {
+                kind: "ENRICH_VOCABULARY",
+                item: found,
+                rejectable: false,
+                // The card's current revision is no longer the one this run wrote,
+                // so the owner has edited it since — or a later enrichment has.
+                changedSinceGeneration:
+                  found.revision.generationRunId !== runId,
+              },
+            ],
+      );
+    }
 
     return loaded.flatMap((found): readonly GeneratedFlashcardReview[] =>
       found === null
@@ -854,6 +1241,25 @@ function toSpec(
     questionTypes: input.questionTypes,
     cardTypes: input.cardTypes,
   };
+}
+
+/**
+ * A selected card as an enrichment target.
+ *
+ * Returns a list so it composes with `flatMap`: the repository selects vocabulary
+ * cards, but the revision's content is a union, and narrowing it here means the rest
+ * of the flow works with `VocabularyContent` rather than re-checking the type at
+ * every step. A card whose content is not vocabulary cannot occur through that query
+ * and is dropped rather than asserted away.
+ */
+function toEnrichmentTarget(
+  card: FlashcardWithRevision,
+): readonly VocabularyEnrichmentTarget[] {
+  const content = card.revision.content;
+
+  return content.type === "VOCABULARY"
+    ? [{ flashcardId: card.flashcard.id, content }]
+    : [];
 }
 
 /**

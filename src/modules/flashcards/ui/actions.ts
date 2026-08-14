@@ -69,6 +69,11 @@ function readFlashcardInput(form: FormData): unknown {
         reading: readString(form, "reading"),
         meaning: readString(form, "meaning"),
         exampleSentence: readString(form, "exampleSentence"),
+        meanings: readString(form, "meanings"),
+        synonyms: readString(form, "synonyms"),
+        antonyms: readString(form, "antonyms"),
+        examples: readString(form, "examples"),
+        usageNotes: readString(form, "usageNotes"),
       };
     case "SCENARIO":
       return {

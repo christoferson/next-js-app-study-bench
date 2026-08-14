@@ -57,6 +57,10 @@ describe.skipIf(!ENABLED)("Bedrock, live", () => {
         id: "objective-live-1",
         code: "Demo domain 1",
         title: "Object storage fundamentals",
+        description: null,
+        // An ordinary exam domain, so the prompt carries no drill instructions and
+        // this smoke test exercises the same shape it always did.
+        kind: "GENERAL" as const,
       },
     ];
     const prompt = renderPrompt("QUESTION", {

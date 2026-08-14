@@ -22,6 +22,7 @@ import type {
   FlashcardReviewRecord,
   FlashcardSearchCriteria,
   FlashcardSearchPage,
+  UnenrichedVocabularyCriteria,
 } from "@/modules/flashcards/ports/flashcard-repository";
 import type {
   FlashcardRevisionRow,
@@ -43,7 +44,8 @@ const CARD_COLUMNS = `id, certification_id, current_revision_id,
   created_at, updated_at`;
 
 const REVISION_COLUMNS = `id, flashcard_id, revision_number, card_type,
-  content_payload, search_text, notes, tags, language, created_at`;
+  content_payload, search_text, notes, tags, language, generation_run_id,
+  created_at`;
 
 const SCHEDULE_COLUMNS = `flashcard_id, interval_minutes, due_at, lapse_count,
   review_count, last_reviewed_at, scheduler_id`;
@@ -550,12 +552,65 @@ export class SqliteFlashcardRepository implements FlashcardRepository {
     return rows.map(toFlashcard);
   }
 
+  /**
+   * The next cards to enrich, oldest first.
+   *
+   * "Not enriched" is read straight out of the stored payload with
+   * `json_extract`, which is how an *absent* key is distinguished from a present
+   * one without loading and parsing every card in the track — the owner's HSK
+   * bank holds 1600 of them, and enrichment asks for twenty.
+   *
+   * `IS NULL` covers both an absent `meanings` key and an explicit JSON `null`,
+   * which are the same thing to the domain: no senses recorded. It cannot be
+   * confused with an *empty* list, because the domain refuses to store one.
+   */
+  async findUnenrichedVocabulary(
+    criteria: UnenrichedVocabularyCriteria,
+  ): Promise<FlashcardWithRevision[]> {
+    const rows = this.database
+      .prepare(
+        `SELECT ${JOINED_COLUMNS}
+         FROM flashcards f
+         JOIN flashcard_revisions r ON r.id = f.current_revision_id
+         WHERE f.certification_id = @certificationId
+           AND f.lifecycle_status = 'ACTIVE'
+           AND r.card_type = 'VOCABULARY'
+           AND json_extract(r.content_payload, '$.meanings') IS NULL
+         ORDER BY f.created_at ASC, f.id ASC
+         LIMIT @limit`,
+      )
+      .all({
+        certificationId: criteria.certificationId,
+        limit: criteria.limit,
+      }) as JoinedRow[];
+
+    return rows.map(toFlashcardWithRevision);
+  }
+
+  async countUnenrichedVocabulary(
+    certificationId: CertificationId,
+  ): Promise<number> {
+    const row = this.database
+      .prepare(
+        `SELECT COUNT(*) AS total
+         FROM flashcards f
+         JOIN flashcard_revisions r ON r.id = f.current_revision_id
+         WHERE f.certification_id = ?
+           AND f.lifecycle_status = 'ACTIVE'
+           AND r.card_type = 'VOCABULARY'
+           AND json_extract(r.content_payload, '$.meanings') IS NULL`,
+      )
+      .get(certificationId) as { readonly total: number } | undefined;
+
+    return row?.total ?? 0;
+  }
+
   private insertRevision(revision: FlashcardRevision): void {
     this.database
       .prepare(
         `INSERT INTO flashcard_revisions (${REVISION_COLUMNS})
          VALUES (@id, @flashcardId, @revisionNumber, @cardType, @contentPayload,
-           @searchText, @notes, @tags, @language, @createdAt)`,
+           @searchText, @notes, @tags, @language, @generationRunId, @createdAt)`,
       )
       .run({
         id: revision.id,
@@ -570,6 +625,7 @@ export class SqliteFlashcardRepository implements FlashcardRepository {
         notes: revision.notes,
         tags: serializeTags(revision.tags),
         language: revision.language,
+        generationRunId: revision.generationRunId,
         createdAt: revision.createdAt,
       });
   }

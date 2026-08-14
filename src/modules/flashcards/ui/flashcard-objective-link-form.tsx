@@ -9,6 +9,10 @@ import {
   formLevelErrors,
 } from "@/shared/ui/form-state";
 import type { Objective } from "@/modules/certifications/domain/objective";
+import {
+  describeObjectiveOption,
+  listObjectiveOptions,
+} from "@/modules/certifications/domain/objective";
 
 interface FlashcardObjectiveLinkFormProps {
   readonly action: (state: FormState, form: FormData) => Promise<FormState>;
@@ -58,9 +62,9 @@ export function FlashcardObjectiveLinkForm({
           aria-invalid={objectiveErrors !== undefined}
         >
           <option value="">Choose an objective</option>
-          {candidates.map((objective) => (
-            <option key={objective.id} value={objective.id}>
-              {objectiveLabel(objective)}
+          {listObjectiveOptions(candidates).map((option) => (
+            <option key={option.objective.id} value={option.objective.id}>
+              {describeObjectiveOption(option)}
             </option>
           ))}
         </select>
@@ -72,10 +76,4 @@ export function FlashcardObjectiveLinkForm({
       </button>
     </form>
   );
-}
-
-function objectiveLabel(objective: Objective): string {
-  const prefix = objective.code === null ? "" : `${objective.code} — `;
-
-  return `${prefix}${objective.title}`;
 }

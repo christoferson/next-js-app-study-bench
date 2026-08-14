@@ -164,8 +164,16 @@ describe("FlashcardFilterForm", () => {
     expect(screen.getByRole("option", { name: "Any status" })).toBeVisible();
     expect(screen.getByRole("option", { name: "Retired" })).toBeVisible();
     expect(screen.getByRole("option", { name: "Any type" })).toBeVisible();
-    expect(screen.getByRole("option", { name: "Reversed" })).toBeVisible();
-    expect(screen.getByRole("option", { name: "Vocabulary" })).toBeVisible();
+    // The option says what the type does, not just what it is called:
+    // "Reversed" alone does not tell the owner which side is prompted.
+    expect(
+      screen.getByRole("option", { name: "Reversed (back → front)" }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("option", {
+        name: "Vocabulary (term / reading / meaning)",
+      }),
+    ).toBeVisible();
   });
 
   it("preselects the applied filters", () => {

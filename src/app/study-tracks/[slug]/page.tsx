@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getCertificationFacade } from "@/modules/certifications/composition";
+import type { Certification } from "@/modules/certifications/domain/certification";
+import { studyMaterialStyleFor } from "@/modules/certifications/domain/certification";
 import {
   archiveCertificationAction,
   restoreCertificationAction,
@@ -158,32 +160,72 @@ export default async function StudyTrackPage({ params }: StudyTrackPageProps) {
           archived track is one the owner has put down, and filling its bank is not
           what they are doing. The generate page itself remains reachable, so this
           hides an unhelpful invitation rather than a capability. */}
-      {isArchived ? null : (
-        <section aria-labelledby="generate-heading" className="section">
-          <div className="section-heading">
-            <h2 id="generate-heading">Generate with AI</h2>
-            <p className="section-note">
-              A model can write a small batch of questions or cards from its own
-              knowledge. Everything it writes lands as a draft for you to review
-              — it is never official exam material.
-            </p>
-            <div className="section-actions">
-              <Link
-                className="button"
-                href={`/study-tracks/${certification.slug}/generate`}
-              >
-                Generate with AI
-              </Link>
-              <Link
-                className="button-quiet"
-                href={`/study-tracks/${certification.slug}/generation-runs`}
-              >
-                Past runs
-              </Link>
-            </div>
-          </div>
-        </section>
-      )}
+      {isArchived ? null : buildSection(certification)}
     </main>
+  );
+}
+
+/**
+ * The AI section, in the shape this kind of track is studied in.
+ *
+ * A language track leads with enrichment, because its bank arrives as a word list and
+ * deepening those cards is the first useful thing a model can do with it — asking for
+ * more questions is not. A certification leads with generation, because writing items
+ * is the whole job and there is no word list to deepen. Both offer everything; only the
+ * emphasis and the wording differ.
+ *
+ * The choice comes from the study type through the domain, never from the track's
+ * provider or a name containing "HSK" (`spec/AI-GUIDELINES.md` section 2.1).
+ */
+function buildSection(certification: Certification) {
+  const base = `/study-tracks/${certification.slug}`;
+
+  if (studyMaterialStyleFor(certification.studyType) === "VOCABULARY_FIRST") {
+    return (
+      <section aria-labelledby="build-heading" className="section">
+        <div className="section-heading">
+          <h2 id="build-heading">Build study material</h2>
+          <p className="section-note">
+            A model can fill in the detail your vocabulary cards are missing, or
+            write drills for a grammar point or theme from your syllabus.
+            Enrichment adds a new revision to a card and keeps what it already
+            says; drills arrive as drafts for you to review. Neither is official
+            exam material.
+          </p>
+          <div className="section-actions">
+            <Link className="button" href={`${base}/enrich`}>
+              Enrich vocabulary with AI
+            </Link>
+            <Link className="button" href={`${base}/generate`}>
+              Generate drills
+            </Link>
+            <Link className="button-quiet" href={`${base}/generation-runs`}>
+              Past runs
+            </Link>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
+  return (
+    <section aria-labelledby="generate-heading" className="section">
+      <div className="section-heading">
+        <h2 id="generate-heading">Generate with AI</h2>
+        <p className="section-note">
+          A model can write a small batch of questions or cards from its own
+          knowledge. Everything it writes lands as a draft for you to review —
+          it is never official exam material.
+        </p>
+        <div className="section-actions">
+          <Link className="button" href={`${base}/generate`}>
+            Generate with AI
+          </Link>
+          <Link className="button-quiet" href={`${base}/generation-runs`}>
+            Past runs
+          </Link>
+        </div>
+      </div>
+    </section>
   );
 }

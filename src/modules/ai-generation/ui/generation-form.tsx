@@ -11,6 +11,10 @@ import {
 } from "@/shared/ui/form-state";
 import type { Objective } from "@/modules/certifications/domain/objective";
 import {
+  describeObjectiveOption,
+  listObjectiveOptions,
+} from "@/modules/certifications/domain/objective";
+import {
   MAX_DIFFICULTY,
   MIN_DIFFICULTY,
   QUESTION_TYPES,
@@ -20,6 +24,7 @@ import {
 import {
   CARD_TYPES,
   describeCardType,
+  describeCardTypeChoice,
 } from "@/modules/flashcards/domain/flashcard";
 import type { GeneratedItemKind } from "@/modules/ai-generation/domain/generation-run";
 import { describeItemKind } from "@/modules/ai-generation/domain/generation-run";
@@ -211,7 +216,7 @@ export function GenerationForm({
               <li className="choice-row" key={type}>
                 <label className="choice-label">
                   <input type="checkbox" name="cardTypes" value={type} />
-                  <span>{describeCardType(type)}</span>
+                  <span>{describeCardTypeChoice(type)}</span>
                 </label>
               </li>
             ))}
@@ -228,15 +233,15 @@ export function GenerationForm({
         </p>
         {objectives.length > 0 ? (
           <ul className="choice-list">
-            {objectives.map((objective) => (
-              <li className="choice-row" key={objective.id}>
+            {listObjectiveOptions(objectives).map((option) => (
+              <li className="choice-row" key={option.objective.id}>
                 <label className="choice-label">
                   <input
                     type="checkbox"
                     name="objectiveIds"
-                    value={objective.id}
+                    value={option.objective.id}
                   />
-                  <span>{objectiveLabel(objective)}</span>
+                  <span>{describeObjectiveOption(option)}</span>
                 </label>
               </li>
             ))}
@@ -323,12 +328,6 @@ function difficultyOptions(): readonly number[] {
 
 function readKind(value: string | undefined): GeneratedItemKind | null {
   return value === "QUESTION" || value === "FLASHCARD" ? value : null;
-}
-
-function objectiveLabel(objective: Objective): string {
-  const prefix = objective.code === null ? "" : `${objective.code} — `;
-
-  return `${prefix}${objective.title}`;
 }
 
 /** "a, b and c" — a readable list rather than a comma-joined one. */

@@ -5,15 +5,21 @@ import { CARD_TYPES } from "./flashcard";
 import {
   CLOZE_BLANK,
   MAX_CLOZE_DELETIONS,
+  MAX_CLOZE_HINT_LENGTH,
+  MAX_VOCABULARY_EXAMPLES,
+  MAX_VOCABULARY_SYNONYMS,
   assertValidContent,
   cardFaces,
   cardSummary,
   clozeAnswerText,
+  clozeBlanks,
   clozeDeletions,
   clozePrompt,
   isClozeType,
   parseCloze,
   searchableText,
+  vocabularyExamples,
+  vocabularySenses,
 } from "./flashcard-content";
 
 /**
@@ -54,6 +60,34 @@ const VALID_CONTENT: { readonly [K in CardType]: ContentOf<K> } = {
     question: "Which storage class fits?",
     answer: "S3 Standard-IA, or Glacier Instant Retrieval if reads are rarer.",
   },
+};
+
+/**
+ * The same card once every optional field has been filled in.
+ *
+ * Kept beside the plain fixture rather than replacing it, because the pair is the
+ * point: both must be valid, both must render, and the plain one is what the
+ * owner's 1,600 imported cards look like.
+ */
+const ENRICHED_VOCABULARY: ContentOf<"VOCABULARY"> = {
+  type: "VOCABULARY",
+  term: "学习",
+  reading: "xuéxí",
+  meaning: "to study; to learn",
+  exampleSentence: "我每天学习汉语。",
+  meanings: ["to imitate a good example"],
+  synonyms: ["念书", "读书"],
+  antonyms: ["玩儿"],
+  examples: [
+    {
+      text: "他在学习开车。",
+      reading: "tā zài xuéxí kāichē.",
+      translation: "He is learning to drive.",
+    },
+    { text: "值得学习。" },
+  ],
+  usageNotes:
+    "Neutral register; also used of learning from a person's example.",
 };
 
 function expectInvalidField(
@@ -171,6 +205,96 @@ describe("assertValidContent", () => {
     );
   });
 
+  it("accepts a vocabulary card with every optional field filled in", () => {
+    expect(() => assertValidContent(ENRICHED_VOCABULARY)).not.toThrow();
+  });
+
+  it("rejects an empty list rather than storing a field that says nothing", () => {
+    expectInvalidField(
+      { ...VALID_CONTENT.VOCABULARY, synonyms: [] },
+      "synonyms",
+    );
+    expectInvalidField(
+      { ...VALID_CONTENT.VOCABULARY, examples: [] },
+      "examples",
+    );
+  });
+
+  it("rejects a blank entry in a list", () => {
+    expectInvalidField(
+      { ...VALID_CONTENT.VOCABULARY, antonyms: ["玩儿", "  "] },
+      "antonyms",
+    );
+  });
+
+  it("rejects the same entry listed twice, which a model does and a person does not", () => {
+    expectInvalidField(
+      { ...VALID_CONTENT.VOCABULARY, synonyms: ["念书", "念书"] },
+      "synonyms",
+    );
+  });
+
+  it("caps each list so one card cannot become a thesaurus page", () => {
+    const tooMany = Array.from(
+      { length: MAX_VOCABULARY_SYNONYMS + 1 },
+      (_unused, index) => `synonym ${index}`,
+    );
+
+    const error = expectInvalidField(
+      { ...VALID_CONTENT.VOCABULARY, synonyms: tooMany },
+      "synonyms",
+    );
+
+    expect(error.message).toContain(String(MAX_VOCABULARY_SYNONYMS));
+  });
+
+  it("caps the examples too", () => {
+    expectInvalidField(
+      {
+        ...VALID_CONTENT.VOCABULARY,
+        examples: Array.from(
+          { length: MAX_VOCABULARY_EXAMPLES + 1 },
+          (_unused, index) => ({ text: `例句 ${index}` }),
+        ),
+      },
+      "examples",
+    );
+  });
+
+  it("requires an example to have its own sentence", () => {
+    expectInvalidField(
+      {
+        ...VALID_CONTENT.VOCABULARY,
+        examples: [{ text: " ", reading: "yī jù" }],
+      },
+      "examples",
+    );
+  });
+
+  it("rejects a blank reading or translation on an example", () => {
+    expectInvalidField(
+      {
+        ...VALID_CONTENT.VOCABULARY,
+        examples: [{ text: "例句。", reading: "" }],
+      },
+      "examples",
+    );
+    expectInvalidField(
+      {
+        ...VALID_CONTENT.VOCABULARY,
+        examples: [{ text: "例句。", translation: "\t" }],
+      },
+      "examples",
+    );
+  });
+
+  it("rejects whitespace-only usage notes", () => {
+    expectInvalidField(
+      { ...VALID_CONTENT.VOCABULARY, usageNotes: "  " },
+      "usageNotes",
+    );
+  });
+
   it("requires all three parts of a scenario card", () => {
     expectInvalidField({ ...VALID_CONTENT.SCENARIO, scenario: "" }, "scenario");
     expectInvalidField(
@@ -185,9 +309,11 @@ describe("cloze parsing", () => {
   it("splits text and deletions in order", () => {
     expect(parseCloze("A {{bucket}} is in a {{region}}.")).toEqual([
       { kind: "TEXT", text: "A " },
-      { kind: "DELETION", text: "bucket" },
+      // A deletion with no `|` has no hint, which is every card written before
+      // hints existed.
+      { kind: "DELETION", text: "bucket", hint: null },
       { kind: "TEXT", text: " is in a " },
-      { kind: "DELETION", text: "region" },
+      { kind: "DELETION", text: "region", hint: null },
       { kind: "TEXT", text: "." },
     ]);
   });
@@ -204,6 +330,72 @@ describe("cloze parsing", () => {
     expect(parseCloze("A {{bucket")).toEqual([
       { kind: "TEXT", text: "A {{bucket" },
     ]);
+  });
+
+  it("reads a hint after the separator, without it becoming the answer", () => {
+    expect(clozeBlanks("A {{bucket|where objects live}} is regional.")).toEqual(
+      [{ kind: "DELETION", text: "bucket", hint: "where objects live" }],
+    );
+    expect(
+      clozeDeletions("A {{bucket|where objects live}} is regional."),
+    ).toEqual(["bucket"]);
+  });
+
+  it("splits on the first separator only, so a hint may contain one", () => {
+    expect(clozeBlanks("{{答案|either A | or B}}")[0]).toEqual({
+      kind: "DELETION",
+      text: "答案",
+      hint: "either A | or B",
+    });
+  });
+
+  it("treats a separator with nothing after it as no hint", () => {
+    // Better than an empty parenthesis on the prompt face.
+    expect(clozeBlanks("A {{bucket|}}.")[0]?.hint).toBeNull();
+  });
+
+  it("shows the hint beside the blank on the prompt", () => {
+    expect(clozePrompt("A {{bucket|where objects live}} is regional.")).toBe(
+      `A ${CLOZE_BLANK} (hint: where objects live) is regional.`,
+    );
+  });
+
+  it("keeps the hint out of the filled-in sentence, which is the answer", () => {
+    expect(
+      clozeAnswerText("A {{bucket|where objects live}} is regional."),
+    ).toBe("A bucket is regional.");
+  });
+
+  it("accepts a hinted card and rejects a hint longer than a nudge", () => {
+    expect(() =>
+      assertValidContent({ type: "CLOZE", text: "A {{bucket|a hint}}." }),
+    ).not.toThrow();
+
+    const long = "x".repeat(MAX_CLOZE_HINT_LENGTH + 1);
+
+    expectInvalidField(
+      { type: "CLOZE", text: `A {{bucket|${long}}}.` },
+      "text",
+    );
+  });
+
+  it("still counts markers correctly when deletions carry hints", () => {
+    // The hint lives inside the existing markers, so the balance check that
+    // counts them needs no knowledge of hints at all.
+    expect(() =>
+      assertValidContent({
+        type: "CLOZE",
+        text: "A {{bucket|a hint}} in a {{region|another}}.",
+      }),
+    ).not.toThrow();
+    expectInvalidField(
+      { type: "CLOZE", text: "A {{bucket|a hint}} in a {{region." },
+      "text",
+    );
+  });
+
+  it("rejects a deletion that is only a hint", () => {
+    expectInvalidField({ type: "CLOZE", text: "A {{|a hint}}." }, "text");
   });
 
   it("lists deletions, blanks the prompt, and restores the answer", () => {
@@ -283,6 +475,41 @@ describe("cardFaces", () => {
     ]);
   });
 
+  it("reveals every enriched field as its own labelled line", () => {
+    const faces = cardFaces(ENRICHED_VOCABULARY);
+
+    expect(faces.answer).toEqual([
+      { label: "Reading", text: "xuéxí" },
+      { label: "Meaning", text: "to study; to learn" },
+      { label: "Also means", text: "to imitate a good example" },
+      { label: "Synonyms", text: "念书, 读书" },
+      { label: "Antonyms", text: "玩儿" },
+      {
+        label: "Example 1",
+        text: "我每天学习汉语。",
+      },
+      {
+        label: "Example 2",
+        text: "他在学习开车。\ntā zài xuéxí kāichē.\nHe is learning to drive.",
+      },
+      { label: "Example 3", text: "值得学习。" },
+      {
+        label: "Usage",
+        text: "Neutral register; also used of learning from a person's example.",
+      },
+    ]);
+  });
+
+  it("renders an unenriched card exactly as it did before the fields existed", () => {
+    // The regression that matters: the owner's imported bank carries none of the
+    // new fields, and its cards must be untouched by their existence.
+    expect(cardFaces(VALID_CONTENT.VOCABULARY).answer).toEqual([
+      { label: "Reading", text: "xuéxí" },
+      { label: "Meaning", text: "to study; to learn" },
+      { label: "Example", text: "我每天学习汉语。" },
+    ]);
+  });
+
   it("prompts a scenario card with the situation and the question", () => {
     const faces = cardFaces(VALID_CONTENT.SCENARIO);
 
@@ -348,6 +575,15 @@ describe("searchableText", () => {
     expect(text).toContain("我每天学习汉语。");
   });
 
+  it("includes the enriched fields, so an enriched card is findable by them", () => {
+    const text = searchableText(ENRICHED_VOCABULARY);
+
+    expect(text).toContain("念书");
+    expect(text).toContain("to imitate a good example");
+    expect(text).toContain("He is learning to drive.");
+    expect(text).toContain("Neutral register");
+  });
+
   it("includes all three scenario fields", () => {
     const text = searchableText(VALID_CONTENT.SCENARIO);
 
@@ -362,6 +598,68 @@ describe("searchableText", () => {
         searchableText(VALID_CONTENT[cardType]).trim().length,
       ).toBeGreaterThan(0);
     }
+  });
+});
+
+describe("vocabularySenses", () => {
+  it("puts the primary gloss first, then the further meanings", () => {
+    expect(vocabularySenses(ENRICHED_VOCABULARY)).toEqual([
+      "to study; to learn",
+      "to imitate a good example",
+    ]);
+  });
+
+  it("is just the primary gloss on an unenriched card", () => {
+    expect(vocabularySenses(VALID_CONTENT.VOCABULARY)).toEqual([
+      "to study; to learn",
+    ]);
+  });
+
+  it("shows a sense once when enrichment restates the existing gloss", () => {
+    expect(
+      vocabularySenses({
+        ...VALID_CONTENT.VOCABULARY,
+        meanings: ["To Study; To Learn", "to imitate"],
+      }),
+    ).toEqual(["to study; to learn", "to imitate"]);
+  });
+});
+
+describe("vocabularyExamples", () => {
+  it("keeps the original example first, then the added ones", () => {
+    // Precedence is additive: enrichment appends rather than overwriting what the
+    // owner or the importer already chose.
+    expect(vocabularyExamples(ENRICHED_VOCABULARY).map((e) => e.text)).toEqual([
+      "我每天学习汉语。",
+      "他在学习开车。",
+      "值得学习。",
+    ]);
+  });
+
+  it("does not double an added example that repeats the original", () => {
+    expect(
+      vocabularyExamples({
+        ...VALID_CONTENT.VOCABULARY,
+        examples: [
+          {
+            text: "我每天学习汉语。",
+            translation: "I study Chinese every day.",
+          },
+        ],
+      }),
+    ).toEqual([{ text: "我每天学习汉语。" }]);
+  });
+
+  it("is empty when the card has no example at all", () => {
+    expect(
+      vocabularyExamples({
+        type: "VOCABULARY",
+        term: "AZ",
+        reading: null,
+        meaning: "Availability Zone",
+        exampleSentence: null,
+      }),
+    ).toEqual([]);
   });
 });
 

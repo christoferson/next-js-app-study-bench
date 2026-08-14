@@ -10,8 +10,10 @@ import {
   assertValidReparent,
   buildObjectiveTree,
   collectDescendantIds,
+  describeObjectiveOption,
   describeObjectiveSourceType,
   isOfficialSource,
+  listObjectiveOptions,
   listReparentCandidates,
   SELECTABLE_OBJECTIVE_SOURCE_TYPES,
 } from "./objective";
@@ -88,6 +90,87 @@ describe("buildObjectiveTree", () => {
 
   it("returns an empty forest for no objectives", () => {
     expect(buildObjectiveTree([])).toEqual([]);
+  });
+});
+
+describe("listObjectiveOptions", () => {
+  it("lists each root immediately followed by its own descendants", () => {
+    // Hierarchy order, not repository order: a select that offered "Domain 1,
+    // Domain 2, Task 1.1" would make a weighted domain and its tasks unfindable.
+    expect(
+      listObjectiveOptions(HIERARCHY).map((option) => option.objective.id),
+    ).toEqual(["root", "child", "grandchild", "sibling"]);
+  });
+
+  it("carries the depth each objective was found at", () => {
+    expect(
+      listObjectiveOptions(HIERARCHY).map((option) => option.depth),
+    ).toEqual([0, 1, 2, 0]);
+  });
+
+  it("uses the same sibling order as the tree view", () => {
+    // The ordering is a flattening of `buildObjectiveTree`, so the option list and
+    // the track page cannot disagree.
+    const objectives = [
+      objectiveFixture({ id: "second", displayOrder: 2 }),
+      objectiveFixture({ id: "first", displayOrder: 1 }),
+    ];
+
+    expect(
+      listObjectiveOptions(objectives).map((option) => option.objective.id),
+    ).toEqual(buildObjectiveTree(objectives).map((node) => node.objective.id));
+  });
+
+  it("returns nothing for no objectives", () => {
+    expect(listObjectiveOptions([])).toEqual([]);
+  });
+});
+
+describe("describeObjectiveOption", () => {
+  it("puts the code before the title", () => {
+    expect(
+      describeObjectiveOption({
+        objective: objectiveFixture({ code: "Domain 1", title: "Foundations" }),
+        depth: 0,
+      }),
+    ).toBe("Domain 1 — Foundations");
+  });
+
+  it("omits the separator when the objective has no code", () => {
+    expect(
+      describeObjectiveOption({
+        objective: objectiveFixture({ code: null, title: "Foundations" }),
+        depth: 0,
+      }),
+    ).toBe("Foundations");
+  });
+
+  it("indents a child by two non-breaking spaces per level", () => {
+    expect(
+      describeObjectiveOption({
+        objective: objectiveFixture({ code: "Task 1.1", title: "Analyse" }),
+        depth: 1,
+      }),
+    ).toBe("\u00a0\u00a0Task 1.1 — Analyse");
+    expect(
+      describeObjectiveOption({
+        objective: objectiveFixture({ code: null, title: "Deeper" }),
+        depth: 2,
+      }),
+    ).toBe("\u00a0\u00a0\u00a0\u00a0Deeper");
+  });
+
+  it("says when an objective is archived, so a stale filter is explicable", () => {
+    expect(
+      describeObjectiveOption({
+        objective: objectiveFixture({
+          code: null,
+          title: "Retired area",
+          status: "ARCHIVED",
+        }),
+        depth: 0,
+      }),
+    ).toBe("Retired area (archived)");
   });
 });
 

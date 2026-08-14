@@ -1,8 +1,12 @@
-import type { QuestionRevision } from "@/modules/question-bank/domain/question";
+import type {
+  Choice,
+  QuestionRevision,
+} from "@/modules/question-bank/domain/question";
 import {
   contentChoices,
   correctChoiceIds,
 } from "@/modules/question-bank/domain/question";
+import { choiceLetter } from "@/modules/question-bank/domain/question-content";
 import type {
   QuestionAttempt,
   SubmittedAnswer,
@@ -24,10 +28,23 @@ interface AnswerFeedbackProps {
 /**
  * What one answer turned out to be.
  *
- * The verdict is stated in words, never by colour alone, and the correct answer and
- * explanation come from the revision the attempt recorded rather than the current one,
- * so feedback cannot describe a wording the owner never saw
- * (`spec/DOMAIN-RULES.md` section 2.3).
+ * The question stem is deliberately *not* repeated: this panel is rendered directly
+ * below the question that was just answered, and repeating it pushed the part the
+ * owner came for — which choice was right — below the fold on a phone.
+ *
+ * Each choice is one line: a mark, its letter, and its text. The mark is a text glyph
+ * with a colour, never a colour alone, and every marked line also carries a
+ * visually-hidden word, so the verdict survives both a monochrome screen and a screen
+ * reader (`spec/UI-GUIDELINES.md` section 1.3).
+ *
+ * There is one explanation per revision rather than one per choice: `choiceExplanations`
+ * from `SPEC.md` section 6.3 is not part of the content model (see
+ * `question.ts`), so the explanation is stated once below the list rather than
+ * repeated, or worse dangled as an empty dash, against every line.
+ *
+ * The correct answer and the explanation come from the revision the attempt recorded
+ * rather than the current one, so feedback cannot describe a wording the owner never
+ * saw (`spec/DOMAIN-RULES.md` section 2.3).
  *
  * A self-assessed short answer says so, because "correct" that the owner decided is a
  * different claim from "correct" that the application checked.
@@ -58,22 +75,23 @@ export function AnswerFeedback({
         ) : null}
       </div>
 
-      <p className="question-stem">{revision.stem}</p>
-
       {choices.length > 0 ? (
-        <ol className="question-choices">
-          {choices.map((choice) => (
-            <li className="question-choice" key={choice.id}>
-              <span>{choice.text}</span>
-              {correct.has(choice.id) ? (
-                <span className="badge">Correct answer</span>
-              ) : null}
-              {chosen.has(choice.id) ? (
-                <span className="badge">You chose this</span>
-              ) : null}
-            </li>
-          ))}
-        </ol>
+        <>
+          <p className="feedback-your-answer">
+            Your answer: {describeChosen(choices, chosen)}
+          </p>
+          <ol className="feedback-choices">
+            {choices.map((choice, index) => (
+              <ChoiceVerdict
+                choice={choice}
+                isChosen={chosen.has(choice.id)}
+                isCorrect={correct.has(choice.id)}
+                key={choice.id}
+                letter={choiceLetter(index)}
+              />
+            ))}
+          </ol>
+        </>
       ) : null}
 
       {attempt.submittedAnswer.type === "SHORT_ANSWER" ? (
@@ -108,6 +126,84 @@ export function AnswerFeedback({
       </div>
     </section>
   );
+}
+
+interface ChoiceVerdictProps {
+  readonly choice: Choice;
+  readonly letter: string;
+  readonly isCorrect: boolean;
+  readonly isChosen: boolean;
+}
+
+/**
+ * One choice, marked.
+ *
+ * Three states, because they are three different things to know: a correct answer
+ * (ticked), a wrong choice the owner made (crossed), and a wrong choice they left
+ * alone (unmarked — there is nothing to say about it). A correct answer the owner
+ * chose is ticked and says so, which is the whole point of the panel on a question
+ * they got right.
+ */
+function ChoiceVerdict({
+  choice,
+  letter,
+  isCorrect,
+  isChosen,
+}: ChoiceVerdictProps) {
+  const isWrongChoice = isChosen && !isCorrect;
+  const className = isCorrect
+    ? "feedback-choice verdict-correct"
+    : isWrongChoice
+      ? "feedback-choice verdict-incorrect"
+      : "feedback-choice";
+
+  return (
+    <li className={className}>
+      {/* `aria-hidden` on the glyph and a word for assistive technology, rather
+          than a glyph a screen reader would read as "check mark". */}
+      <span aria-hidden="true" className="verdict-mark">
+        {isCorrect ? "✓" : isWrongChoice ? "✗" : ""}
+      </span>
+      <span className="choice-letter">{letter}.</span>
+      <span className="choice-text">{choice.text}</span>
+      {isCorrect ? (
+        <span className="visually-hidden">Correct answer</span>
+      ) : null}
+      {isWrongChoice ? (
+        <span className="visually-hidden">Incorrect</span>
+      ) : null}
+      {isChosen ? <span className="feedback-chose">you chose this</span> : null}
+    </li>
+  );
+}
+
+/**
+ * The letters the owner picked, as "b" or "a and c".
+ *
+ * Letters rather than the choice text, because the text is on the line below and
+ * repeating it is what made the old panel unreadable on a phone. An answer whose
+ * choice is no longer in the revision — which the schema prevents — reads as a dash
+ * rather than as nothing at all.
+ */
+function describeChosen(
+  choices: readonly Choice[],
+  chosen: ReadonlySet<string>,
+): string {
+  const letters = choices
+    .map((choice, index) =>
+      chosen.has(choice.id) ? choiceLetter(index) : null,
+    )
+    .filter((letter): letter is string => letter !== null);
+
+  if (letters.length === 0) {
+    return "—";
+  }
+
+  if (letters.length === 1) {
+    return letters[0] ?? "—";
+  }
+
+  return `${letters.slice(0, -1).join(", ")} and ${letters[letters.length - 1]}`;
 }
 
 /**

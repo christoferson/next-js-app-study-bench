@@ -8,7 +8,9 @@ import type { ReviewInput } from "@/modules/flashcards/application/schemas";
 import {
   cardRevisionFixture,
   clozeContent,
+  enrichedVocabularyContent,
   flashcardFixture,
+  hintedClozeContent,
   reversedContent,
   scheduleFixture,
   vocabularyContent,
@@ -181,6 +183,42 @@ describe("ReviewCard", () => {
     expect(screen.getByText("xuéxí")).toBeVisible();
     expect(screen.getByText("to study; to learn")).toBeVisible();
     expect(screen.getByText("我每天学习汉语。")).toBeVisible();
+  });
+
+  it("shows a blank's hint next to the blank, so it helps while recalling", () => {
+    renderReview({ content: hintedClozeContent() });
+
+    expect(
+      screen.getByText(
+        `An S3 bucket name must be ${CLOZE_BLANK} (hint: across every account).`,
+      ),
+    ).toBeVisible();
+    // The hint belongs to the prompt; the answer still reveals the deleted text.
+    expect(screen.queryByText(/\|/)).toBeNull();
+  });
+
+  it("reveals an enriched vocabulary card's further senses, relations, and notes", async () => {
+    renderReview({ content: enrichedVocabularyContent() });
+
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole("button", { name: /show answer/i }));
+
+    // The primary gloss stays first; the enrichment is added after it.
+    expect(screen.getByText("to study; to learn")).toBeVisible();
+    expect(screen.getByText("to imitate a good example")).toBeVisible();
+    expect(screen.getByText("念书, 读书")).toBeVisible();
+    expect(screen.getByText("玩儿")).toBeVisible();
+    // The card's own example sentence and the enriched ones are both shown.
+    expect(screen.getByText("我每天学习汉语。")).toBeVisible();
+    expect(
+      screen.getByText(/他在学习开车。[\s\S]*He is learning to drive\./),
+    ).toBeVisible();
+    expect(
+      screen.getByText(
+        "Neutral register; also used of learning from an example.",
+      ),
+    ).toBeVisible();
   });
 
   it("says how many cards are left, in words that agree in number", () => {

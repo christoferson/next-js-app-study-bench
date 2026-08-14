@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import {
   CARD_TYPES,
+  describeCardShape,
   describeCardType,
 } from "@/modules/flashcards/domain/flashcard";
 import type { CardType } from "@/modules/flashcards/domain/flashcard";
@@ -104,7 +105,8 @@ export default async function EditFlashcardPage({
                 href={`${editPath}?type=${candidate}`}
                 key={candidate}
               >
-                Make it a {describeCardType(candidate).toLowerCase()} card
+                Make it a {describeCardType(candidate).toLowerCase()} card (
+                {describeCardShape(candidate)})
               </Link>
             ),
           )}

@@ -1,8 +1,8 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { describeCardType } from "@/modules/flashcards/domain/flashcard";
 import { getFlashcardFacade } from "@/modules/flashcards/composition";
 import { CardFace } from "@/modules/flashcards/ui/card-face";
+import { CardTypeBadge } from "@/modules/flashcards/ui/flashcard-badges";
 
 interface FlashcardRevisionPageProps {
   readonly params: Promise<{
@@ -57,9 +57,7 @@ export default async function FlashcardRevisionPage({
           ) : (
             <span className="badge">Superseded</span>
           )}
-          <span className="badge">
-            {describeCardType(view.revision.cardType)}
-          </span>
+          <CardTypeBadge type={view.revision.cardType} />
         </div>
         <p className="lede">
           Written {view.revision.createdAt.slice(0, 10)}. Revisions are never

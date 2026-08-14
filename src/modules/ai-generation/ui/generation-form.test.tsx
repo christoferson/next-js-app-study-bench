@@ -109,7 +109,9 @@ describe("GenerationForm", () => {
       expect(
         screen.getByRole("checkbox", { name: "Single choice" }),
       ).toBeInTheDocument();
-      expect(screen.queryByRole("checkbox", { name: "Vocabulary" })).toBeNull();
+      expect(
+        screen.queryByRole("checkbox", { name: /^Vocabulary/ }),
+      ).toBeNull();
     });
 
     it("swaps to card controls when the owner switches kind, with nothing disabled", async () => {
@@ -120,10 +122,12 @@ describe("GenerationForm", () => {
       await user.click(screen.getByRole("radio", { name: "Flashcards" }));
 
       expect(
-        screen.getByRole("checkbox", { name: "Vocabulary" }),
+        screen.getByRole("checkbox", {
+          name: "Vocabulary (term / reading / meaning)",
+        }),
       ).toBeInTheDocument();
       expect(
-        screen.getByRole("checkbox", { name: "Cloze" }),
+        screen.getByRole("checkbox", { name: "Cloze (fill in the blank)" }),
       ).toBeInTheDocument();
       // The irrelevant controls are absent rather than disabled
       // (`spec/UI-GUIDELINES.md`: no dead controls).
@@ -266,7 +270,7 @@ describe("GenerationForm", () => {
       const user = userEvent.setup();
 
       await user.click(screen.getByRole("radio", { name: "Flashcards" }));
-      await user.click(screen.getByRole("checkbox", { name: "Vocabulary" }));
+      await user.click(screen.getByRole("checkbox", { name: /^Vocabulary/ }));
       await user.click(screen.getByRole("button", { name: "Generate" }));
 
       await waitFor(() => {

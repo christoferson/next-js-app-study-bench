@@ -13,13 +13,18 @@ import {
 } from "@/modules/question-bank/domain/question-content";
 import { assertValidContent as assertValidQuestionContent } from "@/modules/question-bank/domain/question-content";
 import { CARD_TYPES } from "@/modules/flashcards/domain/flashcard";
+import type { VocabularyExample } from "@/modules/flashcards/domain/flashcard";
 import { assertValidContent as assertValidCardContent } from "@/modules/flashcards/domain/flashcard-content";
+import type { VocabularyContent } from "@/modules/flashcards/domain/flashcard-content";
 import { isDomainError } from "@/shared/domain-error";
 import type {
   CheckedBatch,
   GeneratedFlashcardDraft,
   GeneratedQuestionDraft,
+  MatchedEnrichment,
   RejectedDraft,
+  VocabularyEnrichmentDraft,
+  VocabularyEnrichmentTarget,
 } from "./generated-draft";
 
 /**
@@ -259,6 +264,250 @@ function flashcardRejection(
 }
 
 /**
+ * Matches enrichment answers to the cards they were asked about.
+ *
+ * The model is given no identifiers, so the join key is the term it echoes back.
+ * That makes drift a per-card failure instead of a corruption: an answer whose term
+ * matches no target is rejected, and a target no answer matched is reported as a
+ * card the run left alone rather than silently skipped.
+ *
+ * Matching is exact on the trimmed term. Not case-insensitive and not
+ * whitespace-normalised: for the language this exists for, a differing character *is*
+ * a different word, and a lenient match would be a way for a wrong answer to land on
+ * a real card. Two targets that share a term are a duplicate the bank should not
+ * hold, so the first unmatched one wins and the second is reported unmatched.
+ */
+export function matchEnrichments(
+  targets: readonly VocabularyEnrichmentTarget[],
+  drafts: readonly VocabularyEnrichmentDraft[],
+): EnrichmentMatchResult {
+  const matched: MatchedEnrichment[] = [];
+  const rejected: RejectedDraft[] = [];
+  const claimed = new Set<string>();
+
+  for (const [index, draft] of drafts.entries()) {
+    const position = index + 1;
+    const term = draft.term.trim();
+    const target = targets.find(
+      (candidate) =>
+        candidate.content.term.trim() === term &&
+        !claimed.has(candidate.flashcardId),
+    );
+
+    if (target === undefined) {
+      rejected.push({
+        position,
+        reason: `The answer names "${term}", which is not one of the words this run asked about.`,
+      });
+
+      continue;
+    }
+
+    const reason = enrichmentRejection(target, draft);
+
+    if (reason === null) {
+      claimed.add(target.flashcardId);
+      matched.push({ target, draft });
+    } else {
+      rejected.push({ position, reason });
+    }
+  }
+
+  return {
+    matched,
+    rejected,
+    unmatched: targets.filter((target) => !claimed.has(target.flashcardId)),
+  };
+}
+
+/** What one enrichment batch produced: what to write, what to refuse, what was missed. */
+export interface EnrichmentMatchResult {
+  readonly matched: readonly MatchedEnrichment[];
+  readonly rejected: readonly RejectedDraft[];
+  /** Cards no accepted answer covered. Left exactly as they were. */
+  readonly unmatched: readonly VocabularyEnrichmentTarget[];
+}
+
+/**
+ * The first reason this enrichment may not be written, or `null` if it may.
+ *
+ * The merged content is checked with the flashcard domain's own assertion rather
+ * than with rules restated here, so an enriched card clears exactly the bar a
+ * hand-edited one does — including the list bounds and the no-blank-entry rules.
+ */
+function enrichmentRejection(
+  target: VocabularyEnrichmentTarget,
+  draft: VocabularyEnrichmentDraft,
+): string | null {
+  if (draft.meanings.length === 0) {
+    return "It lists no meanings, so there is nothing to add to the card.";
+  }
+
+  if (draft.examples.length < MIN_ENRICHED_EXAMPLES) {
+    return `It gives fewer than ${MIN_ENRICHED_EXAMPLES} example sentences.`;
+  }
+
+  // An example that does not contain the word teaches the word nothing. Checked
+  // here rather than in the schema because it is a question about this word, not
+  // about the shape of the answer.
+  const term = target.content.term.trim();
+
+  if (!draft.examples.some((example) => example.text.includes(term))) {
+    return "No example sentence uses the word it is meant to illustrate.";
+  }
+
+  const merged = mergeEnrichment(target.content, draft);
+
+  const contentProblem = domainContentProblem(() =>
+    assertValidCardContent(merged),
+  );
+
+  if (contentProblem !== null) {
+    return contentProblem;
+  }
+
+  const officialProblem = assertNotClaimedOfficial(
+    cardTexts({
+      cardType: "VOCABULARY",
+      content: merged,
+      notes: null,
+      tags: [],
+      language: null,
+      objectiveIds: [],
+    }),
+  );
+
+  if (officialProblem !== null) {
+    return officialProblem;
+  }
+
+  return null;
+}
+
+/** The fewest example sentences an accepted enrichment must carry. */
+export const MIN_ENRICHED_EXAMPLES = 2;
+
+/**
+ * The card's content with the enrichment added.
+ *
+ * Additive, never destructive: `term`, `reading`, `meaning`, and `exampleSentence`
+ * are carried through untouched, because they are what the owner or the importer
+ * put there and enrichment is not an editor. The model's senses go into `meanings`
+ * beside the existing gloss, and its sentences into `examples` beside the existing
+ * one — `vocabularySenses` and `vocabularyExamples` are what read the two together,
+ * and they already drop a repeat, so a model that echoes the original back does not
+ * double it.
+ *
+ * Lists the model left empty are omitted rather than stored empty, because the
+ * domain refuses an empty list: "this word has no antonym" is expressed by the field
+ * being absent, which is also what an unenriched card looks like for that field.
+ */
+export function mergeEnrichment(
+  content: VocabularyContent,
+  draft: VocabularyEnrichmentDraft,
+): VocabularyContent {
+  return {
+    type: "VOCABULARY",
+    term: content.term,
+    reading: content.reading,
+    meaning: content.meaning,
+    exampleSentence: content.exampleSentence,
+    ...optionalList("meanings", mergedList(content.meanings, draft.meanings)),
+    ...optionalList("synonyms", mergedList(content.synonyms, draft.synonyms)),
+    ...optionalList("antonyms", mergedList(content.antonyms, draft.antonyms)),
+    ...optionalList("examples", mergedExamples(content, draft)),
+    ...(draft.usageNotes === null
+      ? content.usageNotes === undefined
+        ? {}
+        : { usageNotes: content.usageNotes }
+      : { usageNotes: draft.usageNotes }),
+  };
+}
+
+/**
+ * A field that exists only when it has entries.
+ *
+ * Written as a spread helper because `exactOptionalPropertyTypes` makes
+ * `field: undefined` a different thing from an absent field, and the domain's list
+ * rules reject a present-but-empty list.
+ */
+function optionalList<Field extends string, Entry>(
+  field: Field,
+  entries: readonly Entry[],
+): { readonly [K in Field]?: readonly Entry[] } {
+  return entries.length === 0
+    ? ({} as { readonly [K in Field]?: readonly Entry[] })
+    : ({ [field]: entries } as { readonly [K in Field]?: readonly Entry[] });
+}
+
+/** Existing entries first, then new ones the card does not already have. */
+function mergedList(
+  existing: readonly string[] | undefined,
+  added: readonly string[],
+): readonly string[] {
+  const seen = new Set(
+    (existing ?? []).map((entry) => entry.trim().toLowerCase()),
+  );
+  const kept: string[] = [...(existing ?? [])];
+
+  for (const entry of added) {
+    const key = entry.trim().toLowerCase();
+
+    if (key.length === 0 || seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    kept.push(entry);
+  }
+
+  return kept;
+}
+
+/**
+ * Existing examples first, then the model's, without repeating a sentence.
+ *
+ * The card's own `exampleSentence` counts as already present, so an enrichment that
+ * quotes it back adds nothing rather than storing the same sentence twice under two
+ * fields.
+ */
+function mergedExamples(
+  content: VocabularyContent,
+  draft: VocabularyEnrichmentDraft,
+): readonly VocabularyExample[] {
+  const seen = new Set(
+    [
+      content.exampleSentence ?? "",
+      ...(content.examples ?? []).map((example) => example.text),
+    ]
+      .map((text) => text.trim().toLowerCase())
+      .filter((text) => text.length > 0),
+  );
+  const kept: VocabularyExample[] = [...(content.examples ?? [])];
+
+  for (const example of draft.examples) {
+    const key = example.text.trim().toLowerCase();
+
+    if (key.length === 0 || seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    kept.push({
+      text: example.text,
+      // `null` from the model means "not provided", and the domain expresses that
+      // as an absent field rather than a null one.
+      ...(example.reading === null ? {} : { reading: example.reading }),
+      ...(example.translation === null
+        ? {}
+        : { translation: example.translation }),
+    });
+  }
+
+  return kept;
+}
+
+/**
  * Choice-level rules: unique identifiers and non-duplicate text.
  *
  * The bank's own `assertValidContent` checks identifier uniqueness but not
@@ -397,11 +646,23 @@ function cardTexts(draft: GeneratedFlashcardDraft): readonly string[] {
     case "CLOZE":
       return [content.text, notes];
     case "VOCABULARY":
+      // Every optional field is included too: an enrichment run writes most of
+      // its text into them, so a claim of officialness would slip through a
+      // check that only read the four original fields.
       return [
         content.term,
         content.reading ?? "",
         content.meaning,
         content.exampleSentence ?? "",
+        ...(content.meanings ?? []),
+        ...(content.synonyms ?? []),
+        ...(content.antonyms ?? []),
+        ...(content.examples ?? []).flatMap((example) => [
+          example.text,
+          example.reading ?? "",
+          example.translation ?? "",
+        ]),
+        content.usageNotes ?? "",
         notes,
       ];
     case "SCENARIO":

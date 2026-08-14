@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { SqliteDatabase } from "@/platform/database/sqlite";
 import { CertificationNotFoundError } from "@/modules/certifications/domain/errors";
+import { GRAMMAR_ROOT } from "@/modules/certifications/domain/objective-kind";
 import { SqliteCertificationRepository } from "@/modules/certifications/infrastructure/sqlite-certification-repository";
 import { SqliteObjectiveRepository } from "@/modules/certifications/infrastructure/sqlite-objective-repository";
 import {
@@ -11,27 +12,44 @@ import {
   objectiveFixture,
 } from "@/modules/certifications/infrastructure/test-support";
 import { SqliteQuestionRepository } from "@/modules/question-bank/infrastructure/sqlite-question-repository";
+import type { Flashcard } from "@/modules/flashcards/domain/flashcard";
 import { SqliteFlashcardRepository } from "@/modules/flashcards/infrastructure/sqlite-flashcard-repository";
 import { FlashcardQuestionDependencyChecker } from "@/modules/flashcards/infrastructure/flashcard-question-dependency-checker";
 import {
   GeneratedDraftNotRejectableError,
   GenerationBatchTooLargeError,
 } from "@/modules/ai-generation/domain/errors";
-import { MAX_BATCH_ITEMS } from "@/modules/ai-generation/domain/generation-limits";
+import {
+  MAX_BATCH_ITEMS,
+  MAX_ENRICHMENT_ITEMS,
+} from "@/modules/ai-generation/domain/generation-limits";
+import type { GenerationRun } from "@/modules/ai-generation/domain/generation-run";
 import type { FakeGatewayResponse } from "@/modules/ai-generation/infrastructure/fake-language-model-gateway";
 import { FakeLanguageModelGateway } from "@/modules/ai-generation/infrastructure/fake-language-model-gateway";
 import { SqliteGenerationRunRepository } from "@/modules/ai-generation/infrastructure/sqlite-generation-run-repository";
 import { SqliteGenerationUnitOfWork } from "@/modules/ai-generation/infrastructure/sqlite-generation-unit-of-work";
 import {
+  enrichmentPayload,
+  enrichmentPayloadItem,
   flashcardPayload,
   flashcardPayloadItem,
   malformedPayload,
   questionPayload,
   questionPayloadItem,
 } from "@/modules/ai-generation/infrastructure/test-support";
-import { GenerationFacade, isDuplicateBatchNotice } from "./generation-facade";
-import type { GenerationOutcome, GenerationResult } from "./generation-facade";
-import type { GenerationRequestInput } from "./schemas";
+import {
+  GenerationFacade,
+  isDuplicateBatchNotice,
+  isEnrichmentDuplicateNotice,
+  isNothingToEnrichNotice,
+} from "./generation-facade";
+import type {
+  EnrichmentOutcome,
+  EnrichmentResult,
+  GenerationOutcome,
+  GenerationResult,
+} from "./generation-facade";
+import type { EnrichmentRequestInput, GenerationRequestInput } from "./schemas";
 
 /**
  * The generation workflow end to end, over the real SQLite adapters and the fake
@@ -72,6 +90,25 @@ function request(
   };
 }
 
+/**
+ * Words for the seeded vocabulary cards.
+ *
+ * Distinct single characters, so a test can tell which card an answer landed on and
+ * an example sentence can embed its own word without accidentally containing another.
+ */
+const TERMS = ["学习", "工作", "生活"] as const;
+
+function enrich(
+  overrides: Partial<EnrichmentRequestInput> = {},
+): EnrichmentRequestInput {
+  return {
+    count: 2,
+    additionalInstructions: null,
+    generateAnyway: false,
+    ...overrides,
+  };
+}
+
 /** Narrows a result that a test expects to be a completed run, not a duplicate. */
 function outcome(result: GenerationResult): GenerationOutcome {
   if (isDuplicateBatchNotice(result)) {
@@ -101,11 +138,18 @@ describe("GenerationFacade", () => {
     responses?: readonly FakeGatewayResponse[],
     options: { readonly usage?: null } = {},
   ): GenerationFacade {
-    const gateway = new FakeLanguageModelGateway({
-      ...(responses === undefined ? {} : { responses }),
-      ...(options.usage === null ? { usage: null } : {}),
-    });
+    return facadeForGateway(
+      new FakeLanguageModelGateway({
+        ...(responses === undefined ? {} : { responses }),
+        ...(options.usage === null ? { usage: null } : {}),
+      }),
+    );
+  }
 
+  /** The same facade, for a test that holds its own gateway to inspect afterwards. */
+  function facadeForGateway(
+    gateway: FakeLanguageModelGateway,
+  ): GenerationFacade {
     return new GenerationFacade({
       runs,
       questions,
@@ -209,7 +253,10 @@ describe("GenerationFacade", () => {
       expect(run.personaId).toBe("technical-certification");
       expect(run.personaVersion).toBe(1);
       expect(run.promptTemplateId).toBe("question-model-knowledge");
-      expect(run.promptTemplateVersion).toBe(1);
+      // v2 since the question template learned to write drill instructions for a
+      // language objective. The technical persona's own text did not change, but the
+      // version records which template rendered the run, not whether the text moved.
+      expect(run.promptTemplateVersion).toBe(2);
       // D6 consults no sources, so the snapshot list is empty rather than absent.
       expect(run.selectedSourceSnapshotIds).toEqual([]);
       expect(run.inputHash).toMatch(/^[0-9a-f]{64}$/);
@@ -355,6 +402,158 @@ describe("GenerationFacade", () => {
     });
   });
 
+  /**
+   * What the facade tells the model about the objective the owner chose.
+   *
+   * The wording of each drill instruction is the template's business and is tested
+   * there. What only this level can show is that the facade *classified* the chosen
+   * objective from the stored tree and passed its syllabus text through — a grammar
+   * point read out of the database, not a hand-built context object.
+   */
+  describe("drilling a language objective", () => {
+    const GRAMMAR_PATTERN = "与其……不如……";
+    const GRAMMAR_DESCRIPTION =
+      "Compares two options and prefers the second: 与其 marks the rejected one.";
+
+    /** A grammar root and one point beneath it, shaped as the syllabus import writes them. */
+    async function seedGrammarPoint(): Promise<void> {
+      const objectives = new SqliteObjectiveRepository(database);
+
+      await objectives.save(
+        objectiveFixture({
+          id: "objective-grammar-root",
+          certificationId: HSK_TRACK.id,
+          parentObjectiveId: null,
+          code: GRAMMAR_ROOT.code,
+          title: GRAMMAR_ROOT.title,
+          displayOrder: 2,
+        }),
+      );
+      await objectives.save(
+        objectiveFixture({
+          id: "objective-grammar-point",
+          certificationId: HSK_TRACK.id,
+          parentObjectiveId: "objective-grammar-root",
+          code: "复句",
+          title: GRAMMAR_PATTERN,
+          description: GRAMMAR_DESCRIPTION,
+          displayOrder: 3,
+        }),
+      );
+    }
+
+    /** The single prompt one batch sent, or a failure that says none was sent. */
+    function onlyPrompt(gateway: FakeLanguageModelGateway): string {
+      const sent = gateway.promptsSent;
+
+      if (sent.length !== 1) {
+        throw new Error(`Expected one prompt, got ${sent.length}.`);
+      }
+
+      return sent[0]?.user ?? "";
+    }
+
+    it("asks for practice of the pattern and passes the syllabus text as owner data", async () => {
+      await seedGrammarPoint();
+
+      const gateway = new FakeLanguageModelGateway();
+      const { run } = outcome(
+        await facadeForGateway(gateway).requestQuestionGeneration(
+          HSK_TRACK.slug,
+          request({ itemCount: 1, objectiveIds: ["objective-grammar-point"] }),
+        ),
+      );
+      const user = onlyPrompt(gateway);
+
+      expect(run.status).toBe("COMPLETED");
+      expect(user).toContain(GRAMMAR_PATTERN);
+      expect(user).toMatch(/exercise the pattern, not describe it/);
+      expect(user).toMatch(/gap-fill/);
+      // The description reached the model, and it reached it inside the owner-data
+      // delimiters rather than as part of the request.
+      expect(user).toContain(
+        `objective-grammar-point | ${GRAMMAR_DESCRIPTION}`,
+      );
+      expect(user.indexOf(GRAMMAR_DESCRIPTION)).toBeGreaterThan(
+        user.indexOf("<owner_syllabus>"),
+      );
+    });
+
+    it("keeps the syllabus text out of the system instructions", async () => {
+      await seedGrammarPoint();
+
+      const gateway = new FakeLanguageModelGateway();
+
+      await facadeForGateway(gateway).requestQuestionGeneration(
+        HSK_TRACK.slug,
+        request({ itemCount: 1, objectiveIds: ["objective-grammar-point"] }),
+      );
+
+      expect(gateway.promptsSent[0]?.system).not.toContain(GRAMMAR_DESCRIPTION);
+    });
+
+    it("asks a flashcard batch for a cloze that blanks the pattern", async () => {
+      await seedGrammarPoint();
+
+      const gateway = new FakeLanguageModelGateway();
+
+      await facadeForGateway(gateway).requestFlashcardGeneration(
+        HSK_TRACK.slug,
+        request({
+          itemKind: "FLASHCARD",
+          itemCount: 1,
+          objectiveIds: ["objective-grammar-point"],
+        }),
+      );
+
+      expect(onlyPrompt(gateway)).toMatch(/cloze card whose blank/i);
+    });
+
+    it("adds nothing to a technical certification's prompt", async () => {
+      const gateway = new FakeLanguageModelGateway();
+
+      await facadeForGateway(gateway).requestQuestionGeneration(
+        AWS_TRACK.slug,
+        request({ itemCount: 1, objectiveIds: ["objective-1"] }),
+      );
+
+      const user = onlyPrompt(gateway);
+
+      // An ordinary exam domain is `GENERAL`: no drill block, no syllabus block, so
+      // the AWS persona's prompt is the one it always was.
+      expect(user).not.toMatch(/grammar patterns/);
+      expect(user).not.toContain("<owner_syllabus>");
+      expect(user).toContain("- id: objective-1");
+    });
+
+    it("classifies the objective from the tree even when the parent is archived", async () => {
+      await seedGrammarPoint();
+
+      const objectives = new SqliteObjectiveRepository(database);
+      const root = await objectives.findById("objective-grammar-root");
+
+      if (root === null) {
+        throw new Error("Expected the seeded grammar root.");
+      }
+
+      await objectives.save({ ...root, status: "ARCHIVED" });
+
+      const gateway = new FakeLanguageModelGateway();
+
+      await facadeForGateway(gateway).requestQuestionGeneration(
+        HSK_TRACK.slug,
+        request({ itemCount: 1, objectiveIds: ["objective-grammar-point"] }),
+      );
+
+      const user = onlyPrompt(gateway);
+
+      // The archived root is not offered as a target, but it still says which root
+      // its child descends from.
+      expect(user).not.toContain("objective-grammar-root");
+      expect(user).toMatch(/exercise the pattern, not describe it/);
+    });
+  });
+
   describe("generating flashcards", () => {
     it("writes each card as a draft attributed to the run", async () => {
       const facade = facadeWith();
@@ -440,17 +639,7 @@ describe("GenerationFacade", () => {
           questionPayload([questionPayloadItem()]),
         ],
       });
-      const facade = new GenerationFacade({
-        runs,
-        questions,
-        flashcards,
-        certifications: new SqliteCertificationRepository(database),
-        objectives: new SqliteObjectiveRepository(database),
-        unitOfWork: new SqliteGenerationUnitOfWork(database),
-        gateway,
-        clock,
-        ids,
-      });
+      const facade = facadeForGateway(gateway);
 
       const { run } = outcome(
         await facade.requestQuestionGeneration(
@@ -856,6 +1045,635 @@ describe("GenerationFacade", () => {
 
       expect(await facadeWith().rejectDraft(run.id, cardId)).toBe(HSK_TRACK.id);
       expect(await flashcards.findById(cardId)).toBeNull();
+    });
+  });
+
+  describe("enriching vocabulary", () => {
+    /**
+     * Seeds `count` active vocabulary cards with only a gloss.
+     *
+     * Written through the repository the manual path uses, and one minute apart, so
+     * the created-at order the selection relies on is unambiguous rather than a tie
+     * broken by identifier.
+     */
+    async function seedVocabulary(
+      count: number,
+      overrides: Partial<Flashcard> = {},
+    ): Promise<readonly string[]> {
+      const created: string[] = [];
+
+      for (let index = 0; index < count; index += 1) {
+        const id = `card-${index + 1}`;
+        const at = `2026-03-0${index + 1}T09:00:00.000Z`;
+
+        await flashcards.create(
+          {
+            id,
+            certificationId: HSK_TRACK.id,
+            currentRevisionId: `${id}-revision-1`,
+            lifecycleStatus: "ACTIVE",
+            sourceQuestionId: null,
+            generationMode: "MANUAL",
+            generationRunId: null,
+            createdAt: at,
+            updatedAt: at,
+            ...overrides,
+          },
+          {
+            id: `${id}-revision-1`,
+            flashcardId: id,
+            revisionNumber: 1,
+            cardType: "VOCABULARY",
+            content: {
+              type: "VOCABULARY",
+              term: TERMS[index] ?? `词${index}`,
+              reading: null,
+              meaning: `demo gloss ${index + 1}`,
+              exampleSentence: null,
+            },
+            notes: null,
+            tags: ["imported"],
+            language: "zh",
+            generationRunId: null,
+            createdAt: at,
+          },
+        );
+        created.push(id);
+      }
+
+      return created;
+    }
+
+    /** A one-turn script returning the given entries. */
+    function answering(
+      items: readonly Record<string, unknown>[],
+    ): readonly FakeGatewayResponse[] {
+      return [enrichmentPayload(items)];
+    }
+
+    /** A one-turn script whose single answer enriches exactly the given terms. */
+    function answerFor(
+      terms: readonly string[],
+    ): readonly FakeGatewayResponse[] {
+      return answering(terms.map((term) => enrichmentPayloadItem({ term })));
+    }
+
+    /**
+     * A one-turn script that names a word the run did not ask about.
+     *
+     * The run then enriches nothing, which is what makes it useful twice: as the
+     * whole-answer-drifted case, and as a way to leave the same cards unenriched so a
+     * second identical request is a genuine duplicate.
+     */
+    function driftedAnswer(): readonly FakeGatewayResponse[] {
+      return answering([enrichmentPayloadItem({ term: "不相关" })]);
+    }
+
+    /** Narrows a result a test expects to be a completed enrichment run. */
+    function enriched(result: EnrichmentResult): EnrichmentOutcome {
+      if (
+        isNothingToEnrichNotice(result) ||
+        isEnrichmentDuplicateNotice(result)
+      ) {
+        throw new Error("Expected an enrichment run, not a notice.");
+      }
+
+      return result;
+    }
+
+    async function currentContent(id: string) {
+      const found = await flashcards.findWithCurrentRevision(id);
+
+      if (found === null) {
+        throw new Error(`Expected card ${id} to exist.`);
+      }
+
+      return found;
+    }
+
+    describe("the enrichment form", () => {
+      it("counts the cards still waiting and offers the run's own cap", async () => {
+        await seedVocabulary(3);
+
+        const view = await facadeWith().findEnrichmentForm(HSK_TRACK.slug);
+
+        expect(view?.persona.id).toBe("hsk");
+        expect(view?.unenrichedCount).toBe(3);
+        // A separate, smaller cap than generation: an enriched word is a longer
+        // answer than a flashcard.
+        expect(view?.maxItemCount).toBe(MAX_ENRICHMENT_ITEMS);
+        expect(view?.modelProvider).toBe("fake");
+      });
+
+      it("is absent for an unknown track", async () => {
+        expect(
+          await facadeWith().findEnrichmentForm("no-such-track"),
+        ).toBeNull();
+      });
+    });
+
+    it("takes the next unenriched cards in the bank's own order", async () => {
+      await seedVocabulary(3);
+
+      const facade = facadeWith(answerFor(TERMS.slice(0, 2)));
+      const { run } = enriched(
+        await facade.requestVocabularyEnrichment(
+          HSK_TRACK.slug,
+          enrich({ count: 2 }),
+        ),
+      );
+
+      expect(run.requestedItemCount).toBe(2);
+      expect(run.successfulItemCount).toBe(2);
+      // The oldest two, so repeated runs walk the deck front to back.
+      expect((await currentContent("card-1")).revision.revisionNumber).toBe(2);
+      expect((await currentContent("card-2")).revision.revisionNumber).toBe(2);
+      expect((await currentContent("card-3")).revision.revisionNumber).toBe(1);
+    });
+
+    it("continues where the previous run stopped", async () => {
+      await seedVocabulary(3);
+
+      await facadeWith(
+        answerFor(TERMS.slice(0, 2)),
+      ).requestVocabularyEnrichment(HSK_TRACK.slug, enrich({ count: 2 }));
+      const second = enriched(
+        await facadeWith(
+          answerFor(TERMS.slice(2, 3)),
+        ).requestVocabularyEnrichment(HSK_TRACK.slug, enrich({ count: 2 })),
+      );
+
+      // Only one card was left, so the run truthfully records asking for one.
+      expect(second.run.requestedItemCount).toBe(1);
+      expect(second.run.successfulItemCount).toBe(1);
+      expect((await currentContent("card-3")).revision.revisionNumber).toBe(2);
+      expect(
+        await facadeWith().findEnrichmentForm(HSK_TRACK.slug),
+      ).toMatchObject({ unenrichedCount: 0 });
+    });
+
+    it("enriches every card with the fake gateway's own fixtures", async () => {
+      // No script: the gateway reads the words out of the rendered prompt and echoes
+      // each one back. That exercises the term-matching path rather than bypassing
+      // it, so the local development flow proves the same code a real provider does.
+      await seedVocabulary(3);
+
+      const { run, unenriched, rejected } = enriched(
+        await facadeWith().requestVocabularyEnrichment(
+          HSK_TRACK.slug,
+          enrich({ count: 3 }),
+        ),
+      );
+
+      expect(run.status).toBe("COMPLETED");
+      expect(run.successfulItemCount).toBe(3);
+      expect(unenriched).toBe(0);
+      expect(rejected).toEqual([]);
+
+      for (const id of ["card-1", "card-2", "card-3"]) {
+        expect((await currentContent(id)).revision.revisionNumber).toBe(2);
+      }
+    });
+
+    it("records the run with the enrichment template and its own item kind", async () => {
+      await seedVocabulary(1);
+
+      const { run } = enriched(
+        await facadeWith(
+          answerFor(TERMS.slice(0, 1)),
+        ).requestVocabularyEnrichment(HSK_TRACK.slug, enrich({ count: 1 })),
+      );
+
+      expect(run.itemKind).toBe("ENRICH_VOCABULARY");
+      expect(run.status).toBe("COMPLETED");
+      expect(run.personaId).toBe("hsk");
+      expect(run.promptTemplateId).toBe("vocabulary-enrichment");
+      expect(run.promptTemplateVersion).toBe(1);
+      expect(run.generationMode).toBe("MODEL_KNOWLEDGE");
+      expect(run.failureReason).toBeNull();
+      expect(run.usageMetadata).not.toBeNull();
+      expect(run.completedAt).toBe(START);
+    });
+
+    it("appends a revision that keeps everything the card already said", async () => {
+      await seedVocabulary(1);
+
+      await facadeWith(
+        answerFor(TERMS.slice(0, 1)),
+      ).requestVocabularyEnrichment(HSK_TRACK.slug, enrich({ count: 1 }));
+
+      const { flashcard, revision } = await currentContent("card-1");
+
+      expect(revision.revisionNumber).toBe(2);
+      expect(revision.cardType).toBe("VOCABULARY");
+      expect(revision.notes).toBeNull();
+      expect(revision.tags).toEqual(["imported"]);
+      expect(revision.language).toBe("zh");
+
+      if (revision.content.type !== "VOCABULARY") {
+        throw new Error("Expected vocabulary content.");
+      }
+
+      expect(revision.content.term).toBe(TERMS[0]);
+      expect(revision.content.meaning).toBe("demo gloss 1");
+      expect(revision.content.meanings).toEqual([
+        "to study",
+        "to learn as a discipline",
+      ]);
+      expect(revision.content.examples).toHaveLength(2);
+      expect(revision.content.usageNotes).not.toBeUndefined();
+      // Additive, so the previous text is still readable as revision 1.
+      expect(flashcard.currentRevisionId).not.toBe("card-1-revision-1");
+    });
+
+    it("leaves the card's lifecycle and its own provenance alone", async () => {
+      await seedVocabulary(1);
+
+      await facadeWith(
+        answerFor(TERMS.slice(0, 1)),
+      ).requestVocabularyEnrichment(HSK_TRACK.slug, enrich({ count: 1 }));
+
+      const { flashcard } = await currentContent("card-1");
+
+      // An enrichment run must not pull a card the owner studies out of study, and
+      // the card was not created by this run, so its creation provenance is untouched.
+      expect(flashcard.lifecycleStatus).toBe("ACTIVE");
+      expect(flashcard.generationMode).toBe("MANUAL");
+      expect(flashcard.generationRunId).toBeNull();
+    });
+
+    it("records the run on the revision it wrote, which is the linkage", async () => {
+      await seedVocabulary(1);
+
+      const { run } = enriched(
+        await facadeWith(
+          answerFor(TERMS.slice(0, 1)),
+        ).requestVocabularyEnrichment(HSK_TRACK.slug, enrich({ count: 1 })),
+      );
+      const { revision } = await currentContent("card-1");
+
+      expect(revision.generationRunId).toBe(run.id);
+    });
+
+    it("counts a card the model failed to answer for as left unchanged", async () => {
+      await seedVocabulary(2);
+
+      const { run, unenriched, rejected } = enriched(
+        await facadeWith(
+          answerFor(TERMS.slice(0, 1)),
+        ).requestVocabularyEnrichment(HSK_TRACK.slug, enrich({ count: 2 })),
+      );
+
+      expect(run.status).toBe("PARTIAL");
+      expect(run.successfulItemCount).toBe(1);
+      expect(run.failedItemCount).toBe(1);
+      expect(unenriched).toBe(1);
+      expect(rejected).toEqual([]);
+      // Untouched, so the next run offers it again.
+      expect((await currentContent("card-2")).revision.revisionNumber).toBe(1);
+      expect(
+        await facadeWith().findEnrichmentForm(HSK_TRACK.slug),
+      ).toMatchObject({ unenrichedCount: 1 });
+    });
+
+    it("reports a rejected answer and leaves that card alone", async () => {
+      await seedVocabulary(2);
+
+      const facade = facadeWith(
+        answering([
+          enrichmentPayloadItem({ term: TERMS[0] }),
+          // Fewer than two examples, so the deterministic checks refuse it.
+          enrichmentPayloadItem({
+            term: TERMS[1],
+            examples: [{ text: `${TERMS[1]}很好。` }],
+          }),
+        ]),
+      );
+      const { run, rejected, unenriched } = enriched(
+        await facade.requestVocabularyEnrichment(
+          HSK_TRACK.slug,
+          enrich({ count: 2 }),
+        ),
+      );
+
+      expect(run.status).toBe("PARTIAL");
+      expect(rejected).toEqual([
+        { position: 2, reason: expect.stringMatching(/fewer than 2 example/i) },
+      ]);
+      expect(unenriched).toBe(1);
+      expect((await currentContent("card-2")).revision.revisionNumber).toBe(1);
+    });
+
+    it("fails the run when no answer was usable", async () => {
+      await seedVocabulary(1);
+
+      const { run } = enriched(
+        await facadeWith(driftedAnswer()).requestVocabularyEnrichment(
+          HSK_TRACK.slug,
+          enrich({ count: 1 }),
+        ),
+      );
+
+      expect(run.status).toBe("FAILED");
+      expect(run.failureReason).toBe("NO_USABLE_ITEMS");
+      expect(run.successfulItemCount).toBe(0);
+      expect((await currentContent("card-1")).revision.revisionNumber).toBe(1);
+    });
+
+    it("records a provider failure as a failed run rather than throwing", async () => {
+      await seedVocabulary(2);
+
+      const { run, unenriched } = enriched(
+        await facadeWith([
+          { failure: "PROVIDER_THROTTLED" },
+        ]).requestVocabularyEnrichment(HSK_TRACK.slug, enrich({ count: 2 })),
+      );
+
+      expect(run.status).toBe("FAILED");
+      expect(run.failureReason).toBe("PROVIDER_THROTTLED");
+      expect(run.failedItemCount).toBe(2);
+      expect(unenriched).toBe(2);
+      expect((await currentContent("card-1")).revision.revisionNumber).toBe(1);
+    });
+
+    it("says there is nothing to enrich rather than recording an empty run", async () => {
+      const result = await facadeWith().requestVocabularyEnrichment(
+        HSK_TRACK.slug,
+        enrich({ count: 5 }),
+      );
+
+      expect(isNothingToEnrichNotice(result)).toBe(true);
+
+      const history = await runs.list({
+        certificationId: HSK_TRACK.id,
+        limit: 10,
+        offset: 0,
+      });
+
+      // No run row, because no model was called and nothing was spent.
+      expect(history.totalCount).toBe(0);
+    });
+
+    it("ignores a card that is not active and one that is already enriched", async () => {
+      await seedVocabulary(2);
+      await flashcards.setLifecycleStatus("card-1", "RETIRED", START);
+      await facadeWith(
+        answerFor(TERMS.slice(1, 2)),
+      ).requestVocabularyEnrichment(HSK_TRACK.slug, enrich({ count: 5 }));
+
+      const result = await facadeWith().requestVocabularyEnrichment(
+        HSK_TRACK.slug,
+        enrich({ count: 5 }),
+      );
+
+      expect(isNothingToEnrichNotice(result)).toBe(true);
+    });
+
+    it("refuses a request past the enrichment cap without recording a run", async () => {
+      await seedVocabulary(1);
+
+      await expect(
+        facadeWith().requestVocabularyEnrichment(
+          HSK_TRACK.slug,
+          enrich({ count: MAX_ENRICHMENT_ITEMS + 1 }),
+        ),
+      ).rejects.toBeInstanceOf(GenerationBatchTooLargeError);
+
+      const history = await runs.list({
+        certificationId: HSK_TRACK.id,
+        limit: 10,
+        offset: 0,
+      });
+
+      expect(history.totalCount).toBe(0);
+    });
+
+    it("refuses a request for a track that does not exist", async () => {
+      await expect(
+        facadeWith().requestVocabularyEnrichment("no-such-track", enrich()),
+      ).rejects.toBeInstanceOf(CertificationNotFoundError);
+    });
+
+    describe("the duplicate guard", () => {
+      /**
+       * Enriches card 1, then has the owner rewrite it back to a plain gloss.
+       *
+       * This is what a genuine enrichment repeat looks like. The scope normally moves
+       * forward, so the *same* cards can only come up twice if a card that was
+       * enriched stopped being enriched — which happens when the owner edits the
+       * detail away. Asking again is then a request the owner has already paid for.
+       */
+      async function enrichedThenReverted(): Promise<GenerationRun> {
+        await seedVocabulary(1);
+
+        const { run } = enriched(
+          await facadeWith(
+            answerFor(TERMS.slice(0, 1)),
+          ).requestVocabularyEnrichment(HSK_TRACK.slug, enrich({ count: 1 })),
+        );
+
+        await flashcards.appendRevision(
+          {
+            id: "card-1-revision-3",
+            flashcardId: "card-1",
+            revisionNumber: 3,
+            cardType: "VOCABULARY",
+            content: {
+              type: "VOCABULARY",
+              term: TERMS[0] ?? "",
+              reading: null,
+              meaning: "demo gloss 1",
+              exampleSentence: null,
+            },
+            notes: null,
+            tags: ["imported"],
+            language: "zh",
+            generationRunId: null,
+            createdAt: START,
+          },
+          START,
+        );
+
+        return run;
+      }
+
+      it("reports the earlier run when the same cards are asked for again", async () => {
+        const first = await enrichedThenReverted();
+        const second = await facadeWith(
+          answerFor(TERMS.slice(0, 1)),
+        ).requestVocabularyEnrichment(HSK_TRACK.slug, enrich({ count: 1 }));
+
+        expect(isEnrichmentDuplicateNotice(second)).toBe(true);
+
+        if (!isEnrichmentDuplicateNotice(second)) {
+          return;
+        }
+
+        expect(second.duplicateOf.id).toBe(first.id);
+        // No second run, so no model call was paid for twice.
+        expect((await currentContent("card-1")).revision.revisionNumber).toBe(
+          3,
+        );
+      });
+
+      it("enriches anyway once the owner has seen the notice", async () => {
+        await enrichedThenReverted();
+
+        const second = enriched(
+          await facadeWith(
+            answerFor(TERMS.slice(0, 1)),
+          ).requestVocabularyEnrichment(
+            HSK_TRACK.slug,
+            enrich({ count: 1, generateAnyway: true }),
+          ),
+        );
+
+        expect(second.run.successfulItemCount).toBe(1);
+        expect((await currentContent("card-1")).revision.revisionNumber).toBe(
+          4,
+        );
+      });
+
+      it("does not block a retry of a run that enriched nothing", async () => {
+        await seedVocabulary(1);
+
+        // The failed run left the card exactly as it was, so asking again is a first
+        // attempt rather than a repeat.
+        await facadeWith(driftedAnswer()).requestVocabularyEnrichment(
+          HSK_TRACK.slug,
+          enrich({ count: 1 }),
+        );
+        const retry = await facadeWith(
+          answerFor(TERMS.slice(0, 1)),
+        ).requestVocabularyEnrichment(HSK_TRACK.slug, enrich({ count: 1 }));
+
+        expect(isEnrichmentDuplicateNotice(retry)).toBe(false);
+      });
+
+      it("does not treat the next batch of cards as a duplicate", async () => {
+        await seedVocabulary(2);
+
+        // The scope moves forward as cards are enriched, so the same count over
+        // different cards is a different request.
+        await facadeWith(
+          answerFor(TERMS.slice(0, 1)),
+        ).requestVocabularyEnrichment(HSK_TRACK.slug, enrich({ count: 1 }));
+        const second = await facadeWith(
+          answerFor(TERMS.slice(1, 2)),
+        ).requestVocabularyEnrichment(HSK_TRACK.slug, enrich({ count: 1 }));
+
+        expect(isEnrichmentDuplicateNotice(second)).toBe(false);
+      });
+
+      it("does not treat a flashcard run as a duplicate of an enrichment run", async () => {
+        await enrichedThenReverted();
+
+        const cards = await facadeWith().requestFlashcardGeneration(
+          HSK_TRACK.slug,
+          request({ itemKind: "FLASHCARD", itemCount: 1 }),
+        );
+
+        expect(isDuplicateBatchNotice(cards)).toBe(false);
+      });
+    });
+
+    describe("the run review screen", () => {
+      it("shows each enriched card as something that cannot be rejected", async () => {
+        await seedVocabulary(1);
+
+        const facade = facadeWith(answerFor(TERMS.slice(0, 1)));
+        const { run } = enriched(
+          await facade.requestVocabularyEnrichment(
+            HSK_TRACK.slug,
+            enrich({ count: 1 }),
+          ),
+        );
+        const view = await facade.findRunDetail(HSK_TRACK.slug, run.id);
+        const item = view?.items[0];
+
+        if (item?.kind !== "ENRICH_VOCABULARY") {
+          throw new Error("Expected an enrichment review row.");
+        }
+
+        // The card was the owner's before the run, so there is nothing to take back.
+        expect(item.rejectable).toBe(false);
+        expect(item.changedSinceGeneration).toBe(false);
+        expect(item.item.revision.revisionNumber).toBe(2);
+      });
+
+      it("marks a card the owner has edited since the run", async () => {
+        await seedVocabulary(1);
+
+        const facade = facadeWith(answerFor(TERMS.slice(0, 1)));
+        const { run } = enriched(
+          await facade.requestVocabularyEnrichment(
+            HSK_TRACK.slug,
+            enrich({ count: 1 }),
+          ),
+        );
+        const { revision } = await currentContent("card-1");
+
+        await flashcards.appendRevision(
+          {
+            ...revision,
+            id: "card-1-revision-3",
+            revisionNumber: 3,
+            generationRunId: null,
+          },
+          START,
+        );
+
+        const view = await facade.findRunDetail(HSK_TRACK.slug, run.id);
+
+        expect(view?.items[0]?.changedSinceGeneration).toBe(true);
+      });
+
+      it("refuses to reject an enriched card as though it were a draft", async () => {
+        await seedVocabulary(1);
+
+        const { run } = enriched(
+          await facadeWith(
+            answerFor(TERMS.slice(0, 1)),
+          ).requestVocabularyEnrichment(HSK_TRACK.slug, enrich({ count: 1 })),
+        );
+
+        // Deleting the card would destroy content the owner already had.
+        await expect(
+          facadeWith().rejectDraft(run.id, "card-1"),
+        ).rejects.toBeInstanceOf(GeneratedDraftNotRejectableError);
+        expect(await flashcards.findById("card-1")).not.toBeNull();
+      });
+    });
+
+    it("does not offer a card whose current revision stopped being vocabulary", async () => {
+      await seedVocabulary(1);
+
+      const facade = facadeWith(answerFor(TERMS.slice(0, 1)));
+
+      // Rewritten as a basic card between selection and the write: the enrichment
+      // describes text that is no longer the card's text, so it is skipped.
+      await flashcards.appendRevision(
+        {
+          id: "card-1-revision-2",
+          flashcardId: "card-1",
+          revisionNumber: 2,
+          cardType: "BASIC",
+          content: { type: "BASIC", front: "Front side", back: "Back side" },
+          notes: null,
+          tags: [],
+          language: "zh",
+          generationRunId: null,
+          createdAt: START,
+        },
+        START,
+      );
+
+      const result = await facade.requestVocabularyEnrichment(
+        HSK_TRACK.slug,
+        enrich({ count: 1 }),
+      );
+
+      expect(isNothingToEnrichNotice(result)).toBe(true);
     });
   });
 

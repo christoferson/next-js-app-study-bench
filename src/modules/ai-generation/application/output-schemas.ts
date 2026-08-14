@@ -13,6 +13,7 @@ import type {
 import type {
   GeneratedFlashcardDraft,
   GeneratedQuestionDraft,
+  VocabularyEnrichmentDraft,
 } from "@/modules/ai-generation/domain/generated-draft";
 import type {
   JsonSchema,
@@ -226,6 +227,68 @@ const cardResponseSchema = z.object({
   }),
 });
 
+/**
+ * A list of short model-written strings, blanks and duplicates removed.
+ *
+ * Absent, null, and empty all mean "the word has none of these", which is a real
+ * answer for an antonym rather than a failure: refusing it would cost a card for
+ * being honest. Duplicates are collapsed here because the domain refuses a list
+ * that repeats itself, and a model listing one synonym twice has still told the
+ * truth about the word.
+ */
+const modelEntryList = (limit: number, maxEntries: number) =>
+  z
+    .array(
+      z.string().max(limit, { message: `use ${limit} characters or fewer` }),
+    )
+    .max(maxEntries, { message: `list ${maxEntries} entries or fewer` })
+    .nullish()
+    .transform((values): readonly string[] => {
+      const entries = (values ?? [])
+        .map((entry) => entry.trim())
+        .filter((entry) => entry.length > 0);
+      const seen = new Set<string>();
+
+      return entries.filter((entry) => {
+        const key = entry.toLowerCase();
+
+        if (seen.has(key)) {
+          return false;
+        }
+
+        seen.add(key);
+
+        return true;
+      });
+    });
+
+const enrichmentItemSchema = z.object({
+  term: requiredModelText(TERM_LIMIT),
+  meanings: modelEntryList(MEANING_LIMIT, MAX_LIST_ENTRIES),
+  synonyms: modelEntryList(TERM_LIMIT, MAX_LIST_ENTRIES),
+  antonyms: modelEntryList(TERM_LIMIT, MAX_LIST_ENTRIES),
+  examples: z
+    .array(
+      z.object({
+        text: requiredModelText(EXAMPLE_LIMIT),
+        reading: optionalModelText(EXAMPLE_LIMIT),
+        translation: optionalModelText(EXAMPLE_LIMIT),
+      }),
+    )
+    .max(MAX_LIST_ENTRIES, {
+      message: `list ${MAX_LIST_ENTRIES} examples or fewer`,
+    })
+    .nullish()
+    .transform((values) => values ?? []),
+  usageNotes: optionalModelText(NOTES_LIMIT),
+});
+
+const enrichmentResponseSchema = z.object({
+  words: z.array(enrichmentItemSchema).max(MAX_ITEMS_PER_RESPONSE, {
+    message: `return ${MAX_ITEMS_PER_RESPONSE} words or fewer`,
+  }),
+});
+
 /** What a validated question response contributes to the draft, before checks. */
 export interface QuestionOutputContext {
   /** The language the persona writes in, recorded on the revision. */
@@ -277,6 +340,34 @@ export function validateFlashcardOutput(
       tags: item.tags,
       language: context.contentLanguage,
       objectiveIds: item.objectiveIds,
+    })),
+  };
+}
+
+/**
+ * Enrichment output.
+ *
+ * No `context` parameter: enrichment adds fields to a card that already records
+ * its language, so there is nothing here for the persona's language to set.
+ */
+export function validateEnrichmentOutput(
+  payload: unknown,
+): StructuredValidation<readonly VocabularyEnrichmentDraft[]> {
+  const result = enrichmentResponseSchema.safeParse(payload);
+
+  if (!result.success) {
+    return { ok: false, errors: describeIssues(result.error) };
+  }
+
+  return {
+    ok: true,
+    value: result.data.words.map((item) => ({
+      term: item.term,
+      meanings: item.meanings,
+      synonyms: item.synonyms,
+      antonyms: item.antonyms,
+      examples: item.examples,
+      usageNotes: item.usageNotes,
     })),
   };
 }
@@ -483,9 +574,101 @@ export function flashcardOutputJsonSchema(
   };
 }
 
+/**
+ * The answer shape sent to the provider for enrichment.
+ *
+ * Not built from allowed types, because there is only one shape: unlike a card
+ * batch, every entry has the same fields whatever the word is. `term` is required
+ * even though the model was given it, because it is the join key back to the card.
+ */
+export function enrichmentOutputJsonSchema(): JsonSchema {
+  return {
+    type: "object",
+    description: "Dictionary detail for words already being studied.",
+    required: ["words"],
+    additionalProperties: false,
+    properties: {
+      words: {
+        type: "array",
+        description:
+          "One entry per word given, in the order the words were given.",
+        maxItems: MAX_ITEMS_PER_RESPONSE,
+        items: {
+          type: "object",
+          required: ["term", "meanings", "examples"],
+          additionalProperties: false,
+          properties: {
+            term: {
+              type: "string",
+              description:
+                "The word being described, copied exactly as it was given. The entry is matched to its card by this text.",
+            },
+            meanings: {
+              type: "array",
+              description:
+                "The senses of the word, most common first, each a short gloss rather than an essay.",
+              maxItems: MAX_LIST_ENTRIES,
+              items: { type: "string" },
+            },
+            synonyms: {
+              type: "array",
+              description:
+                "Words with a close meaning. Omit or leave empty when the word has none.",
+              maxItems: MAX_LIST_ENTRIES,
+              items: { type: "string" },
+            },
+            antonyms: {
+              type: "array",
+              description:
+                "Words with an opposite meaning. Omit or leave empty when the word has none.",
+              maxItems: MAX_LIST_ENTRIES,
+              items: { type: "string" },
+            },
+            examples: {
+              type: "array",
+              description:
+                "At least two complete sentences using the word, each with its reading and an English translation.",
+              maxItems: MAX_LIST_ENTRIES,
+              items: {
+                type: "object",
+                required: ["text"],
+                additionalProperties: false,
+                properties: {
+                  text: {
+                    type: "string",
+                    description: "The sentence, in the language being studied.",
+                  },
+                  reading: {
+                    type: "string",
+                    description:
+                      "Pronunciation of the sentence, with tone marks where the language uses them.",
+                    nullable: true,
+                  },
+                  translation: {
+                    type: "string",
+                    description: "An English translation of the sentence.",
+                    nullable: true,
+                  },
+                },
+              },
+            },
+            usageNotes: {
+              type: "string",
+              description:
+                "Register, collocation, and the mistakes learners make with this word. Omit when there is nothing worth saying.",
+              nullable: true,
+            },
+          },
+        },
+      },
+    },
+  };
+}
+
 /** Names of the tool the provider is asked to fill in, per item kind. */
 export const QUESTION_SCHEMA_NAME = "practice_questions";
 export const FLASHCARD_SCHEMA_NAME = "study_flashcards";
+export const ENRICHMENT_SCHEMA_NAME = "enriched_vocabulary";
 
 type QuestionItem = z.output<typeof questionItemSchema>;
 type CardItem = z.output<typeof cardItemSchema>;

@@ -7,6 +7,7 @@ import type {
   CardType,
   FlashcardContent,
 } from "@/modules/flashcards/domain/flashcard";
+import type { VocabularyContent } from "@/modules/flashcards/domain/flashcard-content";
 
 /**
  * What the model is asked to produce and what it produced.
@@ -67,6 +68,51 @@ export interface GeneratedFlashcardDraft {
   readonly tags: readonly string[];
   readonly language: string | null;
   readonly objectiveIds: readonly ObjectiveId[];
+}
+
+/**
+ * One card offered to an enrichment run.
+ *
+ * The whole current content rather than a copy of the three fields the prompt
+ * shows, because the same target is used twice: to describe the word to the model,
+ * and to merge an accepted answer into what the card already says. Copying the
+ * fields out would let the described word and the merged card drift apart.
+ *
+ * The identifier is deliberately *not* sent to the model — it echoes the term back
+ * and the application matches on that, so a model that invents an identifier cannot
+ * make its output land on a different card.
+ */
+export interface VocabularyEnrichmentTarget {
+  readonly flashcardId: string;
+  readonly content: VocabularyContent;
+}
+
+/**
+ * One enriched word, before any check has run.
+ *
+ * Deliberately not a `GeneratedFlashcardDraft`: this is not a card, it is the extra
+ * fields for a card that already exists. `term` is the model's echo of the word it
+ * was given, which is what the deterministic checks match against a target before
+ * anything is written — an enrichment that drifted onto another word is rejected
+ * rather than merged into the wrong card.
+ */
+export interface VocabularyEnrichmentDraft {
+  readonly term: string;
+  readonly meanings: readonly string[];
+  readonly synonyms: readonly string[];
+  readonly antonyms: readonly string[];
+  readonly examples: readonly {
+    readonly text: string;
+    readonly reading: string | null;
+    readonly translation: string | null;
+  }[];
+  readonly usageNotes: string | null;
+}
+
+/** An enrichment matched to the card it belongs to, ready to be written. */
+export interface MatchedEnrichment {
+  readonly target: VocabularyEnrichmentTarget;
+  readonly draft: VocabularyEnrichmentDraft;
 }
 
 /** A draft that failed a check, with the reason the owner is shown. */

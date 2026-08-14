@@ -20,6 +20,33 @@ export const MIN_BATCH_ITEMS = 1;
 export const MAX_BATCH_ITEMS = 10;
 
 /**
+ * The most cards one enrichment run may rewrite.
+ *
+ * Higher than `MAX_BATCH_ITEMS` and its own constant rather than a bigger shared
+ * one, because enrichment is a different kind of request and the number is
+ * justified differently. Writing ten questions is ten pieces of composition;
+ * enriching a word the model already knows is a lookup, so twenty fit in one
+ * synchronous request comfortably. Raising the shared limit to twenty would also
+ * raise it for questions, where the cost per item is more than twice as high.
+ *
+ * Twenty is also what makes the bank tractable by hand: the owner's HSK track
+ * holds 1600 vocabulary cards, so a run is a visible dent the owner can inspect
+ * in one sitting rather than a batch they have to trust.
+ */
+export const MAX_ENRICHMENT_ITEMS = 20;
+
+/** The cap for one request, by what the request is for. */
+export function maxItemsFor(kind: GeneratedItemKind): number {
+  switch (kind) {
+    case "QUESTION":
+    case "FLASHCARD":
+      return MAX_BATCH_ITEMS;
+    case "ENRICH_VOCABULARY":
+      return MAX_ENRICHMENT_ITEMS;
+  }
+}
+
+/**
  * Above this, the form asks the owner to confirm before spending the call
  * (`SPEC.md` section 11.6, "visible confirmation for large generation requests").
  */
@@ -52,5 +79,10 @@ function tokensPerItem(kind: GeneratedItemKind): number {
       return 900;
     case "FLASHCARD":
       return 400;
+    // An enriched word carries several senses, two example sentences with a
+    // reading and a translation each, and a usage note, so it is the longest of
+    // the three answers per item even though it is the cheapest to think of.
+    case "ENRICH_VOCABULARY":
+      return 700;
   }
 }

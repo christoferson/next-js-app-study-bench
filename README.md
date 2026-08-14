@@ -115,13 +115,55 @@ item. **Out of the box it uses a fake model and costs nothing** — see
   independent of the question from then on.
 - A liveness endpoint at `/health` (unchanged from D1).
 
+### Added after D6, outside a milestone
+
+Work on the owner's own imported HSK track, authorized separately from the
+milestone plan. It adds no new dependency and no new milestone scope; `PROGRESS.md`
+still records D6 as the last completed milestone.
+
+- **The HSK 5 syllabus as an objective tree.** `npm run import:hsk-syllabus` adds
+  the examination's skills and parts, the syllabus's grammar points, and the
+  owner's own notes on topic areas and language tasks to the imported HSK track —
+  see [Importing your own study material](#importing-your-own-study-material).
+- **"Enrich vocabulary with AI"** at `/study-tracks/[slug]/enrich`: a model fills
+  in what a one-line gloss leaves out — further senses, synonyms and antonyms,
+  example sentences with readings and translations, and a register note. Up to 20
+  cards per run, chosen by the bank rather than by you: the next cards that still
+  have only a gloss, in a deterministic order, so repeated runs walk the list. The
+  detail arrives as **a new revision**; the card's own lifecycle, schedule, review
+  history, and the wording you wrote are untouched, and a card stays manual
+  content. An example that does not actually use the word it illustrates is
+  rejected, and that card is left exactly as it was.
+- **Drills that fit the objective.** Generation now reads what kind of thing the
+  chosen objective is from the tree it sits under. A grammar point asks for items
+  that _exercise_ that pattern — gap-fills and a "which sentence uses it
+  correctly" discrimination item — with the syllabus's own description passed in as
+  owner data. A topic or language task asks for items _set in_ that theme. An
+  ordinary exam domain, which is every objective on a technical certification, is
+  prompted exactly as before. Word-ordering items are not generated: they need an
+  ordering question type the bank does not have yet.
+- **A language track leads with building material.** A `LANGUAGE_PROFICIENCY`
+  track page opens with a "Build study material" section offering "Enrich
+  vocabulary with AI" and "Generate drills"; a technical certification keeps its
+  single "Generate with AI" entry point. The choice comes from the track's study
+  type, never from its provider or name.
+- **Vocabulary and cloze cards hold more.** A vocabulary card can now carry
+  further senses, synonyms, antonyms, several worked examples each with its own
+  reading and translation, and a usage note — all of them **optional and
+  additive**, so every card written before they existed is still valid, unchanged,
+  and needed no migration. A cloze deletion can carry a hint after a `|`, as in
+  `{{答案|the first character}}`. All of it is writable by hand on the card form;
+  enrichment is one way to fill it in, not the only way.
+
 Everything is stored in a local SQLite database and survives a restart. Tracks,
 objectives, and flashcards are never hard-deleted — a card carries review
 history, so retirement is how it leaves the queue. A question can be deleted, but
 not while a flashcard made from it exists, and not once it has been answered or
 offered in a session. Sessions are composed by a deterministic strategy that
 reads only the bank: **no AI is involved in starting a session**. AI generation
-writes only drafts. There is no AI tutor, no explanation-on-demand, no source
+creates only drafts, and the one flow that touches content you already have —
+enrichment — appends a revision and never rewrites one. There is no AI tutor, no
+explanation-on-demand, no source
 import or grounded generation, no printable artifacts, and no audio yet — those
 arrive in later milestones.
 
@@ -162,20 +204,21 @@ To start over, stop the server and delete `data/study-bench.db` (plus any
 
 ## Commands
 
-| Command                | Purpose                                       |
-| ---------------------- | --------------------------------------------- |
-| `npm run dev`          | Start the development server on port 3000     |
-| `npm run build`        | Production build                              |
-| `npm start`            | Serve the production build (after `build`)    |
-| `npm run seed`         | Insert the demo study tracks and demo content |
-| `npm run import:real`  | Import your own study material (see below)    |
-| `npm test`             | Run unit and component tests once (Vitest)    |
-| `npm run test:watch`   | Run tests in watch mode                       |
-| `npm run test:live`    | Opt-in live provider tests (see below)        |
-| `npm run type-check`   | TypeScript type checking (`tsc --noEmit`)     |
-| `npm run lint`         | ESLint                                        |
-| `npm run format`       | Format the repository with Prettier           |
-| `npm run format:check` | Verify formatting without writing changes     |
+| Command                       | Purpose                                            |
+| ----------------------------- | -------------------------------------------------- |
+| `npm run dev`                 | Start the development server on port 3000          |
+| `npm run build`               | Production build                                   |
+| `npm start`                   | Serve the production build (after `build`)         |
+| `npm run seed`                | Insert the demo study tracks and demo content      |
+| `npm run import:real`         | Import your own study material (see below)         |
+| `npm run import:hsk-syllabus` | Add the HSK 5 syllabus structure to that HSK track |
+| `npm test`                    | Run unit and component tests once (Vitest)         |
+| `npm run test:watch`          | Run tests in watch mode                            |
+| `npm run test:live`           | Opt-in live provider tests (see below)             |
+| `npm run type-check`          | TypeScript type checking (`tsc --noEmit`)          |
+| `npm run lint`                | ESLint                                             |
+| `npm run format`              | Format the repository with Prettier                |
+| `npm run format:check`        | Verify formatting without writing changes          |
 
 ### Seeding demo content
 
@@ -227,6 +270,38 @@ per word (term, pinyin, English meaning, register). No questions are imported, a
 no example sentences are invented. Idempotent by track slug: a track that already
 exists is reported and left completely untouched, so re-running is safe.
 
+#### The HSK 5 syllabus structure
+
+```bash
+npm run import:hsk-syllabus
+```
+
+A second one-off tool that adds the study structure of the examination to the HSK
+track `import:real` created, so a generated drill can target a grammar point or a
+theme rather than only "HSK 5 vocabulary". It reads three more files from
+`external/sources/` — `hsk3-level5-syllabus.txt` (the syllabus as text extracted
+from your own PDF), `HSK_3_LEVEL_5_GRAMMAR.json` (its grammar appendix), and
+`HSK_3_LEVEL_5_TOPICS.txt` (your own notes on the band's topic areas and language
+tasks). As with `import:real`, `external/` is gitignored, the files are read at run
+time, absence is reported with the paths to fill in, and no parser contains any of
+their content. The script prints counts, never content.
+
+It creates six root objectives on the track: the examination's three skills with
+their parts beneath them, the grammar appendix's categories with each point
+beneath its category, and the two roots from your notes. **Provenance is recorded
+per root.** The syllabus and grammar roots are marked as coming from the official
+syllabus; the topics and language-task roots are marked **AI-proposed** and carry
+"(unofficial)" in their own titles, because those notes came from a chatbot's
+description of the examination and not from the examining body. Nothing imported
+by either script is labelled real exam material.
+
+Idempotent per root: a root already on the track is reported as already present
+and neither it nor its children are written, so re-running is safe. The vocabulary
+root and the imported cards are never touched. It is a separate script from
+`import:real` for exactly that reason — `import:real` protects the bank by leaving
+an existing track completely alone, and this one only ever adds objectives to a
+track that is already there.
+
 ## AI generation
 
 Generation is configured with three environment variables. **None of them is a
@@ -263,6 +338,25 @@ refusing to serve.
 
 Environment files are ignored by git (`.env`, `.env*.local`), so local settings
 are never committed.
+
+### Enriching vocabulary
+
+The enrichment flow at `/study-tracks/[slug]/enrich` uses the same provider setting,
+the same run record, and the same review screen as generation, so it is free on the
+fake provider too. Two things differ and are worth knowing before pointing it at
+Bedrock:
+
+- **It writes to existing cards, not drafts.** There is nothing to accept
+  afterwards: a successful card gets a new revision and its earlier revisions stay
+  readable. A card is never replaced, and a rejected card is not written at all.
+- **A run is larger than a generation batch.** Up to 20 cards at once, which is
+  roughly 10k tokens per run on Sonnet, against a few thousand for a batch of
+  questions. The form states the model and the number of cards before you submit,
+  and the run's review screen reports the tokens the provider actually charged.
+
+The cards are chosen for you: the next active vocabulary cards that still have only
+a gloss, in a deterministic order. Run it repeatedly to walk the list. When every
+card already has its detail, the page says so and makes no model call.
 
 ### Live provider tests
 
@@ -336,6 +430,29 @@ With `npm run seed` followed by `npm run dev`:
   (the review screen says it changed since generation and shows your version)
 - On the HSK demo track, generate flashcards — the cards are in simplified
   Chinese with pinyin, marked `AI generated — model knowledge`, and are drafts
+- The HSK demo track (a language track) leads with "Build study material" offering
+  both "Enrich vocabulary with AI" and "Generate drills"; the AWS demo track keeps
+  a single "Generate with AI"
+- Archive the HSK demo track — neither action is offered while it is archived
+
+With your own material imported (`npm run import:real`, then
+`npm run import:hsk-syllabus`, then `npm run dev`):
+
+- Run `npm run import:hsk-syllabus` a second time — every root reports "already on
+  the track, left unchanged" and no objective is duplicated
+- Open the imported HSK track — the objective tree holds the exam skills, the
+  grammar categories with their points, and the two roots titled "(unofficial)"
+- Choose "Enrich vocabulary with AI" — the page states how many cards still have
+  only a gloss; ask for a few and wait, then open an enriched card: it is at
+  revision 2, still active and still manual, the meaning you imported is unchanged,
+  and the added senses, synonyms, examples with readings, and usage note are there
+- Open revision 1 of that card — it still reads as imported, with no added detail
+- Enrich again immediately — different cards are chosen, not the same ones
+- Choose "Generate drills", target one grammar point, and ask for a few questions:
+  the drafts test the pattern with gap-fills and a "which sentence uses it
+  correctly" item, rather than asking what the pattern means
+- Target one "(unofficial)" topic instead — the drafts are set in that theme and
+  still test language, and every draft is marked `AI generated — model knowledge`
 - `http://localhost:3000/study/sessions/nope` — not-found page
 - `http://localhost:3000/study-tracks/unknown` — not-found page
 - `http://localhost:3000/study-tracks/demo-cloud-practitioner/questions/nope` —
@@ -446,6 +563,22 @@ run records the model, provider, persona id and version, template id and version
 and a SHA-256 fingerprint of the request, so a batch generated months ago can still
 be explained by the exact instructions that produced it. Your free-text
 "additional instructions" always go in the user message, never into the system
-instructions, so owner input cannot rewrite the persona's prohibitions.
+instructions, so owner input cannot rewrite the persona's prohibitions. Your bank
+content reaches the model the same way, inside its own delimited block, labelled as
+data rather than instructions — a card whose meaning field reads "ignore your
+instructions" is a card to enrich, not a rule.
+
+What kind of thing an objective is — a grammar pattern, a theme, a word list, or an
+ordinary exam domain — is **derived** from the root it descends from
+(`modules/certifications/domain/objective-kind.ts`), not stored in a column the tree
+could contradict. Which first action a track page offers is derived the same way,
+from the study type (`studyMaterialStyleFor`). Both are exhaustive switches, so a
+new study type or a new objective kind has to decide rather than falling into a
+default, and neither ever looks at a track's provider, name, or slug.
+
+Enrichment records its provenance on the **revision**, not the card: the card was
+written by you and stays yours, and one particular revision of it was written by a
+model. That is what `flashcard_revisions.generation_run_id` is for, and it is why an
+enriched card still reports itself as manual content.
 
 Detailed engineering rules live in `CLAUDE.md` and `spec/`.

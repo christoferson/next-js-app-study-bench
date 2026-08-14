@@ -4,6 +4,7 @@ import {
   CARD_TYPES,
   describeCardPrompting,
   describeCardType,
+  describeCardTypeChoice,
 } from "@/modules/flashcards/domain/flashcard";
 import type { CardType } from "@/modules/flashcards/domain/flashcard";
 import { getFlashcardFacade } from "@/modules/flashcards/composition";
@@ -64,7 +65,7 @@ export default async function NewFlashcardPage({
             <li className="card" key={candidate}>
               <h2 className="card-title">
                 <Link href={`${bankPath}/new?type=${candidate}`}>
-                  {describeCardType(candidate)}
+                  {describeCardTypeChoice(candidate)}
                 </Link>
               </h2>
               <p className="card-text">{describeCardPrompting(candidate)}</p>

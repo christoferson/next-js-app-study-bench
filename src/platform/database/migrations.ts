@@ -445,4 +445,129 @@ CREATE INDEX flashcards_generation_run_idx
   ON flashcards (generation_run_id);
 `,
   },
+  {
+    id: "0006",
+    description:
+      "ENRICH_VOCABULARY runs plus generation provenance on flashcard revisions",
+    sql: `
+-- Enrichment is a third kind of generation request: it rewrites cards the owner
+-- already has instead of writing new ones, so it needs its own item kind. The
+-- CHECK on generation_runs.item_kind has to be widened to allow it, and SQLite
+-- cannot alter a CHECK in place — the table must be rebuilt.
+--
+-- Rebuilding generation_runs has one hazard worth stating, because it silently
+-- destroys data if missed. Both questions.generation_run_id and
+-- flashcards.generation_run_id reference this table ON DELETE SET NULL, so
+-- DROP TABLE generation_runs nulls every one of them: the whole bank would
+-- forget where its generated content came from. PRAGMA foreign_keys = OFF is
+-- not a way out, because the pragma is a no-op inside a transaction and the
+-- migration runner wraps each migration in one. So the links are copied out
+-- first and written back afterwards, which keeps the rebuild inside the one
+-- transaction the runner provides.
+
+CREATE TABLE generation_link_backup (
+  item_table TEXT NOT NULL,
+  item_id TEXT NOT NULL,
+  generation_run_id TEXT NOT NULL
+) STRICT;
+
+INSERT INTO generation_link_backup (item_table, item_id, generation_run_id)
+  SELECT 'questions', id, generation_run_id
+    FROM questions WHERE generation_run_id IS NOT NULL;
+
+INSERT INTO generation_link_backup (item_table, item_id, generation_run_id)
+  SELECT 'flashcards', id, generation_run_id
+    FROM flashcards WHERE generation_run_id IS NOT NULL;
+
+-- Identical to the 0005 definition apart from the item_kind CHECK. Repeated in
+-- full rather than patched, because a rebuilt table is defined by the statement
+-- that creates it and a reader comparing the two should see the whole thing.
+CREATE TABLE generation_runs_widened (
+  id TEXT PRIMARY KEY,
+  certification_id TEXT NOT NULL
+    REFERENCES certifications (id) ON DELETE CASCADE,
+  -- ENRICH_VOCABULARY produces no new items: it appends a revision to each
+  -- vocabulary card it enriches, which is why the run's items are found through
+  -- flashcard_revisions.generation_run_id below rather than through
+  -- flashcards.generation_run_id, which stays the record of what created a card.
+  item_kind TEXT NOT NULL
+    CHECK (item_kind IN ('QUESTION', 'FLASHCARD', 'ENRICH_VOCABULARY')),
+  generation_mode TEXT NOT NULL
+    CHECK (generation_mode IN ('MANUAL', 'MODEL_KNOWLEDGE', 'SOURCE_GROUNDED',
+      'HYBRID', 'IMPORTED', 'VARIANT', 'WEB_RESEARCH')),
+  model_provider TEXT NOT NULL,
+  model_id TEXT NOT NULL,
+  persona_id TEXT NOT NULL,
+  persona_version INTEGER NOT NULL CHECK (persona_version >= 1),
+  prompt_template_id TEXT NOT NULL,
+  prompt_template_version INTEGER NOT NULL CHECK (prompt_template_version >= 1),
+  input_hash TEXT NOT NULL,
+  selected_source_snapshot_ids TEXT NOT NULL,
+  requested_item_count INTEGER NOT NULL CHECK (requested_item_count >= 1),
+  successful_item_count INTEGER NOT NULL CHECK (successful_item_count >= 0),
+  failed_item_count INTEGER NOT NULL CHECK (failed_item_count >= 0),
+  usage_metadata TEXT,
+  failure_reason TEXT,
+  started_at TEXT NOT NULL,
+  completed_at TEXT,
+  status TEXT NOT NULL
+    CHECK (status IN ('PENDING', 'COMPLETED', 'PARTIAL', 'FAILED')),
+  CHECK ((status = 'PENDING') = (completed_at IS NULL))
+) STRICT;
+
+INSERT INTO generation_runs_widened
+  SELECT id, certification_id, item_kind, generation_mode, model_provider,
+         model_id, persona_id, persona_version, prompt_template_id,
+         prompt_template_version, input_hash, selected_source_snapshot_ids,
+         requested_item_count, successful_item_count, failed_item_count,
+         usage_metadata, failure_reason, started_at, completed_at, status
+    FROM generation_runs;
+
+DROP TABLE generation_runs;
+
+ALTER TABLE generation_runs_widened RENAME TO generation_runs;
+
+CREATE INDEX generation_runs_track_idx
+  ON generation_runs (certification_id, started_at);
+
+CREATE INDEX generation_runs_input_hash_idx
+  ON generation_runs (certification_id, input_hash);
+
+-- The links the DROP nulled, restored from the backup.
+UPDATE questions
+  SET generation_run_id = (
+    SELECT b.generation_run_id FROM generation_link_backup b
+      WHERE b.item_table = 'questions' AND b.item_id = questions.id)
+  WHERE id IN (
+    SELECT item_id FROM generation_link_backup WHERE item_table = 'questions');
+
+UPDATE flashcards
+  SET generation_run_id = (
+    SELECT b.generation_run_id FROM generation_link_backup b
+      WHERE b.item_table = 'flashcards' AND b.item_id = flashcards.id)
+  WHERE id IN (
+    SELECT item_id FROM generation_link_backup WHERE item_table = 'flashcards');
+
+DROP TABLE generation_link_backup;
+
+-- Which run wrote this revision, for revisions a model produced.
+--
+-- Provenance belongs on the revision because that is what enrichment creates:
+-- the card was written by the owner and stays theirs, and one particular
+-- revision of it was written by a model. Recording the run on the card instead
+-- would overwrite how the card came to exist, and recording the card ids inside
+-- the run row is not available — usage_metadata is strictly token counts
+-- (SPEC 10.3) and selected_source_snapshot_ids means something else.
+--
+-- NULL for every revision written before this migration and for every revision
+-- the owner writes by hand, which is the truthful backfill. SET NULL for the
+-- same reason as the item columns: if a run ever goes, the revision is still
+-- the owner's content.
+ALTER TABLE flashcard_revisions ADD COLUMN generation_run_id TEXT
+  REFERENCES generation_runs (id) ON DELETE SET NULL;
+
+CREATE INDEX flashcard_revisions_generation_run_idx
+  ON flashcard_revisions (generation_run_id);
+`,
+  },
 ];

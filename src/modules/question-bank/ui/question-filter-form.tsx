@@ -1,4 +1,8 @@
 import type { Objective } from "@/modules/certifications/domain/objective";
+import {
+  describeObjectiveOption,
+  listObjectiveOptions,
+} from "@/modules/certifications/domain/objective";
 import type { QuestionFilterInput } from "@/modules/question-bank/application/schemas";
 import {
   QUESTION_LIFECYCLE_STATUSES,
@@ -94,9 +98,9 @@ export function QuestionFilterForm({
             defaultValue={filters.objective ?? ""}
           >
             <option value="">Any objective</option>
-            {objectives.map((objective) => (
-              <option key={objective.id} value={objective.id}>
-                {objectiveLabel(objective)}
+            {listObjectiveOptions(objectives).map((option) => (
+              <option key={option.objective.id} value={option.objective.id}>
+                {describeObjectiveOption(option)}
               </option>
             ))}
           </select>
@@ -115,11 +119,4 @@ export function QuestionFilterForm({
       </div>
     </form>
   );
-}
-
-function objectiveLabel(objective: Objective): string {
-  const prefix = objective.code === null ? "" : `${objective.code} — `;
-  const suffix = objective.status === "ARCHIVED" ? " (archived)" : "";
-
-  return `${prefix}${objective.title}${suffix}`;
 }

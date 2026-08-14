@@ -7,6 +7,7 @@ import {
   describeItemKind,
   describeItemKindSingular,
   describeRunStatus,
+  isFakeModelProvider,
   resolveRunStatus,
 } from "./generation-run";
 import {
@@ -64,6 +65,20 @@ describe("resolveRunStatus", () => {
     expect(
       resolveRunStatus({ successfulItemCount: 0, failedItemCount: 0 }),
     ).toBe("FAILED");
+  });
+});
+
+describe("isFakeModelProvider", () => {
+  it("recognises the built-in test provider", () => {
+    // What the fake gateway records, so a run written by it can be marked as
+    // placeholder content wherever it is shown.
+    expect(isFakeModelProvider("fake")).toBe(true);
+  });
+
+  it("treats every other provider as real", () => {
+    for (const provider of ["bedrock", "", "Fake", "fake-deterministic"]) {
+      expect(isFakeModelProvider(provider)).toBe(false);
+    }
   });
 });
 

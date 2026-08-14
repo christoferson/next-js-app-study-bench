@@ -75,6 +75,34 @@ export function describeStudyType(studyType: StudyType): string {
   }
 }
 
+/**
+ * How study material for a track is built.
+ *
+ * A language track is built from words: the bank starts as a word list, and the work
+ * is deepening those cards and drilling the patterns of the syllabus. A technical
+ * certification is built from questions: there is no word list to deepen, and the work
+ * is writing applied items. The two want different first actions on a track page.
+ *
+ * Derived from the study type through an exhaustive switch, for the same reason the
+ * persona registry is (`spec/AI-GUIDELINES.md` section 2.1): behaviour must never be
+ * chosen by looking at a track's provider, name, or slug for "HSK". A new study type
+ * has to decide here rather than falling into a default.
+ */
+export type StudyMaterialStyle = "VOCABULARY_FIRST" | "QUESTION_FIRST";
+
+export function studyMaterialStyleFor(
+  studyType: StudyType,
+): StudyMaterialStyle {
+  switch (studyType) {
+    case "LANGUAGE_PROFICIENCY":
+      return "VOCABULARY_FIRST";
+    case "TECHNICAL_CERTIFICATION":
+      return "QUESTION_FIRST";
+    case "GENERAL":
+      return "QUESTION_FIRST";
+  }
+}
+
 /** Owner-facing label for a lifecycle status. */
 export function describeLifecycleStatus(status: LifecycleStatus): string {
   switch (status) {

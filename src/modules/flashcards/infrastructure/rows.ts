@@ -52,6 +52,7 @@ export interface FlashcardRevisionRow {
   readonly notes: string | null;
   readonly tags: string;
   readonly language: string | null;
+  readonly generation_run_id: string | null;
   readonly created_at: string;
 }
 
@@ -80,42 +81,114 @@ export interface FlashcardReviewRow {
  * Persisted shape of `FlashcardContent`.
  *
  * A discriminated union in the schema too, so the stored `type` selects the
- * required fields instead of every field being optional. The nullable vocabulary
- * fields are `.nullable()` rather than `.optional()`: absent and null must not be
- * two ways of saying the same thing in stored data.
+ * required fields instead of every field being optional. The four original
+ * vocabulary fields are `.nullable()` rather than `.optional()`: absent and null
+ * must not be two ways of saying the same thing in stored data.
+ *
+ * The richer vocabulary fields *are* `.optional()`, and that difference is the
+ * whole back-compatibility story. Every payload written before they existed —
+ * including the owner's imported vocabulary bank — simply does not have the keys,
+ * and reads back unchanged as a card without them. Nothing was migrated and no
+ * stored JSON was rewritten.
  */
-const contentSchema: z.ZodType<FlashcardContent> = z.discriminatedUnion(
-  "type",
-  [
-    z.object({
-      type: z.literal("BASIC"),
-      front: z.string(),
-      back: z.string(),
-    }),
-    z.object({
-      type: z.literal("REVERSED"),
-      front: z.string(),
-      back: z.string(),
-    }),
-    z.object({
-      type: z.literal("CLOZE"),
-      text: z.string(),
-    }),
-    z.object({
-      type: z.literal("VOCABULARY"),
-      term: z.string(),
-      reading: z.string().nullable(),
-      meaning: z.string(),
-      exampleSentence: z.string().nullable(),
-    }),
-    z.object({
-      type: z.literal("SCENARIO"),
-      scenario: z.string(),
-      question: z.string(),
-      answer: z.string(),
-    }),
-  ],
-);
+const rawContentSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("BASIC"),
+    front: z.string(),
+    back: z.string(),
+  }),
+  z.object({
+    type: z.literal("REVERSED"),
+    front: z.string(),
+    back: z.string(),
+  }),
+  z.object({
+    type: z.literal("CLOZE"),
+    text: z.string(),
+  }),
+  z.object({
+    type: z.literal("VOCABULARY"),
+    term: z.string(),
+    reading: z.string().nullable(),
+    meaning: z.string(),
+    exampleSentence: z.string().nullable(),
+    meanings: z.array(z.string()).optional(),
+    synonyms: z.array(z.string()).optional(),
+    antonyms: z.array(z.string()).optional(),
+    examples: z
+      .array(
+        z.object({
+          text: z.string(),
+          reading: z.string().optional(),
+          translation: z.string().optional(),
+        }),
+      )
+      .optional(),
+    usageNotes: z.string().optional(),
+  }),
+  z.object({
+    type: z.literal("SCENARIO"),
+    scenario: z.string(),
+    question: z.string(),
+    answer: z.string(),
+  }),
+]);
+
+/**
+ * The parsed row as domain content.
+ *
+ * An explicit step rather than a direct assignment because the domain type uses
+ * optional properties under `exactOptionalPropertyTypes`, where `meanings?:
+ * readonly string[]` and `meanings: string[] | undefined` are different types. A
+ * key that was absent in the JSON stays absent here rather than becoming an
+ * explicit `undefined`, so a round trip through `serializeContent` produces the
+ * same payload it read.
+ */
+function toContent(raw: z.output<typeof rawContentSchema>): FlashcardContent {
+  switch (raw.type) {
+    case "BASIC":
+      return { type: "BASIC", front: raw.front, back: raw.back };
+    case "REVERSED":
+      return { type: "REVERSED", front: raw.front, back: raw.back };
+    case "CLOZE":
+      return { type: "CLOZE", text: raw.text };
+    case "VOCABULARY":
+      return {
+        type: "VOCABULARY",
+        term: raw.term,
+        reading: raw.reading,
+        meaning: raw.meaning,
+        exampleSentence: raw.exampleSentence,
+        ...(raw.meanings === undefined ? {} : { meanings: raw.meanings }),
+        ...(raw.synonyms === undefined ? {} : { synonyms: raw.synonyms }),
+        ...(raw.antonyms === undefined ? {} : { antonyms: raw.antonyms }),
+        ...(raw.examples === undefined
+          ? {}
+          : {
+              examples: raw.examples.map((example) => ({
+                text: example.text,
+                ...(example.reading === undefined
+                  ? {}
+                  : { reading: example.reading }),
+                ...(example.translation === undefined
+                  ? {}
+                  : { translation: example.translation }),
+              })),
+            }),
+        ...(raw.usageNotes === undefined ? {} : { usageNotes: raw.usageNotes }),
+      };
+    case "SCENARIO":
+      return {
+        type: "SCENARIO",
+        scenario: raw.scenario,
+        question: raw.question,
+        answer: raw.answer,
+      };
+  }
+}
+
+const contentSchema: z.ZodType<FlashcardContent> =
+  rawContentSchema.transform(toContent);
 
 const tagsSchema = z.array(z.string().min(1));
 
@@ -162,6 +235,7 @@ export function toFlashcardRevision(
     notes: row.notes,
     tags: parseTags(row.id, row.tags),
     language: row.language,
+    generationRunId: row.generation_run_id,
     createdAt: row.created_at,
   };
 }

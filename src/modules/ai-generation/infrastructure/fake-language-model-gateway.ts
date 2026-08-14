@@ -12,8 +12,10 @@ import type {
   GenerationFailureCategory,
   ProviderUsage,
 } from "@/modules/ai-generation/domain/generation-run";
+import { FAKE_MODEL_PROVIDER } from "@/modules/ai-generation/domain/generation-run";
 import { ProviderFailure } from "@/modules/ai-generation/domain/errors";
 import {
+  ENRICHMENT_SCHEMA_NAME,
   FLASHCARD_SCHEMA_NAME,
   QUESTION_SCHEMA_NAME,
 } from "@/modules/ai-generation/application/output-schemas";
@@ -67,6 +69,12 @@ export interface FakeLanguageModelGatewayOptions {
   readonly usage?: ProviderUsage | null;
 }
 
+/** One prompt as the gateway received it, for tests that inspect what was sent. */
+export interface SentPrompt {
+  readonly system: string;
+  readonly user: string;
+}
+
 /** Token counts reported for a synthesised response. */
 const DEFAULT_USAGE: ProviderUsage = {
   inputTokens: 420,
@@ -85,8 +93,10 @@ export class FakeLanguageModelGateway implements LanguageModelGateway {
 
   private turn = 0;
 
+  private readonly prompts: SentPrompt[] = [];
+
   constructor(options: FakeLanguageModelGatewayOptions = {}) {
-    this.provider = options.provider ?? "fake";
+    this.provider = options.provider ?? FAKE_MODEL_PROVIDER;
     this.modelId = options.modelId ?? "fake-deterministic";
     this.responses = options.responses ?? null;
     this.usage = options.usage === undefined ? DEFAULT_USAGE : options.usage;
@@ -97,9 +107,22 @@ export class FakeLanguageModelGateway implements LanguageModelGateway {
     return this.turn;
   }
 
+  /**
+   * Every prompt this gateway was sent, in order.
+   *
+   * Exposed so an application-level test can assert what actually reached the model
+   * without reaching into the template itself: rendering is covered by the template's
+   * own tests, but *that the facade passed the right context* is only observable here.
+   */
+  get promptsSent(): readonly SentPrompt[] {
+    return this.prompts;
+  }
+
   async generateStructured<Value>(
     request: StructuredGenerationRequest<Value>,
   ): Promise<StructuredGenerationResult<Value>> {
+    this.prompts.push({ system: request.system, user: request.user });
+
     const first = request.validate(this.nextPayload(request));
 
     if (first.ok) {
@@ -158,6 +181,8 @@ interface PromptFacts {
   readonly objectiveIds: readonly string[];
   readonly questionTypes: readonly QuestionType[];
   readonly cardTypes: readonly CardType[];
+  /** The words an enrichment prompt asked about, in the order they were listed. */
+  readonly enrichmentTerms: readonly string[];
 }
 
 function synthesizePayload<Value>(
@@ -170,6 +195,8 @@ function synthesizePayload<Value>(
       return { questions: synthesizeQuestions(facts) };
     case FLASHCARD_SCHEMA_NAME:
       return { flashcards: synthesizeCards(facts) };
+    case ENRICHMENT_SCHEMA_NAME:
+      return { words: synthesizeEnrichments(facts) };
     default:
       // A schema this gateway has no fixture for is a wiring mistake, not a
       // provider problem, so it is loud.
@@ -324,6 +351,52 @@ function synthesizeCards(facts: PromptFacts): readonly unknown[] {
   });
 }
 
+/**
+ * Enrichment for every word the prompt listed, echoing each term back.
+ *
+ * The echo is not decoration: matching is by term, so a fixture that invented its
+ * own words would be rejected by the same check that catches a real model drifting.
+ * That makes the fake exercise the matching path rather than bypassing it.
+ *
+ * One entry is deliberately produced per word *in the order given*, because the
+ * template asks for that and a test asserting per-card outcomes needs to know which
+ * answer belongs to which card.
+ */
+function synthesizeEnrichments(facts: PromptFacts): readonly unknown[] {
+  return facts.enrichmentTerms.map((term, index) => {
+    const position = index + 1;
+
+    return {
+      term,
+      meanings: [
+        `demo sense ${position} of ${term}`,
+        `demo secondary sense ${position}`,
+      ],
+      synonyms: [`demo-synonym-${position}`],
+      antonyms: index % 2 === 0 ? [`demo-antonym-${position}`] : [],
+      // Two examples, both containing the term, because the deterministic checks
+      // require at least two and require the word to appear in one of them.
+      examples: [
+        {
+          text: `${term}${DEMO_EXAMPLE_TAIL}${position}。`,
+          reading: `demo pinyin ${position}`,
+          translation: `Demo translation ${position} using ${term}.`,
+        },
+        {
+          text: `${DEMO_EXAMPLE_LEAD}${term}${position}。`,
+          reading: `demo pinyin ${position}b`,
+          translation: `Second demo translation ${position}.`,
+        },
+      ],
+      usageNotes: `Demo usage note ${position}, written by the fake gateway. Not a real dictionary entry.`,
+    };
+  });
+}
+
+/** Filler around a demo example, so the sentence is not just the term. */
+const DEMO_EXAMPLE_TAIL = "是这个示例里的词，编号";
+const DEMO_EXAMPLE_LEAD = "示例句子包含";
+
 /** Objectives for one item: at most one, rotating through what was offered. */
 function pickObjective(
   objectiveIds: readonly string[],
@@ -364,14 +437,40 @@ function readPrompt(user: string): PromptFacts {
     ),
     questionTypes,
     cardTypes,
+    enrichmentTerms: readEnrichmentTerms(user),
   };
 }
 
 function readCount(user: string): number {
-  const raw = matchLine(user, /^Write (\d+) (?:question|flashcard)s?\.$/m);
+  const raw = matchLine(
+    user,
+    /^(?:Write|Enrich) (\d+) (?:question|flashcard|word)s?\.$/m,
+  );
   const parsed = Number(raw ?? "");
 
   return Number.isInteger(parsed) && parsed >= 1 ? parsed : 1;
+}
+
+/**
+ * The terms inside the owner-data block, one per line.
+ *
+ * Read from the delimited block rather than from anywhere in the message, so a term
+ * that happens to appear in the owner's notes is not mistaken for a word to enrich.
+ * Each line is `term | reading | meaning`, and only the first field is the word.
+ */
+function readEnrichmentTerms(user: string): readonly string[] {
+  const block = /<owner_vocabulary>\n([\s\S]*?)\n<\/owner_vocabulary>/.exec(
+    user,
+  )?.[1];
+
+  if (block === undefined) {
+    return [];
+  }
+
+  return block
+    .split("\n")
+    .map((line) => (line.split("|")[0] ?? "").trim())
+    .filter((term) => term.length > 0);
 }
 
 function matchLine(user: string, pattern: RegExp): string | null {

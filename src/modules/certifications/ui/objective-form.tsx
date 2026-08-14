@@ -8,7 +8,9 @@ import type {
 } from "@/modules/certifications/domain/objective";
 import {
   SELECTABLE_OBJECTIVE_SOURCE_TYPES,
+  describeObjectiveOption,
   describeObjectiveSourceType,
+  listObjectiveOptions,
 } from "@/modules/certifications/domain/objective";
 import { FieldErrors } from "./field-errors";
 import type { FormState } from "./form-state";
@@ -160,9 +162,9 @@ export function ObjectiveForm({
           aria-invalid={parentErrors !== undefined}
         >
           <option value="">No parent — top level</option>
-          {parentCandidates.map((candidate) => (
-            <option key={candidate.id} value={candidate.id}>
-              {parentLabel(candidate)}
+          {listObjectiveOptions(parentCandidates).map((option) => (
+            <option key={option.objective.id} value={option.objective.id}>
+              {describeObjectiveOption(option)}
             </option>
           ))}
         </select>
@@ -245,11 +247,4 @@ export function ObjectiveForm({
       </div>
     </form>
   );
-}
-
-function parentLabel(objective: Objective): string {
-  const prefix = objective.code === null ? "" : `${objective.code} — `;
-  const suffix = objective.status === "ARCHIVED" ? " (archived)" : "";
-
-  return `${prefix}${objective.title}${suffix}`;
 }

@@ -14,6 +14,7 @@ import { CARD_TYPES } from "@/modules/flashcards/domain/flashcard";
 import { GENERATED_ITEM_KINDS } from "@/modules/ai-generation/domain/generation-run";
 import {
   MAX_BATCH_ITEMS,
+  MAX_ENRICHMENT_ITEMS,
   MIN_BATCH_ITEMS,
 } from "@/modules/ai-generation/domain/generation-limits";
 
@@ -44,7 +45,7 @@ const ADDITIONAL_INSTRUCTIONS_LIMIT = 1000;
 
 export const itemKindSchema = enumOf(
   GENERATED_ITEM_KINDS,
-  "Choose whether to generate questions or flashcards.",
+  "Choose what to generate.",
 );
 
 /**
@@ -135,6 +136,30 @@ export const generationRequestSchema = z.object({
 });
 
 export type GenerationRequestInput = z.output<typeof generationRequestSchema>;
+
+/**
+ * One vocabulary-enrichment request.
+ *
+ * Its own schema rather than a variant of `generationRequestSchema`, because almost
+ * nothing carries over: enrichment chooses no objective, no difficulty, and no
+ * content type — the cards it works on are chosen by the bank's own order, not by
+ * the owner. What is left is how many to do and whether to proceed after a duplicate
+ * notice.
+ *
+ * `count` is bounded by the enrichment cap rather than the batch limit, for the
+ * reason `MAX_ENRICHMENT_ITEMS` documents.
+ */
+export const enrichmentRequestSchema = z.object({
+  count: integerInRange({
+    message: `Enrich between ${MIN_BATCH_ITEMS} and ${MAX_ENRICHMENT_ITEMS} cards.`,
+    min: MIN_BATCH_ITEMS,
+    max: MAX_ENRICHMENT_ITEMS,
+  }),
+  additionalInstructions: optionalText(ADDITIONAL_INSTRUCTIONS_LIMIT),
+  generateAnyway: confirmationSchema,
+});
+
+export type EnrichmentRequestInput = z.output<typeof enrichmentRequestSchema>;
 
 /** Rejecting one generated draft from the run review screen. */
 export const rejectDraftSchema = z.object({

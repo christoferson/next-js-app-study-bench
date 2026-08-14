@@ -7,6 +7,8 @@ import {
   SLUG_FALLBACK,
   slugify,
   slugWithSuffix,
+  STUDY_TYPES,
+  studyMaterialStyleFor,
 } from "./certification";
 
 describe("slugify", () => {
@@ -58,6 +60,27 @@ describe("isReservedSlug", () => {
   it("reserves slugs that collide with a static route segment", () => {
     expect(isReservedSlug("new")).toBe(true);
     expect(isReservedSlug("aws-track")).toBe(false);
+  });
+});
+
+describe("studyMaterialStyleFor", () => {
+  it("builds a language track from its vocabulary", () => {
+    expect(studyMaterialStyleFor("LANGUAGE_PROFICIENCY")).toBe(
+      "VOCABULARY_FIRST",
+    );
+  });
+
+  it("builds a certification and a general track from questions", () => {
+    expect(studyMaterialStyleFor("TECHNICAL_CERTIFICATION")).toBe(
+      "QUESTION_FIRST",
+    );
+    expect(studyMaterialStyleFor("GENERAL")).toBe("QUESTION_FIRST");
+  });
+
+  it("decides for every study type", () => {
+    for (const studyType of STUDY_TYPES) {
+      expect(studyMaterialStyleFor(studyType)).toMatch(/_FIRST$/);
+    }
   });
 });
 

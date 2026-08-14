@@ -62,8 +62,34 @@ export const FLASHCARD_LIFECYCLE_STATUSES: readonly FlashcardLifecycleStatus[] =
  *
  * `CLOZE` keeps one text containing `{{...}}` deletions rather than a separate
  * front and back: the two faces are derived from the same sentence, so storing
- * them apart would allow them to disagree.
+ * them apart would allow them to disagree. A deletion may carry a hint after a
+ * `|`, as in `{{答案|the hint}}`, which is shown beside the blank.
+ *
+ * The richer `VOCABULARY` fields are **optional and additive**. A card written
+ * before they existed carries `term`, `reading`, `meaning`, and
+ * `exampleSentence` only, and stays valid unchanged: the new fields are absent
+ * rather than empty, so nothing had to be migrated and no stored payload was
+ * rewritten. `meaning` remains the primary gloss and the only required one.
  */
+/**
+ * One worked example on a vocabulary card.
+ *
+ * The fields are named for their role rather than for one language — `text`,
+ * `reading`, `translation` rather than hanzi, pinyin, English — because the card
+ * type is shared by every track. The HSK bank fills them with hanzi, pinyin, and
+ * an English gloss; a card in another track fills the same three roles with its
+ * own script. `reading` matches the name the card already uses for the term's
+ * pronunciation, so the two cannot be confused for different concepts.
+ */
+export interface VocabularyExample {
+  /** The sentence in the language being learned. */
+  readonly text: string;
+  /** Pronunciation of the sentence, when the language uses one. */
+  readonly reading?: string;
+  /** The sentence in the owner's own language. */
+  readonly translation?: string;
+}
+
 export type FlashcardContent =
   | {
       readonly type: "BASIC";
@@ -78,7 +104,12 @@ export type FlashcardContent =
     }
   | {
       readonly type: "CLOZE";
-      /** Sentence with one or more `{{deleted}}` sections. */
+      /**
+       * Sentence with one or more `{{deleted}}` sections.
+       *
+       * A deletion may name a hint after a `|`: `{{答案|the first character}}`
+       * blanks out `答案` and offers "the first character" beside the blank.
+       */
       readonly text: string;
     }
   | {
@@ -86,8 +117,30 @@ export type FlashcardContent =
       readonly term: string;
       /** Pronunciation such as pinyin. Optional: not every language needs one. */
       readonly reading: string | null;
+      /** The primary gloss, always present. */
       readonly meaning: string;
+      /**
+       * The first example, kept for cards written before `examples` existed.
+       *
+       * Still writable by hand, and still rendered. When both this and `examples`
+       * are present both are shown, this one first: it is the example the owner
+       * or the importer chose, and enrichment adds to a card rather than
+       * replacing what was already there.
+       */
       readonly exampleSentence: string | null;
+      /**
+       * Further senses beyond `meaning`, most common first.
+       *
+       * Separate from `meaning` rather than replacing it so a card enriched with
+       * five senses still has one primary gloss for a list row and a card face.
+       */
+      readonly meanings?: readonly string[];
+      readonly synonyms?: readonly string[];
+      readonly antonyms?: readonly string[];
+      /** Worked examples, each with its own reading and translation. */
+      readonly examples?: readonly VocabularyExample[];
+      /** Register, collocation, or usage warnings, as a short paragraph. */
+      readonly usageNotes?: string;
     }
   | {
       readonly type: "SCENARIO";
@@ -117,6 +170,17 @@ export interface FlashcardRevision {
   readonly tags: readonly string[];
   /** BCP-47-style tag such as `en` or `zh`, when the owner records one. */
   readonly language: string | null;
+  /**
+   * The generation run that wrote *this revision*, or `null` when the owner did.
+   *
+   * Distinct from `Flashcard.generationRunId`, which records what created the
+   * card. The two answer different questions and a card can have both answers at
+   * once: an enrichment run appends a revision to a card the owner wrote by hand,
+   * so the card stays `MANUAL` with no run, while the revision names the run that
+   * produced its text. Recording the run only on the root would have to overwrite
+   * how the card came to exist, which is provenance that lies.
+   */
+  readonly generationRunId: string | null;
   readonly createdAt: IsoTimestamp;
 }
 
@@ -167,6 +231,14 @@ export interface FlashcardWithHistory {
   readonly objectiveIds: readonly ObjectiveId[];
 }
 
+/**
+ * The type's name on its own.
+ *
+ * One word, because this is what goes inside a sentence ("a basic card"), inside a
+ * badge, and inside the rendered prompt that tells a model which types it may write.
+ * Anything longer is a label rather than a name, which is what `describeCardShape`
+ * and `describeCardTypeChoice` below are for.
+ */
 export function describeCardType(cardType: CardType): string {
   switch (cardType) {
     case "BASIC":
@@ -182,7 +254,45 @@ export function describeCardType(cardType: CardType): string {
   }
 }
 
-/** Owner-facing description of how the type is studied. */
+/**
+ * What the card looks like, in a few words.
+ *
+ * "Reversed" and "Cloze" mean nothing on their own, and a name the owner has to
+ * remember the meaning of is a name they will pick wrong from a dropdown. This is the
+ * compact form that fits inside an option label, next to the name; it is deliberately
+ * shorter than `describeCardPrompting`, which is a full sentence for a hint or a
+ * chooser row where there is room to explain.
+ *
+ * The arrow reads as "prompts": front → back is asked front-first.
+ */
+export function describeCardShape(cardType: CardType): string {
+  switch (cardType) {
+    case "BASIC":
+      return "front → back";
+    case "REVERSED":
+      return "back → front";
+    case "CLOZE":
+      return "fill in the blank";
+    case "VOCABULARY":
+      return "term / reading / meaning";
+    case "SCENARIO":
+      return "situation → response";
+  }
+}
+
+/**
+ * The type as an option to choose from: `Basic (front → back)`.
+ *
+ * The one label used by every select, checkbox list, and type chooser, so a card type
+ * cannot be named one way in the bank filter and another in the generate form. Built
+ * from the two helpers above rather than written out again, so there is a single
+ * spelling of each name and each shape.
+ */
+export function describeCardTypeChoice(cardType: CardType): string {
+  return `${describeCardType(cardType)} (${describeCardShape(cardType)})`;
+}
+
+/** Owner-facing description of how the type is studied, as a full sentence. */
 export function describeCardPrompting(cardType: CardType): string {
   switch (cardType) {
     case "BASIC":

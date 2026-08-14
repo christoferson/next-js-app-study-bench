@@ -188,15 +188,15 @@ export class SqliteGenerationRunRepository implements GenerationRunRepository {
       throw new GenerationRunNotFoundError(id);
     }
 
-    const table = tableFor(run.itemKind);
+    const source = itemSourceFor(run.itemKind);
     const row = this.database
       .prepare(
         `SELECT
            COUNT(*) AS total,
            SUM(CASE WHEN lifecycle_status = 'DRAFT' THEN 1 ELSE 0 END) AS draft,
            SUM(CASE WHEN lifecycle_status = 'ACTIVE' THEN 1 ELSE 0 END) AS active
-         FROM ${table}
-         WHERE generation_run_id = ?`,
+         FROM ${source.table}
+         WHERE ${source.condition}`,
       )
       .get(id) as {
       readonly total: number;
@@ -219,11 +219,11 @@ export class SqliteGenerationRunRepository implements GenerationRunRepository {
       throw new GenerationRunNotFoundError(id);
     }
 
-    const table = tableFor(run.itemKind);
+    const source = itemSourceFor(run.itemKind);
     const rows = this.database
       .prepare(
-        `SELECT id FROM ${table}
-         WHERE generation_run_id = ?
+        `SELECT id FROM ${source.table}
+         WHERE ${source.condition}
          ORDER BY created_at ASC, id ASC`,
       )
       .all(id) as { readonly id: string }[];
@@ -233,16 +233,33 @@ export class SqliteGenerationRunRepository implements GenerationRunRepository {
 }
 
 /**
- * The bank table a run's items live in.
+ * Where a run's items are found: the bank table, and how a row belongs to the run.
  *
- * Exhaustive over the item kind and returning a fixed literal, so the table name
- * interpolated into the statements above can only ever be one of two constants.
+ * Both halves are fixed literals chosen by an exhaustive switch, so the strings
+ * interpolated into the statements above can only ever be one of three constant
+ * pairs and no caller value reaches the SQL text.
+ *
+ * The third pair is the interesting one. An enrichment run creates no cards, so
+ * `flashcards.generation_run_id` does not name it — that column still records what
+ * *created* each card. The run's mark is on the revisions it appended, so the cards
+ * it touched are reached through those. Every column the two queries need
+ * (`id`, `created_at`, `lifecycle_status`) is on `flashcards` either way, which is
+ * why the subquery form fits both without a second shape.
  */
-function tableFor(kind: GeneratedItemKind): "questions" | "flashcards" {
+function itemSourceFor(kind: GeneratedItemKind): {
+  readonly table: "questions" | "flashcards";
+  readonly condition: string;
+} {
   switch (kind) {
     case "QUESTION":
-      return "questions";
+      return { table: "questions", condition: "generation_run_id = ?" };
     case "FLASHCARD":
-      return "flashcards";
+      return { table: "flashcards", condition: "generation_run_id = ?" };
+    case "ENRICH_VOCABULARY":
+      return {
+        table: "flashcards",
+        condition: `id IN (SELECT flashcard_id FROM flashcard_revisions
+             WHERE generation_run_id = ?)`,
+      };
   }
 }

@@ -92,6 +92,26 @@ describe("AnswerForm", () => {
       expect(screen.getByText("Required")).toBeVisible();
     });
 
+    it("labels each choice with the letter it is presented under", () => {
+      // The letters make an answer discussable — "I picked b" — and they are what the
+      // feedback panel names afterwards. They are derived from the position, so the
+      // submitted value is still the stored choice id.
+      renderAnswerForm();
+
+      const choices = screen.getAllByRole("radio", { name: /^[ab]\. Amazon/ });
+
+      expect(choices.map((choice) => choice.getAttribute("value"))).toEqual([
+        "choice-1",
+        "choice-2",
+      ]);
+      expect(
+        screen.getByRole("radio", { name: "a. Amazon S3" }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("radio", { name: "b. Amazon EBS" }),
+      ).toBeInTheDocument();
+    });
+
     it("offers all four confidence levels with what they mean", () => {
       renderAnswerForm();
 
@@ -178,8 +198,12 @@ describe("AnswerForm", () => {
 
       const user = userEvent.setup();
 
-      await user.click(screen.getByRole("checkbox", { name: "Durability" }));
-      await user.click(screen.getByRole("checkbox", { name: "Availability" }));
+      // The accessible name now begins with the choice's letter, which is what the
+      // owner reads out and what the feedback panel refers back to.
+      await user.click(screen.getByRole("checkbox", { name: "a. Durability" }));
+      await user.click(
+        screen.getByRole("checkbox", { name: "b. Availability" }),
+      );
       await user.click(screen.getByRole("radio", { name: /Confident/ }));
       await user.click(screen.getByRole("button", { name: /submit answer/i }));
 

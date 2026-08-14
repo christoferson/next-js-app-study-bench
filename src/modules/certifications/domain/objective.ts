@@ -123,6 +123,62 @@ export function buildObjectiveTree(
   return build(null, 0);
 }
 
+/** One objective in hierarchy order, carrying the depth it was found at. */
+export interface ObjectiveOption {
+  readonly objective: Objective;
+  readonly depth: number;
+}
+
+/**
+ * Every objective in hierarchy order: each root followed by its own descendants.
+ *
+ * This is the one ordering used by every select and checkbox list that offers
+ * objectives, and it is deliberately expressed as a flattening of
+ * `buildObjectiveTree` rather than a second sort. The tree view on the track page and
+ * the option lists therefore cannot disagree about what order the objectives are in,
+ * and a change to sibling order changes both.
+ */
+export function listObjectiveOptions(
+  objectives: readonly Objective[],
+): readonly ObjectiveOption[] {
+  return flatten(buildObjectiveTree(objectives));
+}
+
+function flatten(
+  nodes: readonly ObjectiveTreeNode[],
+): readonly ObjectiveOption[] {
+  return nodes.flatMap((node) => [
+    { objective: node.objective, depth: node.depth },
+    ...flatten(node.children),
+  ]);
+}
+
+/**
+ * One level of indent inside an option label.
+ *
+ * Two non-breaking spaces, written as escapes so the invisible characters are
+ * legible in source.
+ */
+const OPTION_INDENT = "\u00a0\u00a0";
+
+/**
+ * One option's label: its depth, its code, its title, and whether it is archived.
+ *
+ * Indented with two non-breaking spaces per level. Non-breaking rather than
+ * ordinary spaces because browsers collapse leading whitespace inside an `option`,
+ * and an `option` cannot be indented with CSS in a way they agree on. The indent is
+ * decoration only: accessible-name computation collapses U+00A0 as whitespace, so a
+ * screen reader still announces the code and the title.
+ */
+export function describeObjectiveOption(option: ObjectiveOption): string {
+  const indent = OPTION_INDENT.repeat(option.depth);
+  const prefix =
+    option.objective.code === null ? "" : `${option.objective.code} — `;
+  const suffix = option.objective.status === "ARCHIVED" ? " (archived)" : "";
+
+  return `${indent}${prefix}${option.objective.title}${suffix}`;
+}
+
 function sortSiblings(objectives: readonly Objective[]): readonly Objective[] {
   return [...objectives].sort(
     (left, right) =>

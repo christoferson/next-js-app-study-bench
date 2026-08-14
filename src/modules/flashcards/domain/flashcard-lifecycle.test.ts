@@ -5,7 +5,9 @@ import {
   CARD_TYPES,
   FLASHCARD_LIFECYCLE_STATUSES,
   describeCardPrompting,
+  describeCardShape,
   describeCardType,
+  describeCardTypeChoice,
   describeFlashcardLifecycleStatus,
   textExcerpt,
 } from "./flashcard";
@@ -114,6 +116,37 @@ describe("descriptions", () => {
     for (const cardType of CARD_TYPES) {
       expect(describeCardType(cardType).length).toBeGreaterThan(0);
       expect(describeCardPrompting(cardType).length).toBeGreaterThan(0);
+    }
+  });
+
+  it("labels every card type with what it does, not only its name", () => {
+    // "Cloze" and "Reversed" are terms of art. A dropdown of five of them is a
+    // guess, so the shape travels with the name everywhere a type is chosen.
+    expect(CARD_TYPES.map(describeCardTypeChoice)).toEqual([
+      "Basic (front → back)",
+      "Reversed (back → front)",
+      "Cloze (fill in the blank)",
+      "Vocabulary (term / reading / meaning)",
+      "Scenario (situation → response)",
+    ]);
+  });
+
+  it("builds the choice label from the name and the shape", () => {
+    // One spelling of each name, so a badge and an option cannot disagree.
+    for (const cardType of CARD_TYPES) {
+      expect(describeCardTypeChoice(cardType)).toBe(
+        `${describeCardType(cardType)} (${describeCardShape(cardType)})`,
+      );
+    }
+  });
+
+  it("keeps the shape shorter than the sentence that explains it", () => {
+    // The shape goes inside an option label; the prompting sentence goes in a hint
+    // where there is room for it.
+    for (const cardType of CARD_TYPES) {
+      expect(describeCardShape(cardType).length).toBeLessThan(
+        describeCardPrompting(cardType).length,
+      );
     }
   });
 

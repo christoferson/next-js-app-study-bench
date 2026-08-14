@@ -6,6 +6,7 @@ import {
   describeRunStatus,
 } from "@/modules/ai-generation/domain/generation-run";
 import { requestGenerationAction } from "@/modules/ai-generation/ui/actions";
+import { FakeProviderNotice } from "@/modules/ai-generation/ui/fake-provider-notice";
 import { GenerationForm } from "@/modules/ai-generation/ui/generation-form";
 
 interface GeneratePageProps {
@@ -60,6 +61,10 @@ export default async function GeneratePage({
           reject. Nothing generated here is official exam material, and no
           source is consulted.
         </p>
+        {/* Above the form rather than beside the model name in it: whether the
+            output will be real is the first thing to know about this page, and the
+            provenance line at the bottom is read after a decision, not before. */}
+        <FakeProviderNotice provider={view.modelProvider} subject="upcoming" />
         <div className="section-actions">
           <Link className="button-quiet" href={`${trackPath}/generation-runs`}>
             Past runs

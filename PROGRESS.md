@@ -259,6 +259,47 @@ Completed on 2026-08-12. Awaiting explicit authorization for D7.
   (`src/seed/composition.ts`) because module composition roots import
   `server-only`, which plain `tsx` cannot resolve; dropping that marker from
   app roots would weaken client/server isolation.
+- 2026-08-12 (post-D6, user-authorized, not a milestone): Real-content
+  import tooling (`npm run import:real`, `src/import/`). Parses the owner's
+  AWS AIP-C01 exam guide and HSK 5 vocabulary list from the git-ignored
+  `external/sources/` directory at runtime (no copyrighted content in the
+  repo; parser tests use synthetic fixtures). Created track
+  `aws-certified-generative-ai-developer-professional` (5 weighted domains +
+  20 tasks, OFFICIAL_SYLLABUS) and track `hsk-5-chinese` (1,600 ACTIVE
+  vocabulary cards, IMPORTED). Kangxi-radical and ligature normalization
+  handled in `text-normalization.ts`.
+- 2026-08-13 (post-D6 "Batch A", user-authorized, not a milestone): UI
+  polish per owner feedback — fake-provider notice on generation pages
+  (provider name from composition/run provenance), a/b/c/d choice letters
+  (presentational only), compact per-choice ✓/✗ answer feedback replacing
+  the boxy layout (tokens `--color-correct`/`--color-incorrect`, glyphs not
+  color-only), tree-ordered indented objective selects via
+  `listObjectiveOptions` (single ordering source), clearer card-type labels
+  via `describeCardTypeChoice`. Plus 5 live Bedrock starter runs: 3
+  questions per real AWS domain (15 drafts, ~16.6k tokens).
+- 2026-08-13 (post-D6 "Batch B", user-authorized, not a milestone): HSK
+  syllabus import (`npm run import:hsk-syllabus`): 117 new objectives on
+  `hsk-5-chinese` — Listening/Reading/Writing exam-part structure and 70
+  official grammar points (OFFICIAL_SYLLABUS), 9 topics + 12 language tasks
+  from an unofficial compilation (AI_PROPOSED, "(unofficial)" in titles).
+  VOCABULARY card content gained optional meanings[], synonyms[],
+  antonyms[], examples[] (hanzi/pinyin/english), usageNotes; CLOZE gained
+  optional per-blank hints (`{{answer|hint}}`) — all additive, old payloads
+  valid, no data migration. New ENRICH_VOCABULARY generation kind: enriching
+  creates a new card revision (card stays ACTIVE/MANUAL; the revision
+  carries the run id via new `flashcard_revisions.generation_run_id`,
+  migration `0006`, which also widens the run-kind CHECK with a careful
+  table rebuild preserving provenance links). HSK drill generation is
+  objective-kind aware (grammar patterns fed into prompts; templates bumped
+  to v2, `vocabulary-enrichment` v1 added). Language-proficiency track pages
+  lead with "Build study material" entry points. Pilot: first 100 words
+  enriched (93 succeeded, ~48.7k tokens; 7 rejected — numbered homograph
+  terms like `本2` cannot pass the example-uses-the-word check, fix deferred
+  to import normalization) plus 2 drill runs (10 drafts).
+- Known deferred items: ORDERING question type (needed for HSK Writing
+  Part 1 word-ordering drills), homograph numbering normalization at import,
+  enrichment of the remaining ~1,500 vocabulary words pending owner quality
+  review of the pilot.
 
 ## Deviations
 

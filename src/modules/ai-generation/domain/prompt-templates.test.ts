@@ -208,11 +208,25 @@ describe("prompt template identifiers", () => {
     expect(templateIdForItemKind("ENRICH_VOCABULARY")).toBe(
       "vocabulary-enrichment",
     );
-    // Version 2 of the two composing templates: they gained the objective detail
-    // block and the drill instructions. Enrichment is untouched, so it stays at 1.
+    // Question v2: gained the objective detail block and drill instructions.
+    // Flashcard v3: cards get the persona's card guidance rather than its question
+    // guidance — v2's shared guidance produced exam-question scenarios on card
+    // fronts. Enrichment is untouched, so it stays at 1.
     expect(templateVersionForItemKind("QUESTION")).toBe(2);
-    expect(templateVersionForItemKind("FLASHCARD")).toBe(2);
+    expect(templateVersionForItemKind("FLASHCARD")).toBe(3);
     expect(templateVersionForItemKind("ENRICH_VOCABULARY")).toBe(1);
+  });
+
+  it("gives flashcards card guidance, never the question guidance", () => {
+    const flashcard = renderPrompt("FLASHCARD", context(AWS_PERSONA));
+
+    // The card rules that keep a front short and recall-shaped.
+    expect(flashcard.system).toContain("one short recall prompt");
+    expect(flashcard.system).toContain("Never a scenario paragraph");
+    // The question-only instructions that, on a card, produced three-paragraph
+    // exam questions in disguise.
+    expect(flashcard.system).not.toContain("best next action");
+    expect(flashcard.system).not.toContain("distractors");
   });
 
   it("renders the identifier and version it will be recorded under", () => {

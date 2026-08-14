@@ -12,6 +12,7 @@ import {
   slugWithSuffix,
 } from "@/modules/certifications/domain/certification";
 import {
+  CertificationNotArchivedError,
   CertificationNotFoundError,
   ObjectiveNotFoundError,
   SlugConflictError,
@@ -207,6 +208,27 @@ export class CertificationFacade {
     await this.deps.certifications.restore(id, this.deps.clock.now());
 
     return this.requireCertification(id);
+  }
+
+  /**
+   * Permanently removes an archived track and all of its data — objectives,
+   * bank content, revisions, reviews, sessions, attempts, generation runs.
+   *
+   * Unconditional once archived, by owner decision (2026-08-14): study history
+   * does not block deletion; the owner wants a purged track gone "as if it
+   * never existed." Archive-first is the whole safety mechanism: an active
+   * track cannot be deleted, so deletion is always a two-step act.
+   */
+  async deleteCertification(id: CertificationId): Promise<void> {
+    const certification = await this.requireCertification(id);
+
+    if (certification.status !== "ARCHIVED") {
+      throw new CertificationNotArchivedError(id);
+    }
+
+    await this.deps.unitOfWork.transaction(async ({ certifications }) => {
+      await certifications.purge(id);
+    });
   }
 
   async findNewObjectiveForm(

@@ -24,4 +24,13 @@ export interface CertificationRepository {
   save(certification: Certification): Promise<void>;
   archive(id: CertificationId, occurredAt: IsoTimestamp): Promise<void>;
   restore(id: CertificationId, occurredAt: IsoTimestamp): Promise<void>;
+  /**
+   * Removes the track and everything that ever referenced it — objectives,
+   * questions and their revisions, flashcards and their revisions and reviews,
+   * schedules, generation runs, and every study session that included the track
+   * with its items and attempts. Unconditional by owner decision (2026-08-14):
+   * "all data including all related data clean and purged of the system as if
+   * they never existed." One transaction; the caller guards on archived status.
+   */
+  purge(id: CertificationId): Promise<void>;
 }

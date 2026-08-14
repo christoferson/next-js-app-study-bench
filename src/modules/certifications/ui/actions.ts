@@ -134,6 +134,19 @@ export async function restoreCertificationAction(
   revalidatePath(trackPath(certification.slug));
 }
 
+/**
+ * Permanent, unconditional removal of an archived track and everything in it.
+ * The facade refuses active tracks; the two-step archive-then-delete is the
+ * confirmation. Revalidates the dashboard only — every track page is gone.
+ */
+export async function deleteCertificationAction(form: FormData): Promise<void> {
+  await getCertificationFacade().deleteCertification(
+    readString(form, "certificationId"),
+  );
+
+  revalidatePath(TRACKS_PATH);
+}
+
 export async function createObjectiveAction(
   _state: FormState,
   form: FormData,

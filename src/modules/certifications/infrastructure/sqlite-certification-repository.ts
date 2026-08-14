@@ -99,6 +99,82 @@ export class SqliteCertificationRepository implements CertificationRepository {
     this.setStatus(id, "ACTIVE", occurredAt);
   }
 
+  /**
+   * Everything the track ever touched, removed in RESTRICT-safe order.
+   *
+   * Sessions that *included* the track go entirely — a session is one study
+   * event, and half a study event referencing deleted revisions would violate
+   * historical integrity worse than removing the record outright. That is the
+   * owner's explicit instruction: purged "as if they never existed."
+   *
+   * Order: attempts and session items cannot outlive their session (CASCADE),
+   * but sessions must go before questions and cards because items RESTRICT on
+   * both. Reviews and schedules RESTRICT on revisions, so they go before cards.
+   * Current-revision pointers are cleared before revisions (RESTRICT), mirroring
+   * the question repository's delete. Audio assets are keyed by spoken text, not
+   * by entity, and are managed on /settings/audio — they are not touched here.
+   */
+  async purge(id: CertificationId): Promise<void> {
+    const run = (sql: string): void => {
+      this.database.prepare(sql).run({ id });
+    };
+
+    run(
+      `DELETE FROM study_sessions WHERE id IN
+         (SELECT session_id FROM session_certifications WHERE certification_id = :id)`,
+    );
+    run(
+      `DELETE FROM flashcard_reviews WHERE flashcard_id IN
+         (SELECT id FROM flashcards WHERE certification_id = :id)`,
+    );
+    run(
+      `DELETE FROM review_schedules WHERE flashcard_id IN
+         (SELECT id FROM flashcards WHERE certification_id = :id)`,
+    );
+    run(
+      `UPDATE flashcards SET current_revision_id = NULL WHERE certification_id = :id`,
+    );
+    run(
+      `DELETE FROM flashcard_revisions WHERE flashcard_id IN
+         (SELECT id FROM flashcards WHERE certification_id = :id)`,
+    );
+    run(`DELETE FROM flashcards WHERE certification_id = :id`);
+    run(
+      `UPDATE questions SET current_revision_id = NULL WHERE certification_id = :id`,
+    );
+    run(
+      `DELETE FROM question_revisions WHERE question_id IN
+         (SELECT id FROM questions WHERE certification_id = :id)`,
+    );
+    run(`DELETE FROM questions WHERE certification_id = :id`);
+    run(`DELETE FROM generation_runs WHERE certification_id = :id`);
+    // Children before parents: the self-referencing FK is RESTRICT. Deepest
+    // trees first via recursive depth ordering is overkill for SQLite — repeated
+    // leaf deletion is simpler and bounded by tree depth.
+    let deleted = 1;
+
+    while (deleted > 0) {
+      deleted = this.database
+        .prepare(
+          `DELETE FROM certification_objectives
+           WHERE certification_id = :id
+             AND id NOT IN (
+               SELECT parent_objective_id FROM certification_objectives
+               WHERE certification_id = :id AND parent_objective_id IS NOT NULL
+             )`,
+        )
+        .run({ id }).changes;
+    }
+
+    const result = this.database
+      .prepare(`DELETE FROM certifications WHERE id = ?`)
+      .run(id);
+
+    if (result.changes === 0) {
+      throw new CertificationNotFoundError(id);
+    }
+  }
+
   private listByStatus(status: "ACTIVE" | "ARCHIVED"): Certification[] {
     const rows = this.database
       .prepare(

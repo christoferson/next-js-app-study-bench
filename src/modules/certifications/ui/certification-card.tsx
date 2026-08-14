@@ -2,7 +2,10 @@ import Link from "next/link";
 import type { Certification } from "@/modules/certifications/domain/certification";
 import { CertificationMeta } from "./certification-meta";
 import { OriginBadge } from "./origin-badge";
-import { restoreCertificationAction } from "./actions";
+import {
+  deleteCertificationAction,
+  restoreCertificationAction,
+} from "./actions";
 
 interface CertificationCardProps {
   readonly certification: Certification;
@@ -31,8 +34,11 @@ export function CertificationCard({ certification }: CertificationCardProps) {
 /**
  * Dashboard list entry for an archived study track.
  *
- * Archived tracks are labelled and offer restore. They are not linked to their
- * detail page from here; restoring first keeps the archived state unambiguous.
+ * Archived tracks are labelled and offer restore, or permanent deletion. They
+ * are not linked to their detail page from here; restoring first keeps the
+ * archived state unambiguous. Deletion is unconditional (owner decision,
+ * 2026-08-14): archiving first is the confirmation step, and the button says
+ * plainly that everything goes.
  */
 export function ArchivedCertificationCard({
   certification,
@@ -45,21 +51,38 @@ export function ArchivedCertificationCard({
         <OriginBadge origin={certification.origin} />
       </div>
       <CertificationMeta certification={certification} />
-      <form action={restoreCertificationAction} className="inline-form">
-        <input
-          type="hidden"
-          name="certificationId"
-          value={certification.id}
-          readOnly
-        />
-        <button
-          type="submit"
-          className="button-quiet"
-          aria-label={`Restore ${certification.name}`}
-        >
-          Restore
-        </button>
-      </form>
+      <div className="section-actions">
+        <form action={restoreCertificationAction} className="inline-form">
+          <input
+            type="hidden"
+            name="certificationId"
+            value={certification.id}
+            readOnly
+          />
+          <button
+            type="submit"
+            className="button-quiet"
+            aria-label={`Restore ${certification.name}`}
+          >
+            Restore
+          </button>
+        </form>
+        <form action={deleteCertificationAction} className="inline-form">
+          <input
+            type="hidden"
+            name="certificationId"
+            value={certification.id}
+            readOnly
+          />
+          <button
+            type="submit"
+            className="button-danger"
+            aria-label={`Delete ${certification.name} and all of its study data permanently`}
+          >
+            Delete permanently
+          </button>
+        </form>
+      </div>
     </li>
   );
 }

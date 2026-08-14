@@ -111,7 +111,10 @@ export interface PromptContext {
  * so leaving it at 1 would make a v2 rendering indistinguishable from a v1 one.
  */
 const QUESTION_TEMPLATE_VERSION = 2;
-const FLASHCARD_TEMPLATE_VERSION = 2;
+// v3: flashcards get the persona's card guidance instead of its question guidance.
+// v2 fed both kinds the same scenario-and-distractor instructions, and the technical
+// persona obliged by writing three-paragraph exam questions onto card fronts.
+const FLASHCARD_TEMPLATE_VERSION = 3;
 
 /**
  * How much of one objective's description is sent.
@@ -277,8 +280,8 @@ function renderFlashcardPrompt(context: PromptContext): RenderedPrompt {
       "",
       "You are writing flashcards for one person's private study bank. A flashcard prompts recall of a single fact, term, or decision. It is a study aid you are composing now from your own knowledge, and must never be presented as exam material.",
       "",
-      "How to write for this subject:",
-      ...bullets(persona.guidance),
+      "How to write flashcards for this subject:",
+      ...bullets(persona.cardGuidance),
       "",
       "You must not:",
       ...bullets(persona.prohibitions),

@@ -59,6 +59,111 @@ function flatten(nodes: readonly ObjectiveTreeNode[]): readonly string[] {
   ]);
 }
 
+/**
+ * Raw schema-shaped rows covering every table that hangs off a certification,
+ * including every RESTRICT edge: a question with a revision, link, and attempt;
+ * a flashcard with a revision, review, and schedule; a session including the
+ * track with one item of each kind; and a generation run. Raw SQL rather than
+ * the other modules' facades, because this module must not depend on them and
+ * a purge regression should fail here, not in a cross-module import.
+ */
+function seedDependentRows(
+  database: SqliteDatabase,
+  certificationId: string,
+  objectiveId: string,
+): void {
+  const now = "2026-08-14T00:00:00.000Z";
+  const run = (sql: string, params: unknown[]): void => {
+    database.prepare(sql).run(...params);
+  };
+
+  run(
+    `INSERT INTO generation_runs (id, certification_id, item_kind, generation_mode,
+       model_provider, model_id, persona_id, persona_version, prompt_template_id,
+       prompt_template_version, input_hash, selected_source_snapshot_ids,
+       requested_item_count, successful_item_count, failed_item_count, started_at,
+       completed_at, status)
+     VALUES ('run-1', ?, 'QUESTION', 'MODEL_KNOWLEDGE', 'fake', 'model', 'technical-certification',
+       1, 'question-model-knowledge', 1, 'hash', '[]', 1, 1, 0, ?, ?, 'COMPLETED')`,
+    [certificationId, now, now],
+  );
+  run(
+    `INSERT INTO questions (id, certification_id, lifecycle_status, quality_status,
+       generation_mode, created_at, updated_at)
+     VALUES ('q-1', ?, 'ACTIVE', 'UNREVIEWED', 'MANUAL', ?, ?)`,
+    [certificationId, now, now],
+  );
+  run(
+    `INSERT INTO question_revisions (id, question_id, revision_number, stem,
+       question_type, content_payload, tags, created_at)
+     VALUES ('qr-1', 'q-1', 1, 'Doomed stem?', 'SHORT_ANSWER',
+       '{"type":"SHORT_ANSWER","expectedConcepts":["x"]}', '[]', ?)`,
+    [now],
+  );
+  run(`UPDATE questions SET current_revision_id = 'qr-1' WHERE id = 'q-1'`, []);
+  run(
+    `INSERT INTO question_objective_links (question_id, objective_id, created_at)
+     VALUES ('q-1', ?, ?)`,
+    [objectiveId, now],
+  );
+  run(
+    `INSERT INTO flashcards (id, certification_id, lifecycle_status, created_at, updated_at)
+     VALUES ('f-1', ?, 'ACTIVE', ?, ?)`,
+    [certificationId, now, now],
+  );
+  run(
+    `INSERT INTO flashcard_revisions (id, flashcard_id, revision_number, card_type,
+       content_payload, search_text, tags, created_at)
+     VALUES ('fr-1', 'f-1', 1, 'BASIC', '{"type":"BASIC","front":"A","back":"B"}', 'a b', '[]', ?)`,
+    [now],
+  );
+  run(
+    `UPDATE flashcards SET current_revision_id = 'fr-1' WHERE id = 'f-1'`,
+    [],
+  );
+  run(
+    `INSERT INTO flashcard_reviews (id, flashcard_id, flashcard_revision_id, rating,
+       reviewed_at, interval_minutes, due_at, scheduler_id)
+     VALUES ('rev-1', 'f-1', 'fr-1', 'GOOD', ?, 4320, ?, 'deterministic-v1')`,
+    [now, now],
+  );
+  run(
+    `INSERT INTO review_schedules (flashcard_id, interval_minutes, due_at, lapse_count,
+       review_count, last_reviewed_at, scheduler_id, updated_at)
+     VALUES ('f-1', 4320, ?, 0, 1, ?, 'deterministic-v1', ?)`,
+    [now, now, now],
+  );
+  run(
+    `INSERT INTO study_sessions (id, mode, status, target_minutes, created_at)
+     VALUES ('s-1', 'SINGLE_TRACK', 'COMPLETED', 10, ?)`,
+    [now],
+  );
+  run(
+    `INSERT INTO session_certifications (session_id, certification_id)
+     VALUES ('s-1', ?)`,
+    [certificationId],
+  );
+  run(
+    `INSERT INTO study_session_items (id, session_id, position, item_type, status,
+       question_id, question_revision_id)
+     VALUES ('si-1', 's-1', 1, 'QUESTION', 'COMPLETED', 'q-1', 'qr-1')`,
+    [],
+  );
+  run(
+    `INSERT INTO study_session_items (id, session_id, position, item_type, status,
+       flashcard_id, flashcard_revision_id)
+     VALUES ('si-2', 's-1', 2, 'FLASHCARD', 'COMPLETED', 'f-1', 'fr-1')`,
+    [],
+  );
+  run(
+    `INSERT INTO question_attempts (id, session_id, question_id, question_revision_id,
+       submitted_answer, is_correct, confidence, attempted_at, evaluation_mode)
+     VALUES ('a-1', 's-1', 'q-1', 'qr-1', '{"type":"SHORT_ANSWER","text":"x"}', 1,
+       'CONFIDENT', ?, 'SELF_ASSESSED')`,
+    [now],
+  );
+}
+
 describe("CertificationFacade", () => {
   let database: SqliteDatabase;
   let clock: FixedClock;
@@ -196,6 +301,82 @@ describe("CertificationFacade", () => {
       await expect(
         facade.findDetailBySlug("no-such-track"),
       ).resolves.toBeNull();
+    });
+  });
+
+  describe("deleting a certification", () => {
+    it("refuses to delete a track that is not archived", async () => {
+      const track = await facade.createCertification(CERTIFICATION_INPUT);
+
+      await expect(facade.deleteCertification(track.id)).rejects.toThrow(
+        /archived/i,
+      );
+      await expect(facade.findDetailBySlug(track.slug)).resolves.not.toBeNull();
+    });
+
+    it("purges an archived track with every dependent record", async () => {
+      const track = await facade.createCertification(CERTIFICATION_INPUT);
+      const objective = await facade.addObjective(
+        track.id,
+        objectiveInput({ title: "Doomed objective" }),
+      );
+      // Dependent rows straight into the schema: a question with a revision and
+      // an objective link, a flashcard with a revision, review, and schedule, a
+      // session that included the track with an item and an attempt, and a
+      // generation run. Every RESTRICT edge in the schema is represented, so
+      // this test fails if the purge order ever regresses.
+      seedDependentRows(database, track.id, objective.id);
+      await facade.archiveCertification(track.id);
+
+      await facade.deleteCertification(track.id);
+
+      await expect(facade.findDetailBySlug(track.slug)).resolves.toBeNull();
+      for (const table of [
+        "certifications",
+        "certification_objectives",
+        "questions",
+        "question_revisions",
+        "question_objective_links",
+        "flashcards",
+        "flashcard_revisions",
+        "flashcard_reviews",
+        "review_schedules",
+        "study_sessions",
+        "study_session_items",
+        "question_attempts",
+        "session_certifications",
+        "generation_runs",
+      ]) {
+        const row = database
+          .prepare(`SELECT COUNT(*) AS n FROM ${table}`)
+          .get() as { n: number };
+
+        expect(`${table}:${row.n}`).toBe(`${table}:0`);
+      }
+    });
+
+    it("leaves other tracks and their content untouched", async () => {
+      const doomed = await facade.createCertification(CERTIFICATION_INPUT);
+      const kept = await facade.createCertification({
+        ...CERTIFICATION_INPUT,
+        name: "Kept Track",
+      });
+      const keptObjective = await facade.addObjective(
+        kept.id,
+        objectiveInput({ title: "Kept objective" }),
+      );
+      await facade.archiveCertification(doomed.id);
+
+      await facade.deleteCertification(doomed.id);
+
+      await expect(facade.findDetailBySlug(kept.slug)).resolves.not.toBeNull();
+      const objectives = database
+        .prepare(
+          `SELECT COUNT(*) AS n FROM certification_objectives WHERE id = ?`,
+        )
+        .get(keptObjective.id) as { n: number };
+
+      expect(objectives.n).toBe(1);
     });
   });
 

@@ -29,8 +29,16 @@ export interface Persona {
    * instructions; never contains owner or source text.
    */
   readonly role: string;
-  /** What good output looks like for this kind of study material. */
+  /** What a good question looks like for this subject. */
   readonly guidance: readonly string[];
+  /**
+   * What a good flashcard looks like for this subject — a separate list, not a
+   * reworded copy of `guidance`: question guidance asks for scenarios and
+   * distractors, which written onto a card front produced three-paragraph
+   * "cards" that were exam questions in disguise (owner report, 2026-08-14).
+   * A card prompts recall of one thing and must be readable in seconds.
+   */
+  readonly cardGuidance: readonly string[];
   /** What this persona must refuse to do. */
   readonly prohibitions: readonly string[];
   /** Question types this persona writes when the owner names none. */
@@ -67,6 +75,12 @@ const TECHNICAL_CERTIFICATION_PERSONA: Persona = {
     "Prefer vendor-neutral wording for concepts and exact service names only where the objective is about that service.",
     "State enough context in the question that exactly one answer is defensible.",
   ],
+  cardGuidance: [
+    "The front is one short recall prompt — a term to define, a concept to state, a 'when do you use X?' — at most two sentences. Never a scenario paragraph.",
+    "The back is the answer alone, a sentence or two. Rationale belongs on the back only when it is the thing being memorised.",
+    "A SCENARIO card's situation is two sentences at most: enough to set the decision, nothing about team size, latency numbers, or file counts.",
+    "If a topic needs a multi-paragraph setup to test, it is a question, not a flashcard — write a different card instead.",
+  ],
   prohibitions: [
     "Never state or imply that a question is an official, real, or remembered exam question.",
     "Never reproduce exam material from memory of a real exam.",
@@ -101,6 +115,12 @@ const HSK_PERSONA: Persona = {
     "Give pinyin with tone marks, not tone numbers, wherever pinyin belongs.",
     "Where a meaning has several correct English renderings, list the equivalents rather than one literal translation.",
     "Stay within the vocabulary scope the owner names; if none is named, stay within common HSK 1 to 4 vocabulary.",
+  ],
+  cardGuidance: [
+    "A card carries one word, one character, or one sentence pattern — the front is the item itself or a one-line prompt for it.",
+    "A vocabulary card's term is the word alone; readings, meanings, and examples belong in their own fields, not written into the term.",
+    "A cloze card's sentence is one natural sentence, not a passage.",
+    "Keep every face readable at a glance on a phone.",
   ],
   prohibitions: [
     "Never state or imply that material is an official or real HSK examination item.",

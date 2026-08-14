@@ -53,6 +53,20 @@ export class CertificationNotFoundError extends DomainError {
   }
 }
 
+export class CertificationNotArchivedError extends DomainError {
+  readonly code = "CERTIFICATION_NOT_ARCHIVED";
+
+  constructor(readonly certificationId: string) {
+    super(
+      "Only an archived study track can be deleted. Archive it first, then delete it from the archived list.",
+    );
+  }
+
+  fieldMessages(): Readonly<Record<string, readonly string[]>> {
+    return { "": [this.message] };
+  }
+}
+
 export class ObjectiveNotFoundError extends DomainError {
   readonly code = "OBJECTIVE_NOT_FOUND";
 

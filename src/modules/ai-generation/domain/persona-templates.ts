@@ -296,6 +296,30 @@ export const PERSONA_TEMPLATE_KEYS: readonly string[] = PERSONA_TEMPLATES.map(
 );
 
 /**
+ * The subject-agnostic template for an archetype.
+ *
+ * Used by the import flow, which has a complete draft and needs only the *archetype* a
+ * persona is created under: `createFromTemplate` takes the archetype from the template,
+ * deliberately, so an imported persona is created from the generic starting point with
+ * every editable field overridden. Nothing of the template's text survives that, which
+ * is why the generic one is the right choice — there is no template whose wording an
+ * imported file came from, and pretending otherwise would put AWS prose behind a JLPT
+ * persona in the one field the override does not cover.
+ *
+ * Exhaustive over `PersonaArchetype`, so a new archetype must decide here.
+ */
+export function genericTemplateForArchetype(
+  archetype: PersonaArchetype,
+): PersonaTemplate {
+  switch (archetype) {
+    case "TECHNICAL":
+      return GENERIC_TECHNICAL_TEMPLATE;
+    case "LANGUAGE":
+      return GENERIC_LANGUAGE_TEMPLATE;
+  }
+}
+
+/**
  * One template by key, or `null`.
  *
  * `null` rather than a throw: a stale form or an edited URL naming a template that no

@@ -18,12 +18,19 @@ import { PERSONA_TEMPLATE_KEYS } from "@/modules/ai-generation/domain/persona-te
  * uncontrolled (`spec/UI-GUIDELINES.md` section 1.1).
  */
 
-const LABEL_LIMIT = 120;
-const ROLE_LIMIT = 2000;
-const ENTRY_LIMIT = 500;
-const MAX_ENTRIES = 25;
-const LANGUAGE_INSTRUCTION_LIMIT = 1000;
-const CONTENT_LANGUAGE_LIMIT = 20;
+/**
+ * The bounds, exported because a persona arrives two ways.
+ *
+ * The form is one; an imported file is the other, and it is parsed by a different schema
+ * over a different wire shape (arrays rather than textareas). Sharing the numbers is what
+ * keeps a file the owner can import from being a persona the form would refuse to save.
+ */
+export const LABEL_LIMIT = 120;
+export const ROLE_LIMIT = 2000;
+export const ENTRY_LIMIT = 500;
+export const MAX_ENTRIES = 25;
+export const LANGUAGE_INSTRUCTION_LIMIT = 1000;
+export const CONTENT_LANGUAGE_LIMIT = 20;
 const ID_LIMIT = 200;
 
 /**

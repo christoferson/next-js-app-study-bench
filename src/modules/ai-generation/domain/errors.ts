@@ -25,7 +25,8 @@ export type GenerationDomainErrorCode =
   | "PERSONA_NOT_FOUND"
   | "PERSONA_TEMPLATE_NOT_FOUND"
   | "PERSONA_IN_USE"
-  | "PERSONA_ARCHETYPE_MISMATCH";
+  | "PERSONA_ARCHETYPE_MISMATCH"
+  | "PERSONA_FILE_UNREADABLE";
 
 /**
  * A persona cannot be deleted while a study track is assigned it.
@@ -138,6 +139,33 @@ export class PersonaTemplateNotFoundError extends DomainError {
     return {
       templateKey: ["Choose one of the starting points listed."],
     };
+  }
+}
+
+/**
+ * A persona file could not be read as JSON at all.
+ *
+ * Distinct from a validation failure, which lands on the field that failed: this is the
+ * case where there is no structure to attribute anything to — an empty upload, a PDF
+ * renamed to `.json`, a truncated file. The message names which input to fix, because the
+ * form offers two.
+ *
+ * The parser's own message is deliberately not carried through. "Unexpected token < in
+ * JSON at position 0" is not something the owner can act on, and the actionable part is
+ * always the same: choose a file this application exported.
+ */
+export class PersonaFileUnreadableError extends DomainError {
+  readonly code = "PERSONA_FILE_UNREADABLE";
+
+  constructor(
+    readonly field: "personaFile" | "pastedJson",
+    message: string,
+  ) {
+    super(message);
+  }
+
+  fieldMessages(): Readonly<Record<string, readonly string[]>> {
+    return { [this.field]: [this.message] };
   }
 }
 

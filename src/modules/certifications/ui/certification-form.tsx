@@ -149,29 +149,41 @@ export function CertificationForm({
         state={state}
       />
 
-      {personaChoices.length === 0 ? (
-        <input
-          type="hidden"
-          name="personaId"
-          value={certification?.personaId ?? ""}
-          readOnly
-        />
-      ) : (
-        <SelectField
-          name="personaId"
-          label="Persona"
-          hint="Which voice writes this track's material. Automatic picks the built-in persona for the study type; your own personas are listed when they suit it."
-          value={initial("personaId", certification?.personaId ?? "")}
-          options={[
-            { value: "", label: "Automatic (by study type)" },
-            ...personaChoices.map((choice) => ({
-              value: choice.id,
-              label: choice.label,
-            })),
-          ]}
-          state={state}
-        />
-      )}
+      {/* Always visible, even with nothing to choose: a field that only appears
+          once a persona exists is undiscoverable, and the empty state is where
+          the owner learns personas exist at all. An assignment the choices list
+          does not cover (archetype filter) is kept as its own option, so saving
+          this form can never silently clear a persona assigned elsewhere. */}
+      <SelectField
+        name="personaId"
+        label="Persona"
+        hint={
+          personaChoices.length === 0
+            ? "Automatic picks the built-in persona for the study type. Create your own under Personas in settings to customise how this track's material is written."
+            : "Which voice writes this track's material. Automatic picks the built-in persona for the study type; your own personas are listed when they suit it."
+        }
+        value={initial("personaId", certification?.personaId ?? "")}
+        options={[
+          { value: "", label: "Automatic (by study type)" },
+          ...personaChoices.map((choice) => ({
+            value: choice.id,
+            label: choice.label,
+          })),
+          ...(certification !== undefined &&
+          certification.personaId !== null &&
+          !personaChoices.some(
+            (choice) => choice.id === certification.personaId,
+          )
+            ? [
+                {
+                  value: certification.personaId,
+                  label: "Current assignment (kept)",
+                },
+              ]
+            : []),
+        ]}
+        state={state}
+      />
 
       <div className="field">
         <label htmlFor="description">Description</label>

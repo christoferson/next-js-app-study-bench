@@ -269,9 +269,9 @@ describe("CertificationForm", () => {
       });
     });
 
-    it("submits nothing but a blank when the owner has no personas", async () => {
-      // No select at all rather than one with a single useless option, and a hidden
-      // field so an edit cannot silently clear an assignment made elsewhere.
+    it("shows the field with Automatic and a create-personas hint when the owner has none", async () => {
+      // Always visible: a field that only appears once a persona exists is
+      // undiscoverable — the empty state is where the owner learns personas exist.
       const user = userEvent.setup();
       const onValid = vi.fn();
 
@@ -283,7 +283,13 @@ describe("CertificationForm", () => {
         />,
       );
 
-      expect(screen.queryByLabelText("Persona")).not.toBeInTheDocument();
+      const select = screen.getByLabelText("Persona");
+
+      expect(select).toBeVisible();
+      expect(
+        screen.getByRole("option", { name: "Automatic (by study type)" }),
+      ).toBeVisible();
+      expect(screen.getByText(/create your own under personas/i)).toBeVisible();
 
       await user.type(screen.getByLabelText(/^Name/), "Demo Track");
       await user.type(screen.getByLabelText(/^Provider/), "Demo Provider");
@@ -299,7 +305,7 @@ describe("CertificationForm", () => {
 
     it("keeps an existing assignment when no choices can be offered", () => {
       // A language track whose owner has only technical personas: the assignment it
-      // already has must survive a save from this form.
+      // already has must survive a save from this form, offered as a kept option.
       render(
         <CertificationForm
           action={validatingAction()}
@@ -309,9 +315,10 @@ describe("CertificationForm", () => {
         />,
       );
 
-      expect(document.querySelector('input[name="personaId"]')).toHaveValue(
-        "persona-9",
-      );
+      expect(screen.getByLabelText("Persona")).toHaveValue("persona-9");
+      expect(
+        screen.getByRole("option", { name: "Current assignment (kept)" }),
+      ).toBeVisible();
     });
   });
 

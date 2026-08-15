@@ -39,6 +39,19 @@ export default async function EditPersonaPage({
           you rename the persona, so a generation run recorded against it can
           always be traced back.
         </p>
+        {/*
+          A plain anchor, not `next/link`: the target answers with a file attachment
+          rather than a page.
+        */}
+        <p className="field-hint">
+          <a href={`/settings/personas/${persona.id}/export`} download>
+            Download this persona as JSON
+          </a>{" "}
+          — a file you can keep, edit by hand, or import into another
+          StudyBench. It carries the wording and nothing else: no key, no
+          version, no dates, so importing it creates a new persona rather than
+          overwriting one.
+        </p>
       </header>
 
       <PersonaForm

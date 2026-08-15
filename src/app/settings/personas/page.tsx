@@ -2,6 +2,8 @@ import Link from "next/link";
 import { getPersonaFacade } from "@/modules/ai-generation/composition";
 import { PersonaList } from "@/modules/ai-generation/ui/persona-list";
 import { PersonaTemplatePicker } from "@/modules/ai-generation/ui/persona-template-picker";
+import { PersonaImportForm } from "@/modules/ai-generation/ui/persona-import-form";
+import { importPersonaAction } from "@/modules/ai-generation/ui/persona-import-actions";
 
 /**
  * Rendered per request, never prerendered.
@@ -69,6 +71,20 @@ export default async function PersonasSettingsPage() {
           </p>
         </div>
         <PersonaTemplatePicker templates={view.templates} />
+      </section>
+
+      <section aria-labelledby="import-persona-heading" className="section">
+        <div className="section-heading">
+          <h2 id="import-persona-heading">Import a persona</h2>
+          <p className="section-note">
+            A persona downloaded from this page — or from somebody else&apos;s
+            StudyBench — is a plain JSON file, so it doubles as a shareable
+            starting point. Importing reads the file and opens it in the same
+            form; nothing is saved until you say so, and the imported persona
+            gets its own fresh key and version rather than the exporter&apos;s.
+          </p>
+        </div>
+        <PersonaImportForm action={importPersonaAction} />
       </section>
     </main>
   );

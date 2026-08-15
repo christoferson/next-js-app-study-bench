@@ -65,6 +65,18 @@ export function PersonaList({ personas }: PersonaListProps) {
             >
               Edit
             </Link>
+            {/*
+              A plain anchor rather than `next/link`: the target is a file download, not a
+              page, and a client-side navigation to a route that answers with an
+              attachment is not a navigation at all.
+            */}
+            <a
+              className="button-quiet"
+              href={`/settings/personas/${persona.id}/export`}
+              download
+            >
+              Download JSON
+            </a>
             <DeletePersonaForm personaId={persona.id} label={persona.label} />
           </div>
         </li>

@@ -5,6 +5,7 @@ import {
   PERSONA_TEMPLATES,
   PERSONA_TEMPLATE_KEYS,
   findPersonaTemplate,
+  genericTemplateForArchetype,
 } from "./persona-templates";
 import { PERSONA_ARCHETYPES } from "./stored-persona";
 
@@ -139,6 +140,22 @@ describe("persona templates", () => {
     expect(generic?.draft.contentLanguage).toBeNull();
     expect(text).not.toMatch(/chinese|japanese|pinyin|kanji|hsk|jlpt/i);
     expect(text).toMatch(/target language/i);
+  });
+
+  it("gives the import flow the generic template for each archetype", () => {
+    // An imported persona is created from the generic starting point with every editable
+    // field overridden, so what the template supplies is only the archetype. Anything
+    // subject-specific would leave AWS prose behind a JLPT persona.
+    expect(genericTemplateForArchetype("TECHNICAL").key).toBe(
+      "generic-technical",
+    );
+    expect(genericTemplateForArchetype("LANGUAGE").key).toBe(
+      "generic-language",
+    );
+    expect(genericTemplateForArchetype("TECHNICAL").archetype).toBe(
+      "TECHNICAL",
+    );
+    expect(genericTemplateForArchetype("LANGUAGE").archetype).toBe("LANGUAGE");
   });
 
   it("finds a template by key and reports nothing for an unknown one", () => {

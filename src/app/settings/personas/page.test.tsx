@@ -74,4 +74,16 @@ describe("Personas settings page", () => {
       screen.getByRole("link", { name: "My persona" }),
     ).toBeInTheDocument();
   });
+
+  it("offers an import, and says it writes nothing on its own", async () => {
+    render(await PersonasSettingsPage());
+
+    expect(screen.getByLabelText("Persona file")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Read persona file" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/nothing is saved until you say so/i),
+    ).toBeInTheDocument();
+  });
 });

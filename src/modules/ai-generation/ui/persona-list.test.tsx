@@ -38,6 +38,17 @@ describe("PersonaList", () => {
     expect(screen.getByText("aws-associate-level")).toBeInTheDocument();
   });
 
+  it("offers each persona as a JSON download", () => {
+    // A plain anchor with `download`, not a client-side navigation: the target answers
+    // with a file attachment rather than a page.
+    render(<PersonaList personas={[storedPersonaFixture()]} />);
+
+    const link = screen.getByRole("link", { name: "Download JSON" });
+
+    expect(link).toHaveAttribute("href", "/settings/personas/persona-1/export");
+    expect(link).toHaveAttribute("download");
+  });
+
   it("names the persona on each delete button", () => {
     // Two rows of identical "Delete" buttons is what a screen reader announcing
     // controls out of context would otherwise hear.

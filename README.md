@@ -573,6 +573,34 @@ Vocabulary enrichment still uses the built-in HSK persona regardless of the trac
 assignment. Its prompt and its matching logic read the HSK persona's vocabulary fields
 specifically, so routing it through an owner-written persona is a separate change.
 
+### Exporting and importing a persona
+
+A persona is prose you wrote, and it is useful without any of this application's data —
+so it has a file format. **Download JSON** on a persona's row, or on its page, saves it
+as `aws-associate-level.persona.json`: one JSON object holding the archetype, the name,
+the role, the three guidance lists, the default types, and the language fields.
+
+The file deliberately carries **no identity**: no database id, no persona key, no version,
+no timestamps. What is left is exactly the shape a prepared starting point has, which is
+why the same file doubles as a **shareable template** — hand it to somebody else, edit it
+in a text editor, or keep it as a backup of wording you are about to change.
+
+The **Import a persona** section of `/settings/personas` reads one back. Choose the file
+(or drag it onto the box, or paste the JSON when it arrived in a message) and the persona
+opens in the ordinary create form, prefilled. **Nothing is written until you save it**, and
+that is the point: a file may be a stranger's text, so it is reviewed and editable first.
+Saving creates a new persona at version 1 with its own freshly derived key — importing the
+same file twice gives you two personas, `aws-associate-level` and `aws-associate-level-2`,
+never an overwrite of one a run was recorded against.
+
+Every field is re-validated on the way in, against the same bounds the form applies, and a
+failure names the key that caused it — `defaultQuestionTypes: "ESSAY" is not a question
+type this version of StudyBench knows` — because a persona file is exactly the kind of
+thing you end up editing by hand. A question or card type this release does not recognise
+is **refused rather than dropped**, so an import can never quietly produce a persona that
+generates the wrong content types. The file's first key is a format version, and a file
+from a newer release says so instead of being half-read.
+
 ### Deleting a persona
 
 A persona a study track is assigned **cannot be deleted**. The refusal names the tracks
@@ -725,8 +753,23 @@ With your own material imported (`npm run import:real`, then
   unchanged, and the edited line is there when you reopen it
 - Clear the guidance box entirely and save — the form refuses with a message beside
   the field, and nothing is written
+- Choose "Download JSON" on its row — the browser saves
+  `jlpt-japanese-proficiency.persona.json`; open it and there is no id, key, version, or
+  date in it, only the wording
 - Delete it — the list is empty again
+- Import the file you just downloaded — the create form opens prefilled with the same
+  wording, says nothing has been saved yet, and saving puts it back in the list at
+  version 1
+- Import the same file again — a second persona appears, keyed
+  `jlpt-japanese-proficiency-2`, and the first is untouched
+- Edit the file's `defaultCardTypes` to `["FLIPBOOK"]` and import it — the refusal names
+  `defaultCardTypes` and `FLIPBOOK`, and no form opens
+- Change its `studybench_persona` to `2` and import it — the refusal says the file is from
+  a newer release
+- Import any other file renamed to `.json` — the message beside the file input says it is
+  not readable JSON
 - `http://localhost:3000/settings/personas/new?template=nope` — not-found page
+- `http://localhost:3000/settings/personas/nope/export` — 404 with an empty body
 
 Assigning a persona to a track (still no spend — the default provider is the fake one):
 

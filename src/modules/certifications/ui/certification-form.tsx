@@ -26,12 +26,32 @@ type CertificationFormAction = (
   form: FormData,
 ) => Promise<FormState>;
 
+/**
+ * One persona the track may be assigned, as plain data.
+ *
+ * Deliberately not a `StoredPersona`: that type belongs to the ai-generation module, and
+ * this module must not import from it (`spec/ARCHITECTURE.md` section 7, pinned by a
+ * boundary test). The page resolves the personas and passes down the two strings a
+ * select needs, which is all a select ever needed.
+ */
+export interface PersonaChoice {
+  readonly id: string;
+  readonly label: string;
+}
+
 interface CertificationFormProps {
   readonly action: CertificationFormAction;
   readonly submitLabel: string;
   readonly cancelHref: string;
   /** Present when editing; absent when creating. */
   readonly certification?: Certification;
+  /**
+   * Personas the owner may assign, already restricted to ones that suit the track.
+   *
+   * Empty when the owner has created none, and the field then renders as a hint rather
+   * than a select with one dead option (`spec/UI-GUIDELINES.md`: no dead controls).
+   */
+  readonly personaChoices?: readonly PersonaChoice[];
 }
 
 const PRIORITIES = Array.from(
@@ -52,6 +72,7 @@ export function CertificationForm({
   submitLabel,
   cancelHref,
   certification,
+  personaChoices = [],
 }: CertificationFormProps) {
   const [state, formAction, isPending] = useActionState(
     action,
@@ -127,6 +148,30 @@ export function CertificationForm({
         }))}
         state={state}
       />
+
+      {personaChoices.length === 0 ? (
+        <input
+          type="hidden"
+          name="personaId"
+          value={certification?.personaId ?? ""}
+          readOnly
+        />
+      ) : (
+        <SelectField
+          name="personaId"
+          label="Persona"
+          hint="Which voice writes this track's material. Automatic picks the built-in persona for the study type; your own personas are listed when they suit it."
+          value={initial("personaId", certification?.personaId ?? "")}
+          options={[
+            { value: "", label: "Automatic (by study type)" },
+            ...personaChoices.map((choice) => ({
+              value: choice.id,
+              label: choice.label,
+            })),
+          ]}
+          state={state}
+        />
+      )}
 
       <div className="field">
         <label htmlFor="description">Description</label>
@@ -281,17 +326,36 @@ interface SelectFieldProps {
   readonly value: string;
   readonly options: readonly SelectOption[];
   readonly state: FormState;
+  readonly hint?: string;
 }
 
-function SelectField({ name, label, value, options, state }: SelectFieldProps) {
+function SelectField({
+  name,
+  label,
+  value,
+  options,
+  state,
+  hint,
+}: SelectFieldProps) {
+  const hintId = hint === undefined ? undefined : `${name}-hint`;
+
   return (
     <div className="field">
       <label htmlFor={name}>{label}</label>
+      {hint !== undefined ? (
+        <p className="field-hint" id={hintId}>
+          {hint}
+        </p>
+      ) : null}
       <select
         id={name}
         name={name}
         defaultValue={value}
-        aria-describedby={describedBy(state, name, [])}
+        aria-describedby={describedBy(
+          state,
+          name,
+          hintId === undefined ? [] : [hintId],
+        )}
         aria-invalid={fieldErrors(state, name) !== undefined}
       >
         {options.map((option) => (

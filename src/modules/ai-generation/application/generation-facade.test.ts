@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { SqliteDatabase } from "@/platform/database/sqlite";
+import type { Certification } from "@/modules/certifications/domain/certification";
 import { CertificationNotFoundError } from "@/modules/certifications/domain/errors";
 import { GRAMMAR_ROOT } from "@/modules/certifications/domain/objective-kind";
 import { SqliteCertificationRepository } from "@/modules/certifications/infrastructure/sqlite-certification-repository";
@@ -28,6 +29,9 @@ import type { FakeGatewayResponse } from "@/modules/ai-generation/infrastructure
 import { FakeLanguageModelGateway } from "@/modules/ai-generation/infrastructure/fake-language-model-gateway";
 import { SqliteGenerationRunRepository } from "@/modules/ai-generation/infrastructure/sqlite-generation-run-repository";
 import { SqliteGenerationUnitOfWork } from "@/modules/ai-generation/infrastructure/sqlite-generation-unit-of-work";
+import { SqlitePersonaRepository } from "@/modules/ai-generation/infrastructure/sqlite-persona-repository";
+import { storedPersonaFixture } from "@/modules/ai-generation/infrastructure/persona-test-support";
+import type { StoredPersona } from "@/modules/ai-generation/domain/stored-persona";
 import {
   enrichmentPayload,
   enrichmentPayloadItem,
@@ -85,6 +89,7 @@ function request(
     additionalInstructions: null,
     questionTypes: [],
     cardTypes: [],
+    personaId: null,
     generateAnyway: false,
     ...overrides,
   };
@@ -156,6 +161,7 @@ describe("GenerationFacade", () => {
       flashcards,
       certifications: new SqliteCertificationRepository(database),
       objectives: new SqliteObjectiveRepository(database),
+      personas: new SqlitePersonaRepository(database),
       unitOfWork: new SqliteGenerationUnitOfWork(database),
       gateway,
       clock,
@@ -551,6 +557,198 @@ describe("GenerationFacade", () => {
       // its child descends from.
       expect(user).not.toContain("objective-grammar-root");
       expect(user).toMatch(/exercise the pattern, not describe it/);
+    });
+  });
+
+  /**
+   * Personas the owner stored, rather than the two built into the code.
+   *
+   * The persona is what the prompt mostly *is*, so "did the stored one take effect" is
+   * asserted on the rendered prompt: a role sentence that exists nowhere in the built-in
+   * registry either reached the model or it did not. Provenance is asserted separately,
+   * because the run records the persona's stable key and version — never its identifier,
+   * which is a row id and would stop resolving the moment the persona was deleted.
+   */
+  describe("a stored persona", () => {
+    const STORED_ROLE =
+      "You are the owner's own AWS instructor, writing in their house style.";
+
+    let personas: SqlitePersonaRepository;
+
+    beforeEach(() => {
+      personas = new SqlitePersonaRepository(database);
+    });
+
+    /** A stored persona, saved and assigned to nothing until a test asks. */
+    async function storePersona(
+      overrides: Partial<StoredPersona> = {},
+    ): Promise<StoredPersona> {
+      const persona = storedPersonaFixture({
+        role: STORED_ROLE,
+        version: 3,
+        ...overrides,
+      });
+
+      await personas.insert(persona);
+
+      return persona;
+    }
+
+    /** Assigns a stored persona to a seeded track. */
+    async function assignTo(
+      track: Certification,
+      persona: StoredPersona,
+    ): Promise<void> {
+      await new SqliteCertificationRepository(database).save({
+        ...track,
+        personaId: persona.id,
+      });
+    }
+
+    it("offers the assignable personas and the track's own assignment on the form", async () => {
+      const technical = await storePersona();
+      const language = await storePersona({
+        id: "persona-2",
+        personaKey: "my-hsk",
+        archetype: "LANGUAGE",
+        label: "My HSK",
+      });
+
+      await assignTo(AWS_TRACK, technical);
+
+      const view = await facadeWith().findGenerationForm(AWS_TRACK.slug);
+
+      // Only the technical one: a language persona on an AWS track is not a choice the
+      // form should offer, because the assignment would be refused.
+      expect(view?.personaChoices.map((choice) => choice.id)).toEqual([
+        technical.id,
+      ]);
+      expect(view?.assignedPersonaId).toBe(technical.id);
+      // The default shown is the track's own, not the built-in.
+      expect(view?.persona.id).toBe(technical.personaKey);
+      expect(language.archetype).toBe("LANGUAGE");
+    });
+
+    it("uses the track's assigned persona for the prompt and the provenance", async () => {
+      const persona = await storePersona();
+
+      await assignTo(AWS_TRACK, persona);
+
+      const gateway = new FakeLanguageModelGateway();
+      const { run } = outcome(
+        await facadeForGateway(gateway).requestQuestionGeneration(
+          AWS_TRACK.slug,
+          request({ itemCount: 1 }),
+        ),
+      );
+
+      expect(gateway.promptsSent[0]?.system).toContain(STORED_ROLE);
+      // The stable key and the stored version, not the row identifier.
+      expect(run.personaId).toBe(persona.personaKey);
+      expect(run.personaVersion).toBe(3);
+    });
+
+    it("lets a choice on the form override the track's assignment", async () => {
+      const assigned = await storePersona();
+      const chosen = await storePersona({
+        id: "persona-2",
+        personaKey: "my-other-aws",
+        label: "My other AWS persona",
+        role: "You are a second instructor entirely.",
+      });
+
+      await assignTo(AWS_TRACK, assigned);
+
+      const gateway = new FakeLanguageModelGateway();
+      const { run } = outcome(
+        await facadeForGateway(gateway).requestQuestionGeneration(
+          AWS_TRACK.slug,
+          request({ itemCount: 1, personaId: chosen.id }),
+        ),
+      );
+
+      expect(gateway.promptsSent[0]?.system).toContain(
+        "You are a second instructor entirely.",
+      );
+      expect(run.personaId).toBe(chosen.personaKey);
+    });
+
+    it("names the stored persona on the run review", async () => {
+      const persona = await storePersona();
+
+      await assignTo(AWS_TRACK, persona);
+
+      const facade = facadeWith();
+      const { run } = outcome(
+        await facade.requestQuestionGeneration(
+          AWS_TRACK.slug,
+          request({ itemCount: 1 }),
+        ),
+      );
+      const view = await facade.findRunDetail(AWS_TRACK.slug, run.id);
+
+      expect(view?.persona?.label).toBe(persona.label);
+      expect(view?.persona?.version).toBe(3);
+    });
+
+    it("reports no persona for a key nothing answers to any more", async () => {
+      // A deleted persona's runs stay readable; the review page then shows the raw key
+      // rather than inventing a label.
+      const facade = facadeWith();
+      const { run } = outcome(
+        await facade.requestQuestionGeneration(
+          AWS_TRACK.slug,
+          request({ itemCount: 1 }),
+        ),
+      );
+
+      database
+        .prepare(`UPDATE generation_runs SET persona_id = ? WHERE id = ?`)
+        .run("a-persona-nobody-has", run.id);
+
+      const view = await facade.findRunDetail(AWS_TRACK.slug, run.id);
+
+      expect(view?.persona).toBeNull();
+      expect(view?.run.personaId).toBe("a-persona-nobody-has");
+    });
+
+    it("falls back to the built-in persona when the assignment no longer suits the track", async () => {
+      // A stale assignment — the study type was changed after the persona was chosen —
+      // must not fail a request the owner is paying for. The form is where a mismatch is
+      // refused; here it degrades to the automatic choice.
+      const persona = await storePersona({
+        archetype: "LANGUAGE",
+        personaKey: "my-hsk",
+      });
+
+      await assignTo(AWS_TRACK, persona);
+
+      const gateway = new FakeLanguageModelGateway();
+      const { run } = outcome(
+        await facadeForGateway(gateway).requestQuestionGeneration(
+          AWS_TRACK.slug,
+          request({ itemCount: 1 }),
+        ),
+      );
+
+      expect(run.personaId).toBe("technical-certification");
+      expect(gateway.promptsSent[0]?.system).not.toContain(STORED_ROLE);
+    });
+
+    it("leaves the automatic choice exactly as it was", async () => {
+      // The regression this whole slice risks: a track with no assignment, and an owner
+      // with personas stored, still generates with the built-in persona.
+      await storePersona();
+
+      const { run } = outcome(
+        await facadeWith().requestQuestionGeneration(
+          AWS_TRACK.slug,
+          request({ itemCount: 1 }),
+        ),
+      );
+
+      expect(run.personaId).toBe("technical-certification");
+      expect(run.personaVersion).toBe(1);
     });
   });
 

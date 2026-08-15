@@ -17,6 +17,7 @@ const VALID_CERTIFICATION = {
   targetDate: "2026-09-30",
   priority: "2",
   defaultSessionMinutes: "30",
+  personaId: "",
 };
 
 const VALID_OBJECTIVE = {
@@ -55,6 +56,9 @@ describe("certificationInputSchema", () => {
       targetDate: "2026-09-30",
       priority: 2,
       defaultSessionMinutes: 30,
+      // Blank means "decide from the study type": this module never resolves the
+      // identifier, so the only normalising it does is empty-to-null.
+      personaId: null,
     });
   });
 

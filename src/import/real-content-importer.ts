@@ -194,6 +194,9 @@ export async function importExamGuideTrack(
     targetDate: null,
     priority: DEFAULT_PRIORITY,
     defaultSessionMinutes: DEFAULT_SESSION_MINUTES,
+    // Automatic, by study type: an imported track must not depend on the owner
+    // having created a persona, and they can assign one afterwards.
+    personaId: null,
   });
 
   let childObjectivesCreated = 0;
@@ -269,6 +272,8 @@ export async function importHskVocabularyTrack(
     targetDate: null,
     priority: DEFAULT_PRIORITY,
     defaultSessionMinutes: DEFAULT_SESSION_MINUTES,
+    // See the AWS track above: automatic by study type.
+    personaId: null,
   });
   const objective = await deps.certifications.addObjective(certification.id, {
     parentObjectiveId: null,

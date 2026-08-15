@@ -196,6 +196,9 @@ export async function seedDemoContent(
           defaultSessionMinutes: DEFAULT_SESSION_MINUTES,
           status: "ACTIVE",
           origin: "DEMO",
+          // Automatic, by study type: demo tracks must not depend on the owner
+          // having created a persona of their own.
+          personaId: null,
           createdAt: now,
           updatedAt: now,
         });

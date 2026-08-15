@@ -12,7 +12,7 @@ import { toCertification } from "./rows";
 
 const COLUMNS = `id, slug, name, provider, exam_code, version, study_type,
   description, target_date, priority, default_session_minutes, status, origin,
-  created_at, updated_at`;
+  persona_id, created_at, updated_at`;
 
 /** SQLite-backed certification persistence. */
 export class SqliteCertificationRepository implements CertificationRepository {
@@ -50,13 +50,25 @@ export class SqliteCertificationRepository implements CertificationRepository {
     return row !== undefined;
   }
 
+  async listByPersonaId(personaId: string): Promise<Certification[]> {
+    const rows = this.database
+      .prepare(
+        `SELECT ${COLUMNS} FROM certifications
+         WHERE persona_id = ?
+         ORDER BY name COLLATE NOCASE ASC, id ASC`,
+      )
+      .all(personaId) as CertificationRow[];
+
+    return rows.map(toCertification);
+  }
+
   async save(certification: Certification): Promise<void> {
     this.database
       .prepare(
         `INSERT INTO certifications (${COLUMNS})
          VALUES (@id, @slug, @name, @provider, @examCode, @version, @studyType,
                  @description, @targetDate, @priority, @defaultSessionMinutes,
-                 @status, @origin, @createdAt, @updatedAt)
+                 @status, @origin, @personaId, @createdAt, @updatedAt)
          ON CONFLICT (id) DO UPDATE SET
            slug = excluded.slug,
            name = excluded.name,
@@ -70,6 +82,7 @@ export class SqliteCertificationRepository implements CertificationRepository {
            default_session_minutes = excluded.default_session_minutes,
            status = excluded.status,
            origin = excluded.origin,
+           persona_id = excluded.persona_id,
            updated_at = excluded.updated_at`,
       )
       .run({
@@ -86,6 +99,7 @@ export class SqliteCertificationRepository implements CertificationRepository {
         defaultSessionMinutes: certification.defaultSessionMinutes,
         status: certification.status,
         origin: certification.origin,
+        personaId: certification.personaId,
         createdAt: certification.createdAt,
         updatedAt: certification.updatedAt,
       });

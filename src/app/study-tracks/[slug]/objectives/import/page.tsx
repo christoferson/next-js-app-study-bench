@@ -65,6 +65,8 @@ export default async function ImportObjectivesPage({
           modelId={view.modelId}
           modelProvider={view.modelProvider}
           persona={view.persona}
+          personaChoices={view.personaChoices}
+          assignedPersonaId={view.assignedPersonaId}
           slug={view.certification.slug}
         />
       </section>

@@ -54,11 +54,21 @@ import type {
   ProviderUsage,
 } from "@/modules/ai-generation/domain/generation-run";
 import { resolveRunStatus } from "@/modules/ai-generation/domain/generation-run";
-import type { Persona } from "@/modules/ai-generation/domain/personas";
+import type {
+  EffectivePersona,
+  Persona,
+} from "@/modules/ai-generation/domain/personas";
 import {
   findPersona,
   personaForStudyType,
 } from "@/modules/ai-generation/domain/personas";
+import type { StoredPersona } from "@/modules/ai-generation/domain/stored-persona";
+import { storedPersonaToPersona } from "@/modules/ai-generation/domain/stored-persona";
+import type { PersonaRepository } from "@/modules/ai-generation/ports/persona-repository";
+import {
+  assignablePersonas,
+  resolveEffectivePersona,
+} from "./persona-selection";
 import {
   renderPrompt,
   templateIdForItemKind,
@@ -123,7 +133,18 @@ export interface GenerationFormView {
   readonly certification: Certification;
   /** Active objectives only: a batch is never targeted at an archived objective. */
   readonly objectives: readonly Objective[];
-  readonly persona: Persona;
+  /**
+   * The persona this request would use with nothing chosen on the form: the track's
+   * assigned persona, or the built-in one for its study type.
+   */
+  readonly persona: EffectivePersona;
+  /**
+   * Stored personas the owner may generate this batch with instead, restricted to the
+   * archetype the track's study type calls for.
+   */
+  readonly personaChoices: readonly StoredPersona[];
+  /** The track's assignment, so the select can default to it. `null` is automatic. */
+  readonly assignedPersonaId: string | null;
   readonly maxItemCount: number;
   /** Provider and model that would be used, so the cost is not a surprise. */
   readonly modelProvider: string;
@@ -193,6 +214,17 @@ export type GeneratedItemReview =
 /** The enrichment form's own view: how much is left, and what it will cost. */
 export interface EnrichmentFormView {
   readonly certification: Certification;
+  /**
+   * The built-in persona for the study type, deliberately, even when the track is
+   * assigned a stored one.
+   *
+   * Enrichment is the one flow this slice leaves on the built-in personas. The
+   * enrichment prompt and the matching rules are written against the HSK persona's
+   * vocabulary fields — readings, meanings, examples — and a stored persona has no way
+   * yet to say that it produces them. Applying an arbitrary language persona here would
+   * change what the model is asked to return without changing what the matcher expects.
+   * Slice 3 or later.
+   */
   readonly persona: Persona;
   /** Active vocabulary cards with no `meanings` yet. */
   readonly unenrichedCount: number;
@@ -246,8 +278,15 @@ export interface GenerationRunDetailView {
   readonly run: GenerationRun;
   readonly counts: GenerationRunItemCounts;
   readonly items: readonly GeneratedItemReview[];
-  /** Expanded from the recorded identifier, or `null` if it is no longer known. */
-  readonly persona: Persona | null;
+  /**
+   * Expanded from the recorded identifier, or `null` if it is no longer known.
+   *
+   * The identifier may name a built-in persona or a stored one's key, so both registries
+   * are consulted. `null` is a normal outcome — a stored persona the owner has since
+   * deleted — and the review screen then shows the recorded key and version, which is
+   * the whole reason a run records text rather than a foreign key.
+   */
+  readonly persona: EffectivePersona | null;
 }
 
 /**
@@ -310,6 +349,8 @@ export interface GenerationFacadeDependencies {
   readonly flashcards: FlashcardRepository;
   readonly certifications: CertificationRepository;
   readonly objectives: ObjectiveRepository;
+  /** The owner's own personas, for track assignment and per-request choice. */
+  readonly personas: PersonaRepository;
   readonly unitOfWork: GenerationUnitOfWork;
   /** The model. Composed in, so the fake gateway is a wiring choice. */
   readonly gateway: LanguageModelGateway;
@@ -319,6 +360,48 @@ export interface GenerationFacadeDependencies {
 
 export class GenerationFacade {
   constructor(private readonly deps: GenerationFacadeDependencies) {}
+
+  /**
+   * The persona one request generates with.
+   *
+   * Delegates to `resolveEffectivePersona`, which states the order: the persona chosen
+   * on the form, else the track's assignment, else the built-in one for the study type.
+   * A method rather than a call at each site so the form's preview and the run that
+   * follows it cannot resolve differently.
+   */
+  private async resolvePersona(
+    certification: Certification,
+    requestedPersonaId: string | null,
+  ): Promise<EffectivePersona> {
+    return resolveEffectivePersona(
+      this.deps.personas,
+      certification,
+      requestedPersonaId,
+    );
+  }
+
+  /**
+   * The persona a recorded run used, when it can still be found.
+   *
+   * The recorded identifier is either a built-in persona's id or a stored persona's key,
+   * so both are consulted — built-ins first, because those identifiers are code and
+   * cannot be taken by a stored key. `null` when neither knows it, which the review
+   * screen renders as the recorded key and version rather than as an error: that is why
+   * a run records text.
+   */
+  private async findRecordedPersona(
+    run: GenerationRun,
+  ): Promise<EffectivePersona | null> {
+    const builtIn = findPersona(run.personaId);
+
+    if (builtIn !== null) {
+      return builtIn;
+    }
+
+    const stored = await this.deps.personas.findByKey(run.personaId);
+
+    return stored === null ? null : storedPersonaToPersona(stored);
+  }
 
   /** What the generate form offers for one track. */
   async findGenerationForm(
@@ -330,16 +413,19 @@ export class GenerationFacade {
       return null;
     }
 
-    const objectives = await this.deps.objectives.listByCertification(
-      certification.id,
-    );
+    const [objectives, personas] = await Promise.all([
+      this.deps.objectives.listByCertification(certification.id),
+      this.deps.personas.list(),
+    ]);
 
     return {
       certification,
       objectives: objectives.filter(
         (objective) => objective.status === "ACTIVE",
       ),
-      persona: personaForStudyType(certification.studyType),
+      persona: await this.resolvePersona(certification, null),
+      personaChoices: assignablePersonas(personas, certification),
+      assignedPersonaId: certification.personaId,
       maxItemCount: MAX_BATCH_ITEMS,
       modelProvider: this.deps.gateway.provider,
       modelId: this.deps.gateway.modelId,
@@ -412,7 +498,7 @@ export class GenerationFacade {
       run,
       counts,
       items: await this.loadItems(run.itemKind, run.id, itemIds),
-      persona: findPersonaFor(run),
+      persona: await this.findRecordedPersona(run),
     };
   }
 
@@ -712,7 +798,7 @@ export class GenerationFacade {
       }
     }
 
-    const persona = personaForStudyType(certification.studyType);
+    const persona = await this.resolvePersona(certification, input.personaId);
     const startedAt = this.deps.clock.now();
     const pending: GenerationRun = {
       id: this.deps.ids.nextId(),
@@ -724,6 +810,10 @@ export class GenerationFacade {
       generationMode: "MODEL_KNOWLEDGE",
       modelProvider: this.deps.gateway.provider,
       modelId: this.deps.gateway.modelId,
+      // For a built-in persona this is its `PersonaId`; for one of the owner's, its
+      // `personaKey` and its own version. Text either way, and never the stored
+      // persona's uuid: the run must stay explicable after the persona is deleted,
+      // which a foreign key would not allow and a uuid would not explain.
       personaId: persona.id,
       personaVersion: persona.version,
       promptTemplateId: templateIdForItemKind(kind),
@@ -804,7 +894,7 @@ export class GenerationFacade {
    */
   private async produceQuestions(
     prompt: RenderedPrompt,
-    persona: Persona,
+    persona: EffectivePersona,
     spec: GenerationRequestSpec,
     context: CheckContext,
   ): Promise<ProducedBatch> {
@@ -841,7 +931,7 @@ export class GenerationFacade {
 
   private async produceFlashcards(
     prompt: RenderedPrompt,
-    persona: Persona,
+    persona: EffectivePersona,
     spec: GenerationRequestSpec,
     context: CheckContext,
   ): Promise<ProducedBatch> {
@@ -1299,14 +1389,4 @@ function assertRejectable(
       `That ${noun} is no longer a draft, so it is yours now. Retire it from its own page instead.`,
     );
   }
-}
-
-/**
- * The persona a recorded run used, when the registry still knows it.
- *
- * `null` rather than a throw: a run generated by a persona that has since been
- * renamed must still render, showing its recorded identifier and version.
- */
-function findPersonaFor(run: GenerationRun): Persona | null {
-  return findPersona(run.personaId);
 }

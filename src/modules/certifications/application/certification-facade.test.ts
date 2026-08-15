@@ -35,6 +35,7 @@ const CERTIFICATION_INPUT: CertificationInput = {
   targetDate: null,
   priority: 3,
   defaultSessionMinutes: 20,
+  personaId: null,
 };
 
 function objectiveInput(

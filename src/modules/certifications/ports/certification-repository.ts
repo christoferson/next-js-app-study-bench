@@ -20,6 +20,16 @@ export interface CertificationRepository {
   findBySlug(slug: CertificationSlug): Promise<Certification | null>;
   /** Slug uniqueness check used when deriving a slug from a track name. */
   isSlugTaken(slug: CertificationSlug): Promise<boolean>;
+  /**
+   * Tracks that have this persona identifier assigned, active or archived.
+   *
+   * Takes an opaque string, and this module never learns what it refers to: the
+   * caller is the ai-generation module, which asks before deleting a persona so the
+   * owner is told which tracks to change instead of meeting a constraint error. Both
+   * lifecycles are returned, because an archived track can be restored and would then
+   * point at a persona that no longer exists.
+   */
+  listByPersonaId(personaId: string): Promise<Certification[]>;
   /** Inserts or replaces the whole record; identity is application-generated. */
   save(certification: Certification): Promise<void>;
   archive(id: CertificationId, occurredAt: IsoTimestamp): Promise<void>;

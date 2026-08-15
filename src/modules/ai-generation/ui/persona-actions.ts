@@ -138,10 +138,11 @@ export async function updatePersonaAction(
 /**
  * Deletes a persona.
  *
- * No confirmation step, because in this slice nothing references a persona: no track
- * selects one and no run records one, so deleting is losing the text and nothing else.
- * That is exactly what track assignment changes, and this is one of the two places
- * (with the facade) the next slice must revisit.
+ * No confirmation step, and no cascade either: the facade refuses while a study track is
+ * assigned the persona and names the tracks, so the outcome of pressing delete is either
+ * "gone" or a sentence saying which track to change first. Recorded runs are not a
+ * reason to refuse — they store the persona's key and version as text, so a run stays
+ * readable after its persona is deleted.
  */
 export async function deletePersonaAction(
   _state: FormState,

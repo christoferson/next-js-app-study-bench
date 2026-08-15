@@ -177,6 +177,144 @@ describe("CertificationForm", () => {
     ).toBeInTheDocument();
   });
 
+  /**
+   * The persona field, which this module deliberately knows almost nothing about.
+   *
+   * The component takes `{ id, label }` pairs rather than a persona type: the identifier
+   * is opaque here and resolved by the ai-generation module, and importing its type would
+   * reverse the dependency the boundary test pins.
+   */
+  describe("the persona field", () => {
+    const CHOICES = [
+      { id: "persona-1", label: "My AWS instructor" },
+      { id: "persona-2", label: "My second instructor" },
+    ];
+
+    it("offers automatic plus every persona it was given", () => {
+      render(
+        <CertificationForm
+          action={validatingAction()}
+          submitLabel="Create study track"
+          cancelHref="/"
+          personaChoices={CHOICES}
+        />,
+      );
+
+      const options = [
+        ...screen.getByLabelText("Persona").querySelectorAll("option"),
+      ].map((option) => option.textContent);
+
+      expect(options).toEqual([
+        "Automatic (by study type)",
+        "My AWS instructor",
+        "My second instructor",
+      ]);
+    });
+
+    it("defaults a new track to automatic", () => {
+      render(
+        <CertificationForm
+          action={validatingAction()}
+          submitLabel="Create study track"
+          cancelHref="/"
+          personaChoices={CHOICES}
+        />,
+      );
+
+      expect(screen.getByLabelText("Persona")).toHaveValue("");
+    });
+
+    it("pre-selects the track's own assignment when editing", () => {
+      render(
+        <CertificationForm
+          action={validatingAction()}
+          submitLabel="Save changes"
+          cancelHref="/study-tracks/demo-cloud-practitioner"
+          certification={certificationFixture({ personaId: "persona-2" })}
+          personaChoices={CHOICES}
+        />,
+      );
+
+      expect(screen.getByLabelText("Persona")).toHaveValue("persona-2");
+    });
+
+    it("submits the chosen persona", async () => {
+      const user = userEvent.setup();
+      const onValid = vi.fn();
+
+      render(
+        <CertificationForm
+          action={validatingAction(onValid)}
+          submitLabel="Create study track"
+          cancelHref="/"
+          personaChoices={CHOICES}
+        />,
+      );
+
+      await user.type(screen.getByLabelText(/^Name/), "Demo Track");
+      await user.type(screen.getByLabelText(/^Provider/), "Demo Provider");
+      await user.selectOptions(
+        screen.getByLabelText("Persona"),
+        "My second instructor",
+      );
+      await user.click(
+        screen.getByRole("button", { name: "Create study track" }),
+      );
+
+      await waitFor(() => {
+        expect(onValid).toHaveBeenCalledTimes(1);
+      });
+      expect(onValid.mock.calls[0]?.[0]).toMatchObject({
+        personaId: "persona-2",
+      });
+    });
+
+    it("submits nothing but a blank when the owner has no personas", async () => {
+      // No select at all rather than one with a single useless option, and a hidden
+      // field so an edit cannot silently clear an assignment made elsewhere.
+      const user = userEvent.setup();
+      const onValid = vi.fn();
+
+      render(
+        <CertificationForm
+          action={validatingAction(onValid)}
+          submitLabel="Create study track"
+          cancelHref="/"
+        />,
+      );
+
+      expect(screen.queryByLabelText("Persona")).not.toBeInTheDocument();
+
+      await user.type(screen.getByLabelText(/^Name/), "Demo Track");
+      await user.type(screen.getByLabelText(/^Provider/), "Demo Provider");
+      await user.click(
+        screen.getByRole("button", { name: "Create study track" }),
+      );
+
+      await waitFor(() => {
+        expect(onValid).toHaveBeenCalledTimes(1);
+      });
+      expect(onValid.mock.calls[0]?.[0]).toMatchObject({ personaId: "" });
+    });
+
+    it("keeps an existing assignment when no choices can be offered", () => {
+      // A language track whose owner has only technical personas: the assignment it
+      // already has must survive a save from this form.
+      render(
+        <CertificationForm
+          action={validatingAction()}
+          submitLabel="Save changes"
+          cancelHref="/study-tracks/demo-cloud-practitioner"
+          certification={certificationFixture({ personaId: "persona-9" })}
+        />,
+      );
+
+      expect(document.querySelector('input[name="personaId"]')).toHaveValue(
+        "persona-9",
+      );
+    });
+  });
+
   it("offers a cancel link that leaves the form", () => {
     renderCreateForm();
 

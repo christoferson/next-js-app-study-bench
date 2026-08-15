@@ -455,6 +455,7 @@ describe("importHskSyllabusObjectives", () => {
       targetDate: null,
       priority: 3,
       defaultSessionMinutes: 20,
+      personaId: null,
     });
 
     await runImport();

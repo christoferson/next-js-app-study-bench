@@ -1,6 +1,11 @@
 import type { Clock } from "@/platform/clock";
 import type { IdGenerator } from "@/platform/id-generator";
+import type { StudyType } from "@/modules/certifications/domain/certification";
+import { describeStudyType } from "@/modules/certifications/domain/certification";
+import type { CertificationRepository } from "@/modules/certifications/ports/certification-repository";
 import {
+  PersonaArchetypeMismatchError,
+  PersonaInUseError,
   PersonaNotFoundError,
   PersonaTemplateNotFoundError,
 } from "@/modules/ai-generation/domain/errors";
@@ -14,8 +19,11 @@ import type {
   StoredPersona,
 } from "@/modules/ai-generation/domain/stored-persona";
 import {
+  describePersonaArchetype,
+  personaArchetypeForStudyType,
   personaKeyFromLabel,
   personaKeyWithSuffix,
+  personaSuitsStudyType,
 } from "@/modules/ai-generation/domain/stored-persona";
 import type { PersonaRepository } from "@/modules/ai-generation/ports/persona-repository";
 
@@ -35,11 +43,17 @@ import type { PersonaRepository } from "@/modules/ai-generation/ports/persona-re
  * it, so changed wording must be a new version rather than an edit in place — the same
  * rule `personas.ts` states for the built-in personas, applied to data instead of code.
  *
- * **Deletion is unconditional.** Nothing references a persona in this slice: the
- * runtime still selects a built-in persona by study type, and no track or run points
- * here. That changes with track assignment, and this facade is where the guard belongs
- * when it does — deleting a persona a recorded run names must not make that run
- * unreadable.
+ * **Deletion is refused while a track uses it.** A track that names a deleted persona
+ * would have no persona at all, so `deletePersona` asks the certification repository
+ * first and names the tracks in the refusal. Recorded *runs* are deliberately not a
+ * reason to refuse: a run stores the persona key and version as text rather than a
+ * foreign key, so history stays readable after the persona is gone.
+ *
+ * **Assignment is validated here.** `resolveAssignment` is the edge the certifications
+ * module cannot have: it turns a submitted identifier into one the track may store,
+ * refusing an identifier that names nothing or a persona for a different kind of study.
+ * Certifications must not import this module (`spec/ARCHITECTURE.md` section 7), so the
+ * column there is opaque text and this is what gives it meaning.
  */
 
 /** The settings list, plus what a new persona can be started from. */
@@ -50,6 +64,13 @@ export interface PersonaLibraryView {
 
 export interface PersonaFacadeDependencies {
   readonly personas: PersonaRepository;
+  /**
+   * Read-only here, and only to answer "is this persona in use?".
+   *
+   * The dependency runs this way round — generation knows about certifications, never
+   * the reverse — which is exactly why the deletion guard lives in this module.
+   */
+  readonly certifications: CertificationRepository;
   readonly clock: Clock;
   readonly ids: IdGenerator;
 }
@@ -156,11 +177,68 @@ export class PersonaFacade {
    * Removes a persona.
    *
    * Refuses an identifier that matches nothing, so a stale list says so rather than
-   * reporting a deletion that never happened.
+   * reporting a deletion that never happened, and refuses one a study track is assigned
+   * — naming the tracks, because the owner has to open each track's edit form to change
+   * it. The database enforces the same rule as a foreign key (migration 0010); this
+   * check is what turns it into a sentence.
    */
   async deletePersona(id: string): Promise<void> {
     await this.requirePersona(id);
+
+    const assigned = await this.deps.certifications.listByPersonaId(id);
+
+    if (assigned.length > 0) {
+      throw new PersonaInUseError(
+        id,
+        assigned.map((certification) => certification.name),
+      );
+    }
+
     await this.deps.personas.delete(id);
+  }
+
+  /**
+   * Personas a track of this study type may be assigned, plus the automatic default.
+   *
+   * Restricted to the matching archetype rather than listing everything and warning
+   * afterwards: the form then offers only choices that will be accepted.
+   */
+  async listAssignable(
+    studyType: StudyType,
+  ): Promise<readonly StoredPersona[]> {
+    const personas = await this.deps.personas.list();
+
+    return personas.filter((persona) =>
+      personaSuitsStudyType(persona, studyType),
+    );
+  }
+
+  /**
+   * Validates a persona assignment for a track of `studyType`.
+   *
+   * Returns the identifier the track should store: `null` for "decide by study type",
+   * or the persona's own id. Raises rather than falling back, because this runs on a
+   * submitted form where a silent substitution would tell the owner they had assigned
+   * something they had not.
+   */
+  async resolveAssignment(
+    personaId: string | null,
+    studyType: StudyType,
+  ): Promise<string | null> {
+    if (personaId === null || personaId.length === 0) {
+      return null;
+    }
+
+    const persona = await this.requirePersona(personaId);
+
+    if (!personaSuitsStudyType(persona, studyType)) {
+      throw new PersonaArchetypeMismatchError(
+        personaId,
+        `"${persona.label}" is a ${describePersonaArchetype(persona.archetype).toLowerCase()} persona, and a ${describeStudyType(studyType).toLowerCase()} track needs a ${describePersonaArchetype(personaArchetypeForStudyType(studyType)).toLowerCase()} one. Choose another persona, or leave it automatic.`,
+      );
+    }
+
+    return persona.id;
   }
 
   /**

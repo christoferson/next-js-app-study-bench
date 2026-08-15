@@ -130,6 +130,16 @@ export const generationRequestSchema = z.object({
   questionTypes: typeListSchema(QUESTION_TYPES),
   cardTypes: typeListSchema(CARD_TYPES),
   /**
+   * One of the owner's stored personas, for this batch only.
+   *
+   * Shape only, and blank means "use the track's persona, or the built-in one for its
+   * study type". Whether the identifier names a real persona of a suitable archetype is
+   * the facade's to decide, which is why an unknown value is not rejected here: a
+   * persona deleted in another tab falls back to the automatic choice rather than
+   * failing a request the owner has just paid the wait for.
+   */
+  personaId: optionalText(ID_LIMIT),
+  /**
    * Set when the owner has seen the duplicate-batch notice and asked for the
    * batch anyway (`SPEC.md` section 11.6).
    */
@@ -195,6 +205,8 @@ export const objectiveImportRequestSchema = z.object({
    */
   pastedText: optionalText(MAX_SYLLABUS_CHARACTERS),
   additionalInstructions: optionalText(ADDITIONAL_INSTRUCTIONS_LIMIT),
+  /** One of the owner's stored personas, for this import only. See above. */
+  personaId: optionalText(ID_LIMIT),
 });
 
 export type ObjectiveImportRequestInput = z.output<

@@ -29,10 +29,11 @@ item. **Out of the box it uses a fake model and costs nothing** — see
   material. Nothing generated can appear in a study session until you activate
   it. Rejecting an item deletes it while it is still a draft; activating it makes
   it yours, and generation will not touch it again.
-- Content is written by a **persona** chosen from the track's study type: a
-  technical-certification persona writes applied scenario questions in English, an
-  HSK persona writes word- and sentence-level material in simplified Chinese with
-  pinyin. The two produce structurally different prompts, not reworded copies.
+- Content is written by a **persona**: the one assigned to the track, or — by default —
+  the built-in one for its study type. A technical-certification persona writes applied
+  scenario questions in English, an HSK persona writes word- and sentence-level material
+  in simplified Chinese with pinyin. The two produce structurally different prompts, not
+  reworded copies. See [Personas](#personas) for writing and assigning your own.
 - Model output is validated against an application-owned schema and then checked
   by deterministic rules (answerable choices, a marked correct answer, objectives
   that exist on this track, no duplicate items in a batch) **before** anything is
@@ -526,8 +527,8 @@ old clip stays on disk until it is removed here.
 A persona is the instructions generation writes under: who the model is, what a good
 question looks like for the subject, what a good flashcard looks like, what it must
 refuse, and which content types and language it defaults to. Two personas are built
-into the source — one for technical certifications, one for HSK Chinese — and those
-are still the ones every generation run uses.
+into the source — one for technical certifications, one for HSK Chinese — and they are
+what a track uses until you choose otherwise.
 
 `/settings/personas` is where you write your own. Start from one of six prepared
 starting points — AWS associate level, AWS professional and specialty level, a generic
@@ -544,15 +545,48 @@ from its name at creation — `jlpt-japanese-proficiency` — which does not mov
 rename it, so future run provenance stays readable.
 
 Each persona has a fixed **archetype**, technical or language, taken from the starting
-point and not editable. It is what a later slice wires behaviour to: vocabulary
-enrichment is meaningful for a language persona and meaningless for a technical one,
-and that decision must come from a field rather than from searching a name for "HSK".
+point and not editable. It decides which tracks may use it — a language persona for a
+language-proficiency track, a technical one for a technical certification or a general
+track — and which behaviour applies: vocabulary enrichment is meaningful for a language
+persona and meaningless for a technical one, and that decision must come from a field
+rather than from searching a name for "HSK".
 
-**Nothing generated changes yet.** The list starts empty on a fresh installation — no
-persona is copied into the database, because the built-in personas remain the ones
-generation applies — and a persona you create here is not yet selectable on a study
-track. Choosing a persona per track is the next slice. Until then a persona can be
-deleted freely, since nothing references one.
+### Choosing a persona
+
+A study track's edit form has a **Persona** select. It offers `Automatic (by study
+type)`, which is the default and every existing track's setting, plus your own personas
+whose archetype suits that track. Automatic means the built-in persona for the study
+type, exactly as before. The select does not appear at all until you have a persona that
+suits the track, so nothing on the form changes on a fresh installation.
+
+The generate form and the objective-import form offer the same select, defaulting to the
+track's assignment. A choice there applies to **that batch only** and does not change
+the track.
+
+Every generation run records the persona that produced it as a key and a version —
+`aws-associate-level v3` for one of yours, `technical-certification v1` for a built-in
+one — never a database identifier. The run review screen shows the persona's name and
+resolves it from either registry; a run whose persona has since been deleted shows the
+recorded key instead of inventing a name.
+
+Vocabulary enrichment still uses the built-in HSK persona regardless of the track's
+assignment. Its prompt and its matching logic read the HSK persona's vocabulary fields
+specifically, so routing it through an owner-written persona is a separate change.
+
+### Deleting a persona
+
+A persona a study track is assigned **cannot be deleted**. The refusal names the tracks
+so you know which to change, archived tracks included — restoring one would otherwise
+leave it pointing at nothing. Change those tracks back to automatic, or to another
+persona, and the deletion succeeds. The database enforces the same rule as a foreign key
+with `ON DELETE RESTRICT`, so no code path can bypass it.
+
+Recorded runs are deliberately **not** a reason to refuse. A run stores the persona's key
+and version as text rather than a foreign key, so deleting a persona leaves its history
+readable.
+
+The list starts empty on a fresh installation: no persona is copied into the database,
+and every track begins on automatic.
 
 ## Live provider tests
 
@@ -681,8 +715,8 @@ With your own material imported (`npm run import:real`, then
   still test language, and every draft is marked `AI generated — model knowledge`
   Personas (no AWS account, no spend — managing a persona calls no model):
 
-- Open `/settings/personas` from the home page — the list is empty and says
-  generation still uses the built-in personas, and six starting points are offered
+- Open `/settings/personas` from the home page — the list is empty, it says where a
+  persona is assigned and what automatic means, and six starting points are offered
 - Choose "JLPT Japanese proficiency" — the form is prefilled with kana, kanji, and
   JLPT-level guidance, one guideline per line, and mentions no pinyin anywhere
 - Save it — it appears in the list as version 1, archetype Language, with the key
@@ -692,9 +726,28 @@ With your own material imported (`npm run import:real`, then
 - Clear the guidance box entirely and save — the form refuses with a message beside
   the field, and nothing is written
 - Delete it — the list is empty again
-- Generate questions on a track — the run is unaffected and still records the built-in
-  persona
 - `http://localhost:3000/settings/personas/new?template=nope` — not-found page
+
+Assigning a persona to a track (still no spend — the default provider is the fake one):
+
+- Create a persona from "AWS associate level", then open a technical track's edit form —
+  a **Persona** select is there, set to `Automatic (by study type)`, and your persona is
+  the only other option
+- Open a language track's edit form — the select is not there at all, because no persona
+  you have suits it
+- Assign the persona to the technical track and save — reopen the form and it is still
+  selected
+- Generate a small batch on that track — the form's own Persona select defaults to the
+  assignment, and the run review names your persona and its version rather than
+  "Technical certification"
+- Leave the track assigned but choose `Automatic` on the generate form — that run records
+  `technical-certification v1`, and the track's own assignment is unchanged
+- Go back to `/settings/personas` and delete the assigned persona — it refuses, naming
+  the track
+- Set that track back to `Automatic`, then delete the persona — it succeeds, and the
+  earlier run still opens and shows the recorded key `aws-associate-level`
+- Archive a track that has a persona assigned and try to delete that persona — still
+  refused, and the message names the archived track
 - `http://localhost:3000/study/sessions/nope` — not-found page
 - `http://localhost:3000/study-tracks/unknown` — not-found page
 - `http://localhost:3000/study-tracks/demo-cloud-practitioner/questions/nope` —

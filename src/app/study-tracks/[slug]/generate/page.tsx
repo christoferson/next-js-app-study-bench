@@ -103,6 +103,8 @@ export default async function GeneratePage({
           modelProvider={view.modelProvider}
           objectives={view.objectives}
           persona={view.persona}
+          personaChoices={view.personaChoices}
+          assignedPersonaId={view.assignedPersonaId}
           slug={view.certification.slug}
         />
       </section>

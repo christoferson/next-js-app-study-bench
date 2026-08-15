@@ -34,6 +34,7 @@ export interface CertificationRow {
   readonly default_session_minutes: number;
   readonly status: string;
   readonly origin: string;
+  readonly persona_id: string | null;
   readonly created_at: string;
   readonly updated_at: string;
 }
@@ -68,6 +69,9 @@ export function toCertification(row: CertificationRow): Certification {
     defaultSessionMinutes: row.default_session_minutes,
     status: toLifecycleStatus(row.status),
     origin: toContentOrigin(row.origin),
+    // Opaque here on purpose: this module cannot check that it names a persona
+    // without importing ai-generation, which the boundary forbids.
+    personaId: row.persona_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

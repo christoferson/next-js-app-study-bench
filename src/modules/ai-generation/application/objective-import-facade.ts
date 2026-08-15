@@ -32,8 +32,13 @@ import type {
   ProposedObjective,
   ProposedObjectiveTree,
 } from "@/modules/ai-generation/domain/objective-import";
-import type { Persona } from "@/modules/ai-generation/domain/personas";
-import { personaForStudyType } from "@/modules/ai-generation/domain/personas";
+import type { EffectivePersona } from "@/modules/ai-generation/domain/personas";
+import type { StoredPersona } from "@/modules/ai-generation/domain/stored-persona";
+import type { PersonaRepository } from "@/modules/ai-generation/ports/persona-repository";
+import {
+  assignablePersonas,
+  resolveEffectivePersona,
+} from "./persona-selection";
 import {
   renderPrompt,
   templateIdForItemKind,
@@ -92,7 +97,11 @@ import type { ObjectiveImportRequestInput } from "./schemas";
 /** What the upload form needs to render. */
 export interface ObjectiveImportFormView {
   readonly certification: Certification;
-  readonly persona: Persona;
+  /** The persona this import would use with nothing chosen: assigned, else built-in. */
+  readonly persona: EffectivePersona;
+  /** Stored personas the owner may import with instead, archetype-restricted. */
+  readonly personaChoices: readonly StoredPersona[];
+  readonly assignedPersonaId: string | null;
   readonly modelProvider: string;
   readonly modelId: string;
   readonly maxFileBytes: number;
@@ -131,6 +140,8 @@ export interface ObjectiveImportResult {
 
 export interface ObjectiveImportFacadeDependencies {
   readonly certifications: CertificationRepository;
+  /** The owner's own personas, for the same resolution order the generate flow uses. */
+  readonly personas: PersonaRepository;
   readonly unitOfWork: GenerationUnitOfWork;
   readonly gateway: LanguageModelGateway;
   readonly extractor: DocumentTextExtractor;
@@ -157,7 +168,16 @@ export class ObjectiveImportFacade {
 
     return {
       certification,
-      persona: personaForStudyType(certification.studyType),
+      persona: await resolveEffectivePersona(
+        this.deps.personas,
+        certification,
+        null,
+      ),
+      personaChoices: assignablePersonas(
+        await this.deps.personas.list(),
+        certification,
+      ),
+      assignedPersonaId: certification.personaId,
       modelProvider: this.deps.gateway.provider,
       modelId: this.deps.gateway.modelId,
       maxFileBytes: MAX_SYLLABUS_FILE_BYTES,
@@ -195,7 +215,11 @@ export class ObjectiveImportFacade {
       async ({ objectives: repository }) =>
         repository.listByCertification(certification.id),
     );
-    const persona = personaForStudyType(certification.studyType);
+    const persona = await resolveEffectivePersona(
+      this.deps.personas,
+      certification,
+      input.personaId,
+    );
     const prompt = renderPrompt("OBJECTIVE_IMPORT", {
       persona,
       trackName: certification.name,
@@ -235,6 +259,8 @@ export class ObjectiveImportFacade {
       generationMode: "SOURCE_GROUNDED",
       modelProvider: this.deps.gateway.provider,
       modelId: this.deps.gateway.modelId,
+      // A built-in persona's id, or one of the owner's personas' key and version. Text,
+      // never the stored persona's uuid, so the run stays readable after a deletion.
       personaId: persona.id,
       personaVersion: persona.version,
       promptTemplateId: templateIdForItemKind("OBJECTIVE_IMPORT"),

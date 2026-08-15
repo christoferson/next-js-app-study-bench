@@ -18,6 +18,9 @@ import {
 import { FakeLanguageModelGateway } from "@/modules/ai-generation/infrastructure/fake-language-model-gateway";
 import { SqliteGenerationRunRepository } from "@/modules/ai-generation/infrastructure/sqlite-generation-run-repository";
 import { SqliteGenerationUnitOfWork } from "@/modules/ai-generation/infrastructure/sqlite-generation-unit-of-work";
+import { SqlitePersonaRepository } from "@/modules/ai-generation/infrastructure/sqlite-persona-repository";
+import { storedPersonaFixture } from "@/modules/ai-generation/infrastructure/persona-test-support";
+import type { StoredPersona } from "@/modules/ai-generation/domain/stored-persona";
 import { SYNTHETIC_SYLLABUS } from "@/modules/ai-generation/infrastructure/test-support";
 import type {
   DocumentKind,
@@ -79,7 +82,12 @@ class StubExtractor implements DocumentTextExtractor {
 function request(
   overrides: Partial<ObjectiveImportRequestInput> = {},
 ): ObjectiveImportRequestInput {
-  return { pastedText: null, additionalInstructions: null, ...overrides };
+  return {
+    pastedText: null,
+    additionalInstructions: null,
+    personaId: null,
+    ...overrides,
+  };
 }
 
 function upload(
@@ -118,6 +126,7 @@ describe("ObjectiveImportFacade", () => {
   ): ObjectiveImportFacade {
     return new ObjectiveImportFacade({
       certifications: new SqliteCertificationRepository(database),
+      personas: new SqlitePersonaRepository(database),
       unitOfWork: new SqliteGenerationUnitOfWork(database),
       gateway,
       extractor,
@@ -155,6 +164,95 @@ describe("ObjectiveImportFacade", () => {
       await expect(
         facade().findImportForm("no-such-track"),
       ).resolves.toBeNull();
+    });
+  });
+
+  /**
+   * The same persona resolution the generate form has, for the same reason: an extraction
+   * is a paid model call whose instructions come from a persona, and the owner who wrote
+   * their own should not have it silently ignored on this screen alone.
+   */
+  describe("a stored persona", () => {
+    const STORED_ROLE =
+      "You are the owner's own syllabus reader, and you copy rather than infer.";
+
+    async function storeAndAssign(): Promise<StoredPersona> {
+      const persona = storedPersonaFixture({ role: STORED_ROLE, version: 4 });
+
+      await new SqlitePersonaRepository(database).insert(persona);
+      await new SqliteCertificationRepository(database).save({
+        ...TRACK,
+        personaId: persona.id,
+      });
+
+      return persona;
+    }
+
+    it("offers the assignable personas and the track's assignment on the form", async () => {
+      const persona = await storeAndAssign();
+      const view = await facade().findImportForm(TRACK.slug);
+
+      expect(view?.personaChoices.map((choice) => choice.id)).toEqual([
+        persona.id,
+      ]);
+      expect(view?.assignedPersonaId).toBe(persona.id);
+      expect(view?.persona.id).toBe(persona.personaKey);
+    });
+
+    it("uses it for the prompt and records its key and version", async () => {
+      const persona = await storeAndAssign();
+      const gateway = new FakeLanguageModelGateway();
+      const result = await facadeWith(
+        new StubExtractor({ text: SYNTHETIC_SYLLABUS }),
+        gateway,
+      ).extractObjectives(TRACK.slug, request(), upload());
+
+      expect(gateway.promptsSent[0]?.system).toContain(STORED_ROLE);
+      expect(result.run.personaId).toBe(persona.personaKey);
+      expect(result.run.personaVersion).toBe(4);
+    });
+
+    it("lets a choice on the form override the assignment", async () => {
+      await storeAndAssign();
+
+      const chosen = storedPersonaFixture({
+        id: "persona-2",
+        personaKey: "my-other-reader",
+        label: "My other reader",
+        role: "You are a second reader entirely.",
+      });
+
+      await new SqlitePersonaRepository(database).insert(chosen);
+
+      const gateway = new FakeLanguageModelGateway();
+      const result = await facadeWith(
+        new StubExtractor({ text: SYNTHETIC_SYLLABUS }),
+        gateway,
+      ).extractObjectives(
+        TRACK.slug,
+        request({ personaId: chosen.id }),
+        upload(),
+      );
+
+      expect(gateway.promptsSent[0]?.system).toContain(
+        "You are a second reader entirely.",
+      );
+      expect(result.run.personaId).toBe(chosen.personaKey);
+    });
+
+    it("leaves an unassigned track on the built-in persona", async () => {
+      await new SqlitePersonaRepository(database).insert(
+        storedPersonaFixture({ role: STORED_ROLE }),
+      );
+
+      const result = await facade().extractObjectives(
+        TRACK.slug,
+        request(),
+        upload(),
+      );
+
+      expect(result.run.personaId).toBe("technical-certification");
+      expect(result.run.personaVersion).toBe(1);
     });
   });
 

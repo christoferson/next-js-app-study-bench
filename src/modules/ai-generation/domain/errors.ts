@@ -23,7 +23,84 @@ export type GenerationDomainErrorCode =
   | "IMPORT_NOTHING_TO_APPLY"
   | "SYLLABUS_UNREADABLE"
   | "PERSONA_NOT_FOUND"
-  | "PERSONA_TEMPLATE_NOT_FOUND";
+  | "PERSONA_TEMPLATE_NOT_FOUND"
+  | "PERSONA_IN_USE"
+  | "PERSONA_ARCHETYPE_MISMATCH";
+
+/**
+ * A persona cannot be deleted while a study track is assigned it.
+ *
+ * The tracks are named, because "unassign it first" is not actionable without knowing
+ * where: the owner has to open a track's edit form to change it. Recorded runs are
+ * deliberately *not* a reason to refuse — a run stores the persona key and version as
+ * text, not a foreign key, so a deleted persona leaves its history readable.
+ *
+ * The database has the same rule as a foreign key with `ON DELETE RESTRICT` (migration
+ * 0010). This check exists so the owner reads a sentence instead of a constraint
+ * violation; the constraint exists so no other write path can get around it.
+ */
+export class PersonaInUseError extends DomainError {
+  readonly code = "PERSONA_IN_USE";
+
+  constructor(
+    readonly personaId: string,
+    readonly trackNames: readonly string[],
+  ) {
+    super(
+      `That persona is assigned to ${describeTrackList(trackNames)}. Change ${
+        trackNames.length === 1 ? "that track" : "those tracks"
+      } to another persona first.`,
+    );
+  }
+
+  fieldMessages(): Readonly<Record<string, readonly string[]>> {
+    return { "": [this.message] };
+  }
+}
+
+/**
+ * The chosen persona is for a different kind of study than the track.
+ *
+ * A refusal rather than a warning, for the reason `stored-persona.ts` states: the
+ * archetype decides which machinery applies to a track, so a language persona on a
+ * technical track would make generation and enrichment disagree about the subject.
+ * Reachable from a stale form — the select offers only compatible personas — or from a
+ * track whose study type was changed after a persona was assigned.
+ */
+export class PersonaArchetypeMismatchError extends DomainError {
+  readonly code = "PERSONA_ARCHETYPE_MISMATCH";
+
+  constructor(
+    readonly personaId: string,
+    readonly detail: string,
+  ) {
+    super(detail);
+  }
+
+  fieldMessages(): Readonly<Record<string, readonly string[]>> {
+    return { personaId: [this.detail] };
+  }
+}
+
+/** "the Foo track", "the Foo and Bar tracks", "3 study tracks". */
+function describeTrackList(names: readonly string[]): string {
+  if (names.length === 0) {
+    // Unreachable: the error is only raised when a track was found.
+    return "a study track";
+  }
+
+  if (names.length === 1) {
+    return `the study track "${names[0]}"`;
+  }
+
+  if (names.length <= 3) {
+    const quoted = names.map((name) => `"${name}"`);
+
+    return `the study tracks ${quoted.slice(0, -1).join(", ")} and ${quoted[quoted.length - 1]}`;
+  }
+
+  return `${names.length} study tracks`;
+}
 
 /**
  * The persona the owner asked to edit or delete no longer exists.

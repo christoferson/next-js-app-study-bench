@@ -94,6 +94,7 @@ export async function requestGenerationAction(
       additionalInstructions: readString(form, "additionalInstructions"),
       questionTypes: readStrings(form, "questionTypes"),
       cardTypes: readStrings(form, "cardTypes"),
+      personaId: readString(form, "personaId"),
       generateAnyway: readString(form, "generateAnyway"),
     });
     const facade = getGenerationFacade();

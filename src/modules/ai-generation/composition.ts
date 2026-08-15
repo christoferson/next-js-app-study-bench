@@ -64,6 +64,7 @@ export function createGenerationFacade(
     flashcards: new SqliteFlashcardRepository(database),
     certifications: new SqliteCertificationRepository(database),
     objectives: new SqliteObjectiveRepository(database),
+    personas: new SqlitePersonaRepository(database),
     unitOfWork: new SqliteGenerationUnitOfWork(database, runner),
     gateway: gateway ?? createLanguageModelGateway(),
     clock: systemClock,
@@ -105,6 +106,7 @@ export function createObjectiveImportFacade(
 ): ObjectiveImportFacade {
   return new ObjectiveImportFacade({
     certifications: new SqliteCertificationRepository(database),
+    personas: new SqlitePersonaRepository(database),
     unitOfWork: new SqliteGenerationUnitOfWork(database, runner),
     gateway: gateway ?? createLanguageModelGateway(),
     extractor: new UnpdfDocumentTextExtractor(),
@@ -116,15 +118,17 @@ export function createObjectiveImportFacade(
 /**
  * Composition for persona management.
  *
- * No gateway, no transaction runner, no configuration: managing a persona calls no
- * model and writes one row at a time, so the only dependencies are the repository, the
- * clock, and the identifier source. It lives beside the generation facade because a
- * persona is generation's vocabulary — the next slice hands a stored persona to the
- * prompt builder — not because it shares any wiring with it.
+ * No gateway, no transaction runner, no configuration: managing a persona calls no model
+ * and writes one row at a time. The certification repository is read-only here and is
+ * needed for two things a persona is now part of — refusing to delete one a track is
+ * assigned, and validating an assignment on the track form. Certifications cannot do
+ * either itself without importing this module, which the dependency direction forbids
+ * (`spec/ARCHITECTURE.md` section 7).
  */
 export function createPersonaFacade(database: SqliteDatabase): PersonaFacade {
   return new PersonaFacade({
     personas: new SqlitePersonaRepository(database),
+    certifications: new SqliteCertificationRepository(database),
     clock: systemClock,
     ids: cryptoIdGenerator,
   });

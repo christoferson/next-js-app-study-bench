@@ -1,5 +1,7 @@
+import type { StudyType } from "@/modules/certifications/domain/certification";
 import type { QuestionType } from "@/modules/question-bank/domain/question";
 import type { CardType } from "@/modules/flashcards/domain/flashcard";
+import type { EffectivePersona } from "./personas";
 
 /**
  * The owner's own personas (`SPEC.md` section 10, `spec/AI-GUIDELINES.md` section 2).
@@ -12,9 +14,9 @@ import type { CardType } from "@/modules/flashcards/domain/flashcard";
  *
  * A stored persona is deliberately not a `Persona`. It carries a uuid rather than a
  * `PersonaId`, and it carries an archetype, a key, and timestamps that a code persona
- * has no use for. Nothing here selects a persona for a run — that arrives with track
- * assignment in the next slice — so this file describes a record and its editable
- * fields, and nothing more.
+ * has no use for. `storedPersonaToPersona` below is the one place the two meet: it
+ * reduces a stored persona to the `EffectivePersona` the prompt builder takes, so a
+ * track can be assigned either kind without a second prompt path.
  */
 
 /**
@@ -106,4 +108,69 @@ export function personaKeyFromLabel(label: string): string {
 /** `stem`, `stem-2`, `stem-3`, ... — how a key collision is resolved. */
 export function personaKeyWithSuffix(stem: string, attempt: number): string {
   return attempt <= 1 ? stem : `${stem}-${attempt}`;
+}
+
+/**
+ * Which archetype a study type may be assigned a persona of.
+ *
+ * The same mapping `personaIdForStudyType` makes for the built-in personas, expressed
+ * over archetypes: a language track studies words, a technical or general track studies
+ * applied judgement. Exhaustive over `StudyType`, so a new study type must decide here
+ * rather than accepting every persona by default.
+ *
+ * A track may only be assigned a persona of its own archetype. The restriction is
+ * deliberate rather than an advisory warning: an archetype decides which machinery
+ * applies — vocabulary enrichment is meaningful for a language persona and meaningless
+ * for a technical one — so a mismatched assignment would produce a track whose
+ * generation and whose enrichment disagree about what it is studying.
+ */
+export function personaArchetypeForStudyType(
+  studyType: StudyType,
+): PersonaArchetype {
+  switch (studyType) {
+    case "LANGUAGE_PROFICIENCY":
+      return "LANGUAGE";
+    case "TECHNICAL_CERTIFICATION":
+      return "TECHNICAL";
+    case "GENERAL":
+      return "TECHNICAL";
+  }
+}
+
+export function personaSuitsStudyType(
+  persona: StoredPersona,
+  studyType: StudyType,
+): boolean {
+  return persona.archetype === personaArchetypeForStudyType(studyType);
+}
+
+/**
+ * A stored persona as generation applies it.
+ *
+ * The adapter that lets one prompt builder serve both kinds of persona. Every field is
+ * carried across unchanged except the identity: the persona *key* becomes the
+ * identifier, not the uuid, because that identifier is written onto every run it
+ * produces and a key is the stable, readable thing — `personaKey` survives a rename,
+ * and "hsk-5-intensive v3" explains a run in a way a uuid cannot.
+ *
+ * Nothing is added and nothing is reworded, which is what keeps the rendered prompt
+ * structurally identical to a built-in persona's: `prompt-templates.ts` reads exactly
+ * these fields, so no template version bump is involved in this change.
+ */
+export function storedPersonaToPersona(
+  persona: StoredPersona,
+): EffectivePersona {
+  return {
+    id: persona.personaKey,
+    version: persona.version,
+    label: persona.label,
+    role: persona.role,
+    guidance: persona.guidance,
+    cardGuidance: persona.cardGuidance,
+    prohibitions: persona.prohibitions,
+    defaultQuestionTypes: persona.defaultQuestionTypes,
+    defaultCardTypes: persona.defaultCardTypes,
+    languageInstruction: persona.languageInstruction,
+    contentLanguage: persona.contentLanguage,
+  };
 }

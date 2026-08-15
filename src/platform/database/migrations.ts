@@ -849,4 +849,46 @@ CREATE TABLE personas (
 CREATE INDEX personas_label_idx ON personas (label);
 `,
   },
+  {
+    id: "0010",
+    description: "track-level persona assignment",
+    sql: `
+-- \`certifications.persona_id\` — the field \`SPEC.md\` section 6.1 has always listed and
+-- that every milestone until now deliberately left out, because there was nothing to
+-- point it at. 0009 gave the owner personas; this column is what makes them usable.
+--
+-- Three decisions.
+--
+-- 1. Nullable, and NULL is the ordinary state. NULL means "decide by study type", which
+--    is exactly what the runtime did before this column existed, so every existing track
+--    keeps behaving as it does today and no backfill invents an assignment the owner
+--    never made.
+--
+-- 2. A real foreign key, ON DELETE RESTRICT. The alternative — an opaque text column
+--    with no constraint — was considered and rejected: an assigned persona that has been
+--    deleted would leave a track pointing at nothing, and every reader would have to
+--    decide what to do about it. RESTRICT makes "a persona a track uses cannot be
+--    deleted" a property of the schema. \`PersonaFacade.deletePersona\` refuses first,
+--    with a message that says which tracks to change, so the owner meets an explanation
+--    rather than a constraint error; the constraint is the floor under that check, not
+--    the owner-facing mechanism.
+--
+--    A foreign key between two tables that different modules own is deliberate. Modules
+--    own code, not tables (\`spec/ARCHITECTURE.md\` section 7): the certifications module
+--    never learns what a persona is — it stores and returns an opaque identifier — and
+--    the ai-generation module, which may depend on certifications, is the only side that
+--    resolves that identifier into a persona.
+--
+-- 3. Runs are not touched, and that is the point of \`persona_key\`.
+--    \`generation_runs.persona_id\` and \`persona_version\` are plain TEXT and INTEGER
+--    with no reference to this table (see 0005), so deleting a persona can never orphan
+--    or rewrite a recorded run: the run keeps the key and version strings that name the
+--    text which produced it. Provenance survives deletion; assignment does not.
+ALTER TABLE certifications ADD COLUMN persona_id TEXT
+  REFERENCES personas (id) ON DELETE RESTRICT;
+
+-- Answers one question: does any track use this persona? Asked before every deletion.
+CREATE INDEX certifications_persona_idx ON certifications (persona_id);
+`,
+  },
 ];

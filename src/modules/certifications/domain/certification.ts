@@ -5,10 +5,6 @@ import type { IsoTimestamp } from "@/platform/clock";
  *
  * Domain code is framework-free: no React, Next.js, database driver, or
  * environment access.
- *
- * `personaId` from `SPEC.md` section 6.1 is deliberately absent. Personas are
- * introduced in D6; adding a column or field for them now would be placeholder
- * structure for an unauthorized milestone.
  */
 
 export type CertificationId = string;
@@ -59,6 +55,22 @@ export interface Certification {
   readonly defaultSessionMinutes: number;
   readonly status: LifecycleStatus;
   readonly origin: ContentOrigin;
+  /**
+   * The persona generation applies to this track (`SPEC.md` section 6.1).
+   *
+   * An opaque identifier, deliberately. This module stores it and hands it back; it
+   * never resolves it, because a persona belongs to the ai-generation module and the
+   * dependency runs the other way — certifications must not learn that generation
+   * exists (`spec/ARCHITECTURE.md` section 7, pinned by a boundary test). Validating
+   * that the identifier names a real persona of a compatible archetype therefore
+   * happens at the edge that does know personas: `PersonaFacade.resolveAssignment`,
+   * called by the track actions in `src/app/study-tracks/track-actions.ts` before this
+   * module's facade is reached.
+   *
+   * `null` means "decide from the study type", which is what the built-in persona
+   * registry has always done and remains the default for every track.
+   */
+  readonly personaId: string | null;
   readonly createdAt: IsoTimestamp;
   readonly updatedAt: IsoTimestamp;
 }

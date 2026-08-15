@@ -11,12 +11,17 @@ import {
   formLevelErrors,
 } from "@/shared/ui/form-state";
 import { MAX_IMPORT_DEPTH } from "@/modules/ai-generation/domain/objective-import";
-import type { Persona } from "@/modules/ai-generation/domain/personas";
+import type { EffectivePersona } from "@/modules/ai-generation/domain/personas";
+import type { StoredPersona } from "@/modules/ai-generation/domain/stored-persona";
 
 interface ObjectiveImportFormProps {
   readonly action: (state: FormState, form: FormData) => Promise<FormState>;
   readonly slug: string;
-  readonly persona: Persona;
+  /** The persona this import uses when the owner chooses none. */
+  readonly persona: EffectivePersona;
+  /** The owner's personas that suit this track. Empty renders no select. */
+  readonly personaChoices?: readonly StoredPersona[];
+  readonly assignedPersonaId?: string | null;
   readonly modelProvider: string;
   readonly modelId: string;
   readonly maxFileBytes: number;
@@ -47,6 +52,8 @@ export function ObjectiveImportForm({
   action,
   slug,
   persona,
+  personaChoices = [],
+  assignedPersonaId = null,
   modelProvider,
   modelId,
   maxFileBytes,
@@ -184,6 +191,38 @@ export function ObjectiveImportForm({
           messages={fieldErrors(state, "additionalInstructions")}
         />
       </div>
+
+      {personaChoices.length > 0 ? (
+        <div className="field">
+          <label htmlFor="personaId">Persona</label>
+          <p className="field-hint" id="personaId-hint">
+            Which voice reads the document. Automatic uses the built-in persona
+            for this track&apos;s study type. This applies to this import only.
+          </p>
+          <select
+            id="personaId"
+            name="personaId"
+            aria-describedby={
+              fieldErrors(state, "personaId") === undefined
+                ? "personaId-hint"
+                : "personaId-hint personaId-errors"
+            }
+            aria-invalid={fieldErrors(state, "personaId") !== undefined}
+            defaultValue={state.values.personaId ?? assignedPersonaId ?? ""}
+          >
+            <option value="">Automatic (by study type)</option>
+            {personaChoices.map((choice) => (
+              <option key={choice.id} value={choice.id}>
+                {choice.label}
+              </option>
+            ))}
+          </select>
+          <FieldErrors
+            id="personaId-errors"
+            messages={fieldErrors(state, "personaId")}
+          />
+        </div>
+      ) : null}
 
       <p className="field-hint">
         Persona: {persona.label}, version {persona.version}. Model:{" "}

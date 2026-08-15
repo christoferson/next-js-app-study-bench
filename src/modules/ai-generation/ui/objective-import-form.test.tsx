@@ -36,6 +36,7 @@ function validatingAction(
           additionalInstructions: String(
             form.get("additionalInstructions") ?? "",
           ),
+          personaId: String(form.get("personaId") ?? ""),
         }),
         form,
       );
@@ -203,6 +204,9 @@ describe("ObjectiveImportForm", () => {
       expect(onValid.mock.calls[0]?.[0]).toEqual({
         pastedText: SYNTHETIC_OUTLINE,
         additionalInstructions: "only the content outline",
+        // No persona select is rendered when the owner has stored none, so the field
+        // arrives blank and the facade decides from the track and its study type.
+        personaId: null,
       });
     });
 
@@ -238,6 +242,7 @@ describe("ObjectiveImportForm", () => {
       expect(onValid.mock.calls[0]?.[0]).toEqual({
         pastedText: null,
         additionalInstructions: null,
+        personaId: null,
       });
     });
 
@@ -257,6 +262,7 @@ describe("ObjectiveImportForm", () => {
       expect(onValid.mock.calls[0]?.[0]).toEqual({
         pastedText: null,
         additionalInstructions: null,
+        personaId: null,
       });
     });
   });

@@ -32,12 +32,23 @@ import {
   LARGE_BATCH_THRESHOLD,
   MIN_BATCH_ITEMS,
 } from "@/modules/ai-generation/domain/generation-limits";
-import type { Persona } from "@/modules/ai-generation/domain/personas";
+import type { EffectivePersona } from "@/modules/ai-generation/domain/personas";
+import type { StoredPersona } from "@/modules/ai-generation/domain/stored-persona";
 
 interface GenerationFormProps {
   readonly action: (state: FormState, form: FormData) => Promise<FormState>;
   readonly slug: string;
-  readonly persona: Persona;
+  /** The persona this request uses when the owner chooses none: the default. */
+  readonly persona: EffectivePersona;
+  /**
+   * The owner's personas that suit this track, offered as a per-request choice.
+   *
+   * Empty when they have none, and the select is not rendered at all: one option that
+   * cannot be changed is a dead control (`spec/UI-GUIDELINES.md`).
+   */
+  readonly personaChoices?: readonly StoredPersona[];
+  /** The track's assignment, so the select opens on it. `null` is automatic. */
+  readonly assignedPersonaId?: string | null;
   /** Active objectives of this track. */
   readonly objectives: readonly Objective[];
   readonly maxItemCount: number;
@@ -73,6 +84,8 @@ export function GenerationForm({
   action,
   slug,
   persona,
+  personaChoices = [],
+  assignedPersonaId = null,
   objectives,
   maxItemCount,
   modelProvider,
@@ -248,6 +261,39 @@ export function GenerationForm({
           </ul>
         ) : null}
       </fieldset>
+
+      {personaChoices.length > 0 ? (
+        <div className="field">
+          <label htmlFor="personaId">Persona</label>
+          <p className="field-hint" id="personaId-hint">
+            Which voice writes this batch. Automatic uses the built-in persona
+            for this track&apos;s study type. Choosing one here applies to this
+            batch only; it does not change the track.
+          </p>
+          <select
+            id="personaId"
+            name="personaId"
+            aria-describedby={
+              fieldErrors(state, "personaId") === undefined
+                ? "personaId-hint"
+                : "personaId-hint personaId-errors"
+            }
+            aria-invalid={fieldErrors(state, "personaId") !== undefined}
+            defaultValue={initial("personaId", assignedPersonaId ?? "")}
+          >
+            <option value="">Automatic (by study type)</option>
+            {personaChoices.map((choice) => (
+              <option key={choice.id} value={choice.id}>
+                {choice.label}
+              </option>
+            ))}
+          </select>
+          <FieldErrors
+            id="personaId-errors"
+            messages={fieldErrors(state, "personaId")}
+          />
+        </div>
+      ) : null}
 
       <div className="field">
         <label htmlFor="additionalInstructions">Your notes</label>

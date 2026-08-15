@@ -158,6 +158,7 @@ export class CertificationFacade {
       defaultSessionMinutes: input.defaultSessionMinutes,
       status: "ACTIVE",
       origin,
+      personaId: input.personaId,
       createdAt: now,
       updatedAt: now,
     };
@@ -190,6 +191,7 @@ export class CertificationFacade {
       targetDate: input.targetDate,
       priority: input.priority,
       defaultSessionMinutes: input.defaultSessionMinutes,
+      personaId: input.personaId,
       updatedAt: this.deps.clock.now(),
     };
 

@@ -1,8 +1,19 @@
 import Link from "next/link";
-import { createCertificationAction } from "@/modules/certifications/ui/actions";
+import { getPersonaFacade } from "@/modules/ai-generation/composition";
 import { CertificationForm } from "@/modules/certifications/ui/certification-form";
+import { createStudyTrackAction } from "../track-actions";
 
-export default function NewStudyTrackPage() {
+/**
+ * Create a study track.
+ *
+ * The persona choices are resolved here rather than in the form, because the form lives
+ * in the certifications module and that module must not know that personas exist. A new
+ * track has no study type yet, so every persona the owner has is offered and the
+ * archetype check happens on save, where the submitted study type is known.
+ */
+export default async function NewStudyTrackPage() {
+  const personas = await getPersonaFacade().listPersonas();
+
   return (
     <main className="page">
       <nav aria-label="Breadcrumb" className="breadcrumb">
@@ -19,9 +30,13 @@ export default function NewStudyTrackPage() {
       </header>
 
       <CertificationForm
-        action={createCertificationAction}
+        action={createStudyTrackAction}
         submitLabel="Create study track"
         cancelHref="/"
+        personaChoices={personas.map((persona) => ({
+          id: persona.id,
+          label: persona.label,
+        }))}
       />
     </main>
   );

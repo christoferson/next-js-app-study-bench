@@ -68,6 +68,7 @@ export function certificationFixture(
     defaultSessionMinutes: DEFAULT_SESSION_MINUTES,
     status: "ACTIVE",
     origin: "OWNER",
+    personaId: null,
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
     ...overrides,

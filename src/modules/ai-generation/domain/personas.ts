@@ -19,7 +19,33 @@ import type { CardType } from "@/modules/flashcards/domain/flashcard";
 
 export type PersonaId = "technical-certification" | "hsk";
 
-export interface Persona {
+/**
+ * A persona as generation applies it: text, defaults, and a recorded identity.
+ *
+ * Two kinds of persona satisfy this shape. A built-in `Persona` below, whose `id` is
+ * one of the two `PersonaId` values, and a persona the owner stored, adapted by
+ * `storedPersonaToPersona` with its `personaKey` as the identifier and its own version.
+ * Prompt rendering, the default type lists, and the recorded provenance need nothing
+ * else, so this is what everything downstream of "which persona is this?" takes.
+ *
+ * `id` is a plain string here on purpose: a stored persona's key is not a member of the
+ * closed built-in union, and a run must record the key it actually used.
+ */
+export interface EffectivePersona {
+  readonly id: string;
+  readonly version: number;
+  readonly label: string;
+  readonly role: string;
+  readonly guidance: readonly string[];
+  readonly cardGuidance: readonly string[];
+  readonly prohibitions: readonly string[];
+  readonly defaultQuestionTypes: readonly QuestionType[];
+  readonly defaultCardTypes: readonly CardType[];
+  readonly languageInstruction: string;
+  readonly contentLanguage: string | null;
+}
+
+export interface Persona extends EffectivePersona {
   readonly id: PersonaId;
   readonly version: number;
   /** Owner-facing name, shown on the run review screen. */

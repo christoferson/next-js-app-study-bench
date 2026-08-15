@@ -64,6 +64,7 @@ export async function extractObjectivesAction(
     const input = parseInput(objectiveImportRequestSchema, {
       pastedText: readString(form, "pastedText"),
       additionalInstructions: readString(form, "additionalInstructions"),
+      personaId: readString(form, "personaId"),
     });
     const document = await readDocument(form);
     const result = await getObjectiveImportFacade().extractObjectives(

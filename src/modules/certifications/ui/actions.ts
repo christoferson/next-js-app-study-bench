@@ -45,6 +45,7 @@ function readCertificationInput(form: FormData): unknown {
     targetDate: readString(form, "targetDate"),
     priority: readString(form, "priority"),
     defaultSessionMinutes: readString(form, "defaultSessionMinutes"),
+    personaId: readString(form, "personaId"),
   };
 }
 

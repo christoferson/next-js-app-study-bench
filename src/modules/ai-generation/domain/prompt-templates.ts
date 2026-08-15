@@ -18,7 +18,7 @@ import type {
   GenerationRequestSpec,
   VocabularyEnrichmentTarget,
 } from "./generated-draft";
-import type { Persona } from "./personas";
+import type { EffectivePersona } from "./personas";
 
 /**
  * Versioned prompt templates (`SPEC.md` section 11.5,
@@ -79,7 +79,16 @@ export interface PromptObjective {
 }
 
 export interface PromptContext {
-  readonly persona: Persona;
+  /**
+   * Either kind of persona: a built-in one, or one of the owner's adapted by
+   * `storedPersonaToPersona`.
+   *
+   * The templates below read only the persona's text and its default type lists, so the
+   * two render identically structured prompts and no template version depends on which
+   * kind was used. That is the whole reason the adapter exists rather than a second set
+   * of templates.
+   */
+  readonly persona: EffectivePersona;
   readonly trackName: string;
   readonly examCode: string | null;
   /** Objectives offered to the model, already scoped to the track. */

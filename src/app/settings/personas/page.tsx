@@ -20,10 +20,11 @@ export const dynamic = "force-dynamic";
  * source, which is right for a fixed registry and wrong as soon as one track wants
  * associate-level questions and another wants professional-level ones.
  *
- * **Nothing generated changes yet.** Generation still selects a built-in persona by
- * study type; a persona created here is not offered on a track until the next slice.
- * The page says so, because a management screen whose contents have no visible effect
- * is otherwise indistinguishable from one that is broken.
+ * **A persona saved here is offered on a track.** Each study track chooses one, or
+ * leaves it automatic and takes the built-in persona for its study type; the generate
+ * and import forms then offer the same choice for one batch. The page says where the
+ * choice is made, because a management screen that does not say what its contents affect
+ * is hard to tell from one that is broken.
  */
 export default async function PersonasSettingsPage() {
   const view = await getPersonaFacade().findLibrary();
@@ -49,8 +50,10 @@ export default async function PersonasSettingsPage() {
         <div className="section-heading">
           <h2 id="your-personas-heading">Your personas</h2>
           <p className="section-note">
-            These are not yet chosen on a study track: generation still uses the
-            built-in personas. Assigning a persona to a track comes next.
+            Assign one to a study track on that track&apos;s edit form, or pick
+            one for a single batch when you generate. A track left automatic
+            uses the built-in persona for its study type. A persona a track is
+            using cannot be deleted until you change that track.
           </p>
         </div>
         <PersonaList personas={view.personas} />

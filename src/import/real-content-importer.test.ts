@@ -386,6 +386,7 @@ describe("real content import", () => {
         targetDate: null,
         priority: 3,
         defaultSessionMinutes: 20,
+        personaId: null,
       });
 
       await importGuide();

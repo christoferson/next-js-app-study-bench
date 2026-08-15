@@ -15,13 +15,13 @@ interface DeletePersonaFormProps {
  * Removes one persona.
  *
  * A client form rather than a plain server-action form because deletion can fail for a
- * reason the owner needs to read: another tab may already have removed it, and the
- * facade refuses. `useActionState` puts that message next to the button.
+ * reason the owner needs to read: another tab may already have removed it, or a study
+ * track is assigned this persona and the facade refuses, naming the tracks.
+ * `useActionState` puts that message next to the button.
  *
- * No confirmation step in this slice, because nothing references a persona yet — no
- * track selects one, no run records one — so deleting loses the text and nothing else.
- * Once a track can be assigned a persona, that stops being true and this control needs
- * to say what else it would affect.
+ * No confirmation step even so, because the refusal makes one unnecessary for the case
+ * that matters. A persona nothing is using is only its text, and a persona something is
+ * using cannot be deleted by pressing this at all.
  */
 export function DeletePersonaForm({
   personaId,

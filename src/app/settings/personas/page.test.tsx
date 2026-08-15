@@ -43,13 +43,22 @@ describe("Personas settings page", () => {
     }
   });
 
-  it("says that a persona is not chosen on a track yet", async () => {
-    // The management screen's contents have no effect on generation in this slice, and
-    // a screen that does not say so is indistinguishable from a broken one.
+  it("says where a persona is chosen and what automatic means", async () => {
+    // A management screen that does not say what its contents affect is hard to tell
+    // from a broken one.
+    render(await PersonasSettingsPage());
+
+    expect(screen.getByText(/Assign one to a study track/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/uses the built-in persona for its study type/),
+    ).toBeInTheDocument();
+  });
+
+  it("warns that a persona a track uses cannot be deleted", async () => {
     render(await PersonasSettingsPage());
 
     expect(
-      screen.getByText(/still uses the built-in personas/),
+      screen.getByText(/cannot be deleted until you change that track/),
     ).toBeInTheDocument();
   });
 

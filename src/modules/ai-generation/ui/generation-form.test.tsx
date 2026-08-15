@@ -12,6 +12,8 @@ import type { GenerationRequestInput } from "@/modules/ai-generation/application
 import { MAX_BATCH_ITEMS } from "@/modules/ai-generation/domain/generation-limits";
 import { personaForStudyType } from "@/modules/ai-generation/domain/personas";
 import type { Persona } from "@/modules/ai-generation/domain/personas";
+import type { StoredPersona } from "@/modules/ai-generation/domain/stored-persona";
+import { storedPersonaFixture } from "@/modules/ai-generation/infrastructure/persona-test-support";
 import { GenerationForm } from "./generation-form";
 
 /**
@@ -41,6 +43,7 @@ function validatingAction(
           additionalInstructions: read("additionalInstructions"),
           questionTypes: readAll("questionTypes"),
           cardTypes: readAll("cardTypes"),
+          personaId: read("personaId"),
           generateAnyway: read("generateAnyway"),
         }),
       );
@@ -63,12 +66,23 @@ const OBJECTIVES: readonly Objective[] = [
   objectiveFixture({ id: "objective-2", code: null, title: "Demo networking" }),
 ];
 
+const STORED_PERSONAS: readonly StoredPersona[] = [
+  storedPersonaFixture({ id: "persona-1", label: "My AWS instructor" }),
+  storedPersonaFixture({
+    id: "persona-2",
+    personaKey: "my-second",
+    label: "My second instructor",
+  }),
+];
+
 function renderForm(
   options: {
     readonly action?: ReturnType<typeof validatingAction>;
     readonly persona?: Persona;
     readonly objectives?: readonly Objective[];
     readonly generateAnyway?: boolean;
+    readonly personaChoices?: readonly StoredPersona[];
+    readonly assignedPersonaId?: string | null;
   } = {},
 ): void {
   render(
@@ -80,6 +94,12 @@ function renderForm(
       maxItemCount={MAX_BATCH_ITEMS}
       modelProvider="fake"
       modelId="fake-deterministic"
+      {...(options.personaChoices === undefined
+        ? {}
+        : { personaChoices: options.personaChoices })}
+      {...(options.assignedPersonaId === undefined
+        ? {}
+        : { assignedPersonaId: options.assignedPersonaId })}
       {...(options.generateAnyway === undefined
         ? {}
         : { generateAnyway: options.generateAnyway })}
@@ -258,6 +278,9 @@ describe("GenerationForm", () => {
         additionalInstructions: "focus on cost trade-offs",
         questionTypes: ["SINGLE_CHOICE"],
         cardTypes: [],
+        // No select is rendered when the owner has stored no persona, so the request
+        // carries nothing and the facade falls back to the track's own assignment.
+        personaId: null,
         generateAnyway: false,
       });
     });
@@ -324,6 +347,83 @@ describe("GenerationForm", () => {
       });
 
       expect(onValid.mock.calls[0]?.[0]?.generateAnyway).toBe(false);
+    });
+  });
+
+  describe("the persona choice", () => {
+    it("offers no select at all when the owner has stored no persona", () => {
+      // A select whose only option is "automatic" is a dead control.
+      renderForm();
+
+      expect(screen.queryByLabelText("Persona")).toBeNull();
+    });
+
+    it("offers automatic plus every persona that suits the track", () => {
+      renderForm({ personaChoices: STORED_PERSONAS });
+
+      const options = [
+        ...screen.getByLabelText("Persona").querySelectorAll("option"),
+      ].map((option) => option.textContent);
+
+      expect(options).toEqual([
+        "Automatic (by study type)",
+        "My AWS instructor",
+        "My second instructor",
+      ]);
+    });
+
+    it("opens on the track's own assignment", () => {
+      renderForm({
+        personaChoices: STORED_PERSONAS,
+        assignedPersonaId: "persona-2",
+      });
+
+      expect(screen.getByLabelText("Persona")).toHaveValue("persona-2");
+    });
+
+    it("says the choice applies to this batch and not to the track", async () => {
+      renderForm({ personaChoices: STORED_PERSONAS });
+
+      expect(screen.getByText(/does not change the track/)).toBeInTheDocument();
+    });
+
+    it("submits the chosen persona", async () => {
+      const user = userEvent.setup();
+      const onValid = vi.fn();
+
+      renderForm({
+        action: validatingAction(onValid),
+        personaChoices: STORED_PERSONAS,
+      });
+
+      await user.selectOptions(
+        screen.getByLabelText("Persona"),
+        "My second instructor",
+      );
+      await user.click(screen.getByRole("button", { name: "Generate" }));
+
+      await waitFor(() => {
+        expect(onValid).toHaveBeenCalledTimes(1);
+      });
+      expect(onValid.mock.calls[0]?.[0]?.personaId).toBe("persona-2");
+    });
+
+    it("submits nothing when the owner leaves it automatic", async () => {
+      const user = userEvent.setup();
+      const onValid = vi.fn();
+
+      renderForm({
+        action: validatingAction(onValid),
+        personaChoices: STORED_PERSONAS,
+        assignedPersonaId: null,
+      });
+
+      await user.click(screen.getByRole("button", { name: "Generate" }));
+
+      await waitFor(() => {
+        expect(onValid).toHaveBeenCalledTimes(1);
+      });
+      expect(onValid.mock.calls[0]?.[0]?.personaId).toBeNull();
     });
   });
 

@@ -54,6 +54,17 @@ export const certificationInputSchema = z.object({
     min: MIN_SESSION_MINUTES,
     max: MAX_SESSION_MINUTES,
   }),
+  /**
+   * Persona assignment, opaque to this module.
+   *
+   * Shape only — an identifier of plausible length or nothing. Whether the value
+   * names a real persona, and whether that persona suits the track's study type, is
+   * decided by the ai-generation module before the action calls this facade; this
+   * module cannot ask without importing across a forbidden boundary. Blank becomes
+   * `null`, meaning "decide from the study type", which is what every caller with no
+   * interest in personas passes — the seed script and the real-content importer.
+   */
+  personaId: optionalText(TRIMMED_TEXT_LIMIT),
 });
 
 export type CertificationInput = z.output<typeof certificationInputSchema>;

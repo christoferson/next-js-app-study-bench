@@ -521,6 +521,39 @@ again — and pays for it again. That keying is also why editing a card's term d
 invalidate anything: the new term is simply a different key, with no clip yet. The
 old clip stays on disk until it is removed here.
 
+## Personas
+
+A persona is the instructions generation writes under: who the model is, what a good
+question looks like for the subject, what a good flashcard looks like, what it must
+refuse, and which content types and language it defaults to. Two personas are built
+into the source — one for technical certifications, one for HSK Chinese — and those
+are still the ones every generation run uses.
+
+`/settings/personas` is where you write your own. Start from one of six prepared
+starting points — AWS associate level, AWS professional and specialty level, a generic
+technical certification, HSK Chinese, JLPT Japanese, and a generic language
+examination — and edit the prefilled form. The three list fields (question guidance,
+flashcard guidance, prohibitions) are one entry per line. Saving creates version 1;
+every later edit saves the next version, so a run recorded against version 2 stays
+explicable after version 3 exists.
+
+A persona is **copied** from its starting point, not linked to it: improving a template
+in a later release cannot change what your persona generates, and editing your persona
+cannot affect anyone's starting point. Each persona also carries a stable key derived
+from its name at creation — `jlpt-japanese-proficiency` — which does not move when you
+rename it, so future run provenance stays readable.
+
+Each persona has a fixed **archetype**, technical or language, taken from the starting
+point and not editable. It is what a later slice wires behaviour to: vocabulary
+enrichment is meaningful for a language persona and meaningless for a technical one,
+and that decision must come from a field rather than from searching a name for "HSK".
+
+**Nothing generated changes yet.** The list starts empty on a fresh installation — no
+persona is copied into the database, because the built-in personas remain the ones
+generation applies — and a persona you create here is not yet selectable on a study
+track. Choosing a persona per track is the next slice. Until then a persona can be
+deleted freely, since nothing references one.
+
 ## Live provider tests
 
 `npm test` never calls AWS. The tests that do are excluded twice over: they live
@@ -646,6 +679,22 @@ With your own material imported (`npm run import:real`, then
   correctly" item, rather than asking what the pattern means
 - Target one "(unofficial)" topic instead — the drafts are set in that theme and
   still test language, and every draft is marked `AI generated — model knowledge`
+  Personas (no AWS account, no spend — managing a persona calls no model):
+
+- Open `/settings/personas` from the home page — the list is empty and says
+  generation still uses the built-in personas, and six starting points are offered
+- Choose "JLPT Japanese proficiency" — the form is prefilled with kana, kanji, and
+  JLPT-level guidance, one guideline per line, and mentions no pinyin anywhere
+- Save it — it appears in the list as version 1, archetype Language, with the key
+  `jlpt-japanese-proficiency`
+- Open it, change its name and a guidance line, and save — it is version 2, the key is
+  unchanged, and the edited line is there when you reopen it
+- Clear the guidance box entirely and save — the form refuses with a message beside
+  the field, and nothing is written
+- Delete it — the list is empty again
+- Generate questions on a track — the run is unaffected and still records the built-in
+  persona
+- `http://localhost:3000/settings/personas/new?template=nope` — not-found page
 - `http://localhost:3000/study/sessions/nope` — not-found page
 - `http://localhost:3000/study-tracks/unknown` — not-found page
 - `http://localhost:3000/study-tracks/demo-cloud-practitioner/questions/nope` —

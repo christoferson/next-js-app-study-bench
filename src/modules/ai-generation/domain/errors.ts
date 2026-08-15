@@ -21,7 +21,48 @@ export type GenerationDomainErrorCode =
   | "GENERATED_DRAFT_NOT_REJECTABLE"
   | "IMPORT_ALREADY_APPLIED"
   | "IMPORT_NOTHING_TO_APPLY"
-  | "SYLLABUS_UNREADABLE";
+  | "SYLLABUS_UNREADABLE"
+  | "PERSONA_NOT_FOUND"
+  | "PERSONA_TEMPLATE_NOT_FOUND";
+
+/**
+ * The persona the owner asked to edit or delete no longer exists.
+ *
+ * Reachable from a stale settings list in a second tab. A form-level message rather
+ * than a 404, because the list the owner came from is still a usable page.
+ */
+export class PersonaNotFoundError extends DomainError {
+  readonly code = "PERSONA_NOT_FOUND";
+
+  constructor(readonly personaId: string) {
+    super(`No persona matches "${personaId}".`);
+  }
+
+  fieldMessages(): Readonly<Record<string, readonly string[]>> {
+    return { "": ["That persona no longer exists."] };
+  }
+}
+
+/**
+ * The template a new persona was to be copied from is not one this build has.
+ *
+ * The picker renders from the same constant this is matched against, so the only ways
+ * here are a hand-edited URL and a page left open across a deployment that removed a
+ * template.
+ */
+export class PersonaTemplateNotFoundError extends DomainError {
+  readonly code = "PERSONA_TEMPLATE_NOT_FOUND";
+
+  constructor(readonly templateKey: string) {
+    super(`No persona template matches "${templateKey}".`);
+  }
+
+  fieldMessages(): Readonly<Record<string, readonly string[]>> {
+    return {
+      templateKey: ["Choose one of the starting points listed."],
+    };
+  }
+}
 
 export class GenerationRunNotFoundError extends DomainError {
   readonly code = "GENERATION_RUN_NOT_FOUND";

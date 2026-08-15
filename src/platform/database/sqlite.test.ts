@@ -123,7 +123,8 @@ describe("runMigrations", () => {
       // failure rather than a silent addition. Extended in D4 with the flashcard
       // tables from migration 0003, in D5 with the session and attempt tables
       // from migration 0004, in D6 with the generation-run table from
-      // migration 0005, and in D10 with `media_assets` from migration 0007.
+      // migration 0005, in D10 with `media_assets` from migration 0007, and in
+      // the personas slice with `personas` from migration 0009.
       expect(tables.map((table) => table.name)).toEqual([
         "certification_objectives",
         "certifications",
@@ -133,6 +134,7 @@ describe("runMigrations", () => {
         "flashcards",
         "generation_runs",
         "media_assets",
+        "personas",
         "question_attempts",
         "question_objective_links",
         "question_revisions",

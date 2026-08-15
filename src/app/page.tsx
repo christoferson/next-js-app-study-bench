@@ -71,6 +71,11 @@ export default async function HomePage({ searchParams }: HomePageProps) {
           <Link className="button-quiet" href="/settings/audio">
             Audio
           </Link>
+          {/* Personas are edited rarely and from nowhere else, so the way in is here
+              beside the other settings screen rather than on a track. */}
+          <Link className="button-quiet" href="/settings/personas">
+            Personas
+          </Link>
         </div>
       </section>
 

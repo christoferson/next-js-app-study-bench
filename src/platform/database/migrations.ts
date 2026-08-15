@@ -777,4 +777,76 @@ UPDATE flashcard_revisions
 DROP TABLE generation_link_backup_0008;
 `,
   },
+  {
+    id: "0009",
+    description: "owner-editable personas created from curated templates",
+    sql: `
+-- Editable personas.
+--
+-- Until now a persona was code: two constants in
+-- \`modules/ai-generation/domain/personas.ts\`, selected by study type. That is right
+-- for a registry the owner cannot change, and wrong as soon as they want a persona
+-- per track — "AWS Professional" wants deeper tradeoff questions than "AWS
+-- Associate", and neither is expressible by editing a shared constant without
+-- changing the other track's output.
+--
+-- So a persona becomes data the owner owns, created by copying a curated template
+-- and then edited freely. Three consequences shape this table.
+--
+-- 1. persona_key is a stable identifier separate from the primary key. A run records
+--    which persona produced it (\`generation_runs.persona_id\`), and that recorded
+--    value must stay readable after a rename: the key is derived once from the label
+--    at creation and never changes, so a run generated in August can still be
+--    explained in December. UNIQUE, because a duplicate key would make that
+--    provenance ambiguous. Nothing references it yet — the runtime still uses the
+--    code personas — which is exactly why it is cheap to get right now.
+--
+-- 2. version is on the row, not in a history table. Editing bumps it, so a run's
+--    recorded (key, version) pair names the text that produced it, and the owner can
+--    see that a persona has moved on since. Keeping every past text would be a
+--    second table nothing in this slice reads; the version alone is what makes a
+--    stale recording legible.
+--
+-- 3. archetype is a fixed code, not free text and not derived from the label. It is
+--    what a later slice wires behaviour to — a LANGUAGE persona reaches the
+--    vocabulary-enrichment machinery, a TECHNICAL one does not — and behaviour must
+--    never be chosen by searching a label for "HSK"
+--    (\`spec/CODING-STANDARDS.md\`). CHECK-constrained, so the two values are a
+--    property of the schema.
+--
+-- The four list columns hold JSON arrays. SQLite has no array type, and a child
+-- table per list would be four tables to read an ordered set of bullet points the
+-- owner edits as one textarea. Each is validated by a schema on the way out, never
+-- cast, for the reason \`generation_runs.usage_metadata\` is: the database is an
+-- external boundary.
+--
+-- No rows are seeded. The two built-in personas stay in code and stay in use; this
+-- table starts empty and the templates appear in the picker instead. Seeding copies
+-- of the built-ins would create two sources of truth for the persona the runtime
+-- actually applies, and nothing selects a stored persona until the next slice.
+CREATE TABLE personas (
+  id TEXT PRIMARY KEY,
+  -- Derived from the label at creation, then immutable. See note 1.
+  persona_key TEXT NOT NULL UNIQUE,
+  archetype TEXT NOT NULL CHECK (archetype IN ('TECHNICAL', 'LANGUAGE')),
+  version INTEGER NOT NULL CHECK (version >= 1),
+  label TEXT NOT NULL,
+  role TEXT NOT NULL,
+  -- JSON arrays of strings, in the order the owner wrote them.
+  guidance TEXT NOT NULL,
+  card_guidance TEXT NOT NULL,
+  prohibitions TEXT NOT NULL,
+  default_question_types TEXT NOT NULL,
+  default_card_types TEXT NOT NULL,
+  language_instruction TEXT NOT NULL,
+  -- Null means "no single content language", which a technical persona often is.
+  content_language TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+) STRICT;
+
+-- The management list, ordered by label.
+CREATE INDEX personas_label_idx ON personas (label);
+`,
+  },
 ];

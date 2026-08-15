@@ -10,6 +10,8 @@ import { SqliteQuestionRepository } from "@/modules/question-bank/infrastructure
 import { SqliteFlashcardRepository } from "@/modules/flashcards/infrastructure/sqlite-flashcard-repository";
 import { GenerationFacade } from "@/modules/ai-generation/application/generation-facade";
 import { ObjectiveImportFacade } from "@/modules/ai-generation/application/objective-import-facade";
+import { PersonaFacade } from "@/modules/ai-generation/application/persona-facade";
+import { SqlitePersonaRepository } from "@/modules/ai-generation/infrastructure/sqlite-persona-repository";
 import { UnpdfDocumentTextExtractor } from "@/modules/ai-generation/infrastructure/unpdf-document-text-extractor";
 import type { LanguageModelGateway } from "@/modules/ai-generation/ports/language-model-gateway";
 import { BedrockLanguageModelGateway } from "@/modules/ai-generation/infrastructure/bedrock-language-model-gateway";
@@ -111,6 +113,23 @@ export function createObjectiveImportFacade(
   });
 }
 
+/**
+ * Composition for persona management.
+ *
+ * No gateway, no transaction runner, no configuration: managing a persona calls no
+ * model and writes one row at a time, so the only dependencies are the repository, the
+ * clock, and the identifier source. It lives beside the generation facade because a
+ * persona is generation's vocabulary — the next slice hands a stored persona to the
+ * prompt builder — not because it shares any wiring with it.
+ */
+export function createPersonaFacade(database: SqliteDatabase): PersonaFacade {
+  return new PersonaFacade({
+    personas: new SqlitePersonaRepository(database),
+    clock: systemClock,
+    ids: cryptoIdGenerator,
+  });
+}
+
 let facade: GenerationFacade | null = null;
 
 export function getGenerationFacade(): GenerationFacade {
@@ -136,4 +155,14 @@ export function getObjectiveImportFacade(): ObjectiveImportFacade {
   }
 
   return importFacade;
+}
+
+let personaFacade: PersonaFacade | null = null;
+
+export function getPersonaFacade(): PersonaFacade {
+  if (personaFacade === null) {
+    personaFacade = createPersonaFacade(getDatabaseContainer().database);
+  }
+
+  return personaFacade;
 }

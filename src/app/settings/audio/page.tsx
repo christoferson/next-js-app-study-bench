@@ -30,6 +30,15 @@ export default async function AudioSettingsPage() {
         <Link href="/">Back to the study tracks</Link>
       </nav>
 
+      {/* There is no settings landing page: two screens do not need an index, and one
+          more page between the home nav and the thing being configured is a click that
+          explains nothing. They cross-link instead. */}
+      <nav aria-label="Settings" className="section-actions">
+        <Link className="button-quiet" href="/settings/personas">
+          Personas
+        </Link>
+      </nav>
+
       <header className="page-header">
         <p className="eyebrow">Settings</p>
         <h1>Audio</h1>

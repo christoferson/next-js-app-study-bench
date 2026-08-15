@@ -18,6 +18,10 @@ import {
   MIN_BATCH_ITEMS,
 } from "@/modules/ai-generation/domain/generation-limits";
 import { IMPORT_SOURCE_CHOICES } from "@/modules/ai-generation/domain/objective-import";
+import {
+  TUTOR_ASK_KINDS,
+  TUTOR_NOTE_LIMIT,
+} from "@/modules/ai-generation/domain/tutor-exchange";
 
 /**
  * Authoritative input schemas for generation requests.
@@ -259,6 +263,32 @@ export const reviewQuestionSchema = z.object({
 });
 
 export type ReviewQuestionInput = z.output<typeof reviewQuestionSchema>;
+
+/**
+ * One ask to the tutor, from the question's own page.
+ *
+ * Three fields rather than one, unlike the review, because a tutor ask genuinely has
+ * options: *which* of the six asks, which choice for the choice-by-choice one, and the
+ * owner's own note. Everything else — the persona, the template, the token ceiling, the
+ * revision — is resolved from the track and the question, so two identical asks are
+ * comparable.
+ *
+ * `choiceId` is shape-checked only. Whether it names a choice the question actually has
+ * is the facade's to decide, because the facade is the only thing holding the revision,
+ * and a stale page naming a choice that has since been edited away should get a sentence
+ * about the question rather than a field error on a select the owner cannot fix.
+ */
+export const tutorAskSchema = z.object({
+  questionId: z
+    .string()
+    .max(ID_LIMIT)
+    .transform((value) => value.trim()),
+  kind: enumOf(TUTOR_ASK_KINDS, "Choose what to ask the tutor."),
+  choiceId: optionalText(ID_LIMIT),
+  note: optionalText(TUTOR_NOTE_LIMIT),
+});
+
+export type TutorAskInput = z.output<typeof tutorAskSchema>;
 
 /**
  * Run-history paging, parsed from the query string.

@@ -67,6 +67,24 @@ export interface GenerationRunRepository {
   findLatestReviewForQuestion(
     questionId: string,
   ): Promise<GenerationRun | null>;
+  /**
+   * The most recent tutor exchanges about one question, newest first.
+   *
+   * A bounded list rather than the latest one, unlike the review: a review is a current
+   * judgement that replaces the previous one, while asking the tutor three things about
+   * the same question leaves three answers that are all still worth reading. The limit is
+   * required for the reason every other list query's is (`spec/ARCHITECTURE.md` section
+   * 8) — a question the owner has asked about forty times must not put forty model
+   * answers on one page.
+   *
+   * Only `COMPLETED` runs qualify. A `FAILED` ask has no answer to show and a `PENDING`
+   * one has not answered yet; either would render an empty exchange and make it look as
+   * though the tutor had said nothing.
+   */
+  listTutorExchangesForQuestion(
+    questionId: string,
+    limit: number,
+  ): Promise<readonly GenerationRun[]>;
   /** Inserts a run row. Called with `PENDING` before the provider is used. */
   create(run: GenerationRun): Promise<void>;
   /**

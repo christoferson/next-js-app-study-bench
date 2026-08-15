@@ -1,5 +1,6 @@
 import type { GeneratedItemKind } from "./generation-run";
 import { QUESTION_REVIEW_ITEM_COUNT } from "./question-review";
+import { TUTOR_ITEM_COUNT } from "./tutor-exchange";
 
 /**
  * Cost limits for one generation request (`SPEC.md` section 11.6).
@@ -62,6 +63,11 @@ export function maxItemsFor(kind: GeneratedItemKind): number {
     // request shape rather than a bigger number here.
     case "QUESTION_REVIEW":
       return QUESTION_REVIEW_ITEM_COUNT;
+    // One ask, one answer, for the same reason: the owner presses a button on a
+    // question's own page. Asking the tutor five things is five runs, each recorded on
+    // its own.
+    case "TUTOR_EXPLANATION":
+      return TUTOR_ITEM_COUNT;
   }
 }
 
@@ -125,5 +131,12 @@ function tokensPerItem(kind: GeneratedItemKind): number {
     // attempt on truncation rather than on substance.
     case "QUESTION_REVIEW":
       return 2_500;
+    // A tutor answer is prose for a person to read: a few paragraphs, or a short question
+    // with its answer and an explanation. Generous enough that a full worked example is
+    // not cut off mid-sentence, because a truncated explanation still validates — it is
+    // non-empty — so the cost of being mean here is an answer that stops halfway rather
+    // than one that fails loudly.
+    case "TUTOR_EXPLANATION":
+      return 2_000;
   }
 }

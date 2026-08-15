@@ -42,6 +42,22 @@ const REVIEW: GenerationRunSummary = {
   counts: { total: 0, draft: 0, active: 0 },
 };
 
+/** One tutor run: a model call that explained a question and produced no content at all. */
+const TUTOR: GenerationRunSummary = {
+  run: generationRunFixture({
+    id: "run-9",
+    itemKind: "TUTOR_EXPLANATION",
+    subjectQuestionId: "question-9",
+    subjectRevisionId: "revision-9",
+    requestedItemCount: 1,
+    successfulItemCount: 1,
+    startedAt: "2026-04-04T10:00:00.000Z",
+    completedAt: "2026-04-04T10:00:03.000Z",
+    status: "COMPLETED",
+  }),
+  counts: { total: 0, draft: 0, active: 0 },
+};
+
 const RUNS: readonly GenerationRunSummary[] = [
   COMPLETED,
   {
@@ -141,6 +157,49 @@ describe("GenerationRunList", () => {
     // Not presented as generated content, because nothing was generated.
     expect(screen.getByText("Judged from model knowledge")).toBeVisible();
     expect(document.body.textContent ?? "").not.toMatch(/AI generated/);
+  });
+
+  it("labels a tutor row and links it to the answer on the question", () => {
+    // The anchor is the point: a run history row about an ask lands on the tutor panel
+    // holding the answer, rather than at the top of a long question page.
+    render(<GenerationRunList slug="demo" runs={[TUTOR]} />);
+
+    expect(screen.getByText("AI tutor answer")).toBeVisible();
+    expect(screen.getByText("Explained from model knowledge")).toBeVisible();
+    expect(
+      screen.getByRole("link", { name: "Completed · one tutor answer" }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("link", { name: "Read the answer on the question" }),
+    ).toHaveAttribute("href", "/study-tracks/demo/questions/question-9#tutor");
+    // Not generated content, and with no batch to count.
+    expect(document.body.textContent ?? "").not.toMatch(/AI generated/);
+    expect(document.body.textContent ?? "").not.toMatch(/kept ·/);
+  });
+
+  it("says so when the tutored question has since been deleted", () => {
+    render(
+      <GenerationRunList
+        slug="demo"
+        runs={[
+          {
+            run: generationRunFixture({
+              id: "run-5",
+              itemKind: "TUTOR_EXPLANATION",
+              subjectQuestionId: null,
+              status: "COMPLETED",
+            }),
+            counts: { total: 0, draft: 0, active: 0 },
+          },
+        ]}
+      />,
+    );
+
+    expect(
+      screen.getByText(
+        "The question this answer was about has since been deleted.",
+      ),
+    ).toBeVisible();
   });
 
   it("says so when the reviewed question has since been deleted", () => {

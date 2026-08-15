@@ -8,10 +8,16 @@ import {
 import { getGenerationFacade } from "@/modules/ai-generation/composition";
 import {
   acceptQuestionReviewAction,
+  askTutorAction,
   reviewQuestionAction,
 } from "@/modules/ai-generation/ui/actions";
 import { QuestionReviewPanel } from "@/modules/ai-generation/ui/question-review-panel";
-import { describeDifficulty } from "@/modules/question-bank/domain/question";
+import { TutorPanel } from "@/modules/ai-generation/ui/tutor-panel";
+import {
+  contentChoices,
+  correctChoiceIds,
+  describeDifficulty,
+} from "@/modules/question-bank/domain/question";
 import { getQuestionBankFacade } from "@/modules/question-bank/composition";
 import {
   disputeQuestionAction,
@@ -63,12 +69,16 @@ export default async function QuestionDetailPage({
   // Read-aloud was removed from question pages by owner decision (2026-08-15):
   // question audio belongs to future listening-comprehension study, not the
   // management view. Vocabulary card audio is unaffected.
-  const [attempts, aiReview] = await Promise.all([
+  const [attempts, aiReview, tutorExchanges] = await Promise.all([
     getStudyFacade().listAttemptsForQuestion(question.id),
     // The latest completed review of this question, or `null` if it has never been
     // reviewed. A cheap read that makes the findings panel part of the question
     // rather than a screen the owner has to go and find.
     getGenerationFacade().findQuestionReview(question.id),
+    // The recent tutor answers, bounded by the facade. Read on the server so an
+    // answer survives the reload it was recorded on: the ask action revalidates this
+    // path rather than returning the answer to the client.
+    getGenerationFacade().findTutorExchanges(question.id),
   ]);
   // Matches `isReviewableLifecycle` in the facade, which re-checks it: a retired or
   // archived question is out of study, so reviewing it would spend a model call on
@@ -294,6 +304,41 @@ export default async function QuestionDetailPage({
           reviewAction={reviewQuestionAction}
           disputeAction={disputeQuestionAction}
           acceptAction={acceptQuestionReviewAction}
+        />
+      </section>
+
+      {/* Directly after the review and before Manage, because the two AI panels answer
+          different questions about the same text — "is this question sound" and "why is
+          this the answer" — and an owner who has just read a finding they do not
+          understand should not have to go looking for the tutor.
+
+          `id="tutor"` is the anchor the in-session feedback deep-links to, so "ask the
+          tutor about this" from a study session lands on the panel rather than at the top
+          of a long page. */}
+      <section
+        aria-labelledby="tutor-heading"
+        className="section"
+        id="tutor"
+        // Scrolled into view rather than merely reachable, so following the deep link puts
+        // the panel on screen without the owner scrolling.
+        style={{ scrollMarginTop: "1rem" }}
+      >
+        <div className="section-heading">
+          <h2 id="tutor-heading">Ask the tutor</h2>
+          <p className="section-note">
+            A model explains this question to you, one ask at a time, from its
+            own knowledge. Each ask is one call and is recorded with what it
+            cost; nothing here changes the question or adds anything to your
+            bank.
+          </p>
+        </div>
+        <TutorPanel
+          askAction={askTutorAction}
+          choices={contentChoices(currentRevision.content)}
+          correctChoiceIds={correctChoiceIds(currentRevision.content)}
+          exchanges={tutorExchanges}
+          questionId={question.id}
+          slug={certification.slug}
         />
       </section>
 

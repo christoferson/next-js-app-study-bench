@@ -53,13 +53,23 @@ export function isFakeModelProvider(provider: string): boolean {
  * It is still a run because a model was called, tokens were spent, output was
  * validated, and the result needs to be readable months later beside the question it
  * was about (`spec/AI-GUIDELINES.md` section 1.10).
+ *
+ * `TUTOR_EXPLANATION` is the second kind that judges nothing and writes nothing: a model
+ * was asked one thing about one revision — explain the answer, explain a wrong choice,
+ * explain it more simply — and its answer is tutoring the owner reads. It is a run for
+ * the same reasons a review is: a model was called, tokens were spent, output was
+ * validated, and the exchange has to be readable later beside the question it was about.
+ * It is *separate* from `QUESTION_REVIEW` because the two say different things about the
+ * same question — a review is a judgement the owner may act on, an explanation is
+ * teaching — and collapsing them would put explanations in the findings panel.
  */
 export type GeneratedItemKind =
   | "QUESTION"
   | "FLASHCARD"
   | "ENRICH_VOCABULARY"
   | "OBJECTIVE_IMPORT"
-  | "QUESTION_REVIEW";
+  | "QUESTION_REVIEW"
+  | "TUTOR_EXPLANATION";
 
 export const GENERATED_ITEM_KINDS: readonly GeneratedItemKind[] = [
   "QUESTION",
@@ -67,6 +77,7 @@ export const GENERATED_ITEM_KINDS: readonly GeneratedItemKind[] = [
   "ENRICH_VOCABULARY",
   "OBJECTIVE_IMPORT",
   "QUESTION_REVIEW",
+  "TUTOR_EXPLANATION",
 ];
 
 /**
@@ -87,6 +98,10 @@ export function proposesForConfirmation(kind: GeneratedItemKind): boolean {
     // reads; acting on it means disputing or approving the *question*, which is the
     // question's own action and leaves `applied_at` null forever.
     case "QUESTION_REVIEW":
+    // Nor is a tutor's answer. It is read, not applied: nothing in it is waiting to be
+    // written into the bank, including the follow-up question, which is deliberately
+    // ephemeral tutoring content rather than a draft (`tutor-exchange.ts`).
+    case "TUTOR_EXPLANATION":
       return false;
     case "OBJECTIVE_IMPORT":
       return true;
@@ -110,6 +125,9 @@ export function revisesExistingItems(kind: GeneratedItemKind): boolean {
     // A review reads one item and writes none. It may change the question's *quality
     // status*, which is a judgement about the item rather than a revision of it.
     case "QUESTION_REVIEW":
+    // A tutor answer changes nothing at all about the question, not even its quality
+    // state: explaining something is not a judgement about it.
+    case "TUTOR_EXPLANATION":
       return false;
     case "ENRICH_VOCABULARY":
       return true;
@@ -255,6 +273,8 @@ export function describeItemKind(kind: GeneratedItemKind): string {
       return "Imported objectives";
     case "QUESTION_REVIEW":
       return "AI question review";
+    case "TUTOR_EXPLANATION":
+      return "AI tutor answer";
   }
 }
 
@@ -270,6 +290,8 @@ export function describeItemKindSingular(kind: GeneratedItemKind): string {
       return "proposed objective";
     case "QUESTION_REVIEW":
       return "reviewed question";
+    case "TUTOR_EXPLANATION":
+      return "tutor answer";
   }
 }
 

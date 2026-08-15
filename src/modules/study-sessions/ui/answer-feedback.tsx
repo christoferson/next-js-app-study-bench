@@ -23,6 +23,18 @@ interface AnswerFeedbackProps {
   /** Where "next" goes: the session, or the summary when nothing is left. */
   readonly continueHref: string;
   readonly continueLabel: string;
+  /**
+   * Where "ask the tutor about this" goes, or `null` when the question's track cannot be
+   * resolved — a session whose track has since been removed still has to render.
+   *
+   * A link out rather than a tutor panel here, and that is the deliberately small version
+   * of in-session tutoring: asking inside the session would mean a model call in the middle
+   * of a run of questions, a second pending state competing with "Next item", and an
+   * exchange to render between one answer and the next. The panel already exists on the
+   * question's own page, complete with its history, so the session sends the owner there
+   * instead. Tutoring *inline*, without leaving the session, is deferred.
+   */
+  readonly tutorHref: string | null;
 }
 
 /**
@@ -54,6 +66,7 @@ export function AnswerFeedback({
   revision,
   continueHref,
   continueLabel,
+  tutorHref,
 }: AnswerFeedbackProps) {
   const choices = contentChoices(revision.content);
   const correct = new Set(correctChoiceIds(revision.content));
@@ -123,6 +136,20 @@ export function AnswerFeedback({
         <a className="button" href={continueHref}>
           {continueLabel}
         </a>
+        {/* Second and quiet, because continuing is what the owner is here to do. It opens
+            in a new tab so the session is not lost: a session survives leaving, but being
+            sent away from the question mid-run is not what "explain this" should cost.
+            `rel` is required with `target="_blank"`. */}
+        {tutorHref === null ? null : (
+          <a
+            className="button-quiet"
+            href={tutorHref}
+            rel="noreferrer"
+            target="_blank"
+          >
+            Ask the tutor about this
+          </a>
+        )}
       </div>
     </section>
   );

@@ -11,11 +11,13 @@ import type { Objective } from "@/modules/certifications/domain/objective";
 import { objectiveKind } from "@/modules/certifications/domain/objective-kind";
 import type { CertificationRepository } from "@/modules/certifications/ports/certification-repository";
 import type { ObjectiveRepository } from "@/modules/certifications/ports/objective-repository";
+import { contentChoices } from "@/modules/question-bank/domain/question";
 import type {
   Question,
   QuestionLifecycleStatus,
   QuestionWithRevision,
 } from "@/modules/question-bank/domain/question";
+import { choiceLetter } from "@/modules/question-bank/domain/question-content";
 import type { FlashcardWithRevision } from "@/modules/flashcards/domain/flashcard";
 import type { QuestionRepository } from "@/modules/question-bank/ports/question-repository";
 import type { FlashcardRepository } from "@/modules/flashcards/ports/flashcard-repository";
@@ -25,6 +27,7 @@ import {
   GenerationRunNotFoundError,
   ProviderFailure,
   QuestionNotReviewableError,
+  TutorAskNotAnswerableError,
 } from "@/modules/ai-generation/domain/errors";
 import {
   checkFlashcardDrafts,
@@ -55,6 +58,14 @@ import {
   recommendsDispute,
 } from "@/modules/ai-generation/domain/question-review";
 import type { QuestionReview } from "@/modules/ai-generation/domain/question-review";
+import {
+  TUTOR_EXCHANGE_LIMIT,
+  TUTOR_ITEM_COUNT,
+} from "@/modules/ai-generation/domain/tutor-exchange";
+import type {
+  TutorAsk,
+  TutorResponse,
+} from "@/modules/ai-generation/domain/tutor-exchange";
 import type {
   GeneratedItemKind,
   GenerationRun,
@@ -112,6 +123,14 @@ import {
   serializeQuestionReview,
   validateQuestionReview,
 } from "./question-review-schema";
+import {
+  TUTOR_SCHEMA_DESCRIPTION,
+  TUTOR_SCHEMA_NAME,
+  readTutorResponse,
+  serializeTutorResponse,
+  tutorJsonSchema,
+  tutorResponseValidator,
+} from "./tutor-schema";
 import type {
   EnrichmentRequestInput,
   GenerationRequestInput,
@@ -326,6 +345,44 @@ export interface QuestionReviewView {
    * accepting would actually succeed.
    */
   readonly offersAccept: boolean;
+}
+
+/**
+ * One recorded tutor exchange, as the question's page shows it.
+ *
+ * A view rather than the run row for the reason `QuestionReviewView` is one: the panel
+ * needs the answer parsed back through its schema, and it needs to know whether the
+ * revision the tutor was shown is still the question's current one.
+ *
+ * `response` is `null` when the stored payload can no longer be read — a hand-edited row,
+ * or a payload from a schema that has since changed. The panel says so rather than
+ * rendering an empty answer.
+ */
+export interface TutorExchangeView {
+  readonly run: GenerationRun;
+  readonly response: TutorResponse | null;
+  /**
+   * Set when the question has been edited since this exchange.
+   *
+   * The tutor explained one immutable revision, so an edit does not make the explanation
+   * wrong — it makes it about wording the owner no longer has. Saying so is the honest
+   * option, and it is the visible half of the acceptance criterion: the tutor receives
+   * the exact revision being discussed (`SPEC.md` section 25.3), so an answer about a
+   * different one has to be labelled as such.
+   */
+  readonly staleRevision: boolean;
+}
+
+/**
+ * What one ask produced.
+ *
+ * The run either way, and the answer only when there was one: a provider failure is a
+ * recorded outcome rather than an exception here, exactly as it is for a review, so the
+ * caller gets a `FAILED` run with a category rather than a thrown error to translate.
+ */
+export interface TutorAskOutcome {
+  readonly run: GenerationRun;
+  readonly response: TutorResponse | null;
 }
 
 /**
@@ -844,6 +901,270 @@ export class GenerationFacade {
           // state. Malformed output is one of these paths, so a model that answers
           // gibberish cannot promote anything.
           qualityStatusChanged: false,
+        };
+      }
+
+      throw error;
+    }
+  }
+
+  /**
+   * The most recent tutor exchanges about one question, newest first.
+   *
+   * Bounded to `TUTOR_EXCHANGE_LIMIT`, and each one parsed back through the same schema
+   * that accepted it, so the panel cannot render an answer that would not have been
+   * accepted. The current revision is read once and every exchange compared against it,
+   * rather than per exchange, because they are all about the same question.
+   */
+  async findTutorExchanges(
+    questionId: string,
+    limit: number = TUTOR_EXCHANGE_LIMIT,
+  ): Promise<readonly TutorExchangeView[]> {
+    const [runs, current] = await Promise.all([
+      this.deps.runs.listTutorExchangesForQuestion(questionId, limit),
+      this.deps.questions.findWithCurrentRevision(questionId),
+    ]);
+
+    return runs.map((run) => ({
+      run,
+      response: readTutorResponse(run.proposedPayload),
+      staleRevision:
+        current !== null &&
+        run.subjectRevisionId !== null &&
+        run.subjectRevisionId !== current.question.currentRevisionId,
+    }));
+  }
+
+  /**
+   * Asks the tutor one thing about one question, and records what it said.
+   *
+   * On `GenerationFacade` beside `reviewQuestion` rather than in a facade of its own, and
+   * for the same reason: an ask is the same shape of flow as every other run here —
+   * resolve the track, resolve the persona, render a versioned prompt, make one structured
+   * call, record a run with its provenance and its tokens. `findRecordedPersona`, the
+   * failure handling, and the run history are all shared unchanged.
+   *
+   * **One ask is one call.** There is no conversation, no thread, and no accumulated
+   * context; `tutor-exchange.ts` states why, and the consequence is that the port's
+   * `converse` method is still not implemented. Asking a second thing is a second run,
+   * independently recorded.
+   *
+   * What this method must never do is the substance of the acceptance criteria
+   * (`SPEC.md` section 25.3, `spec/AI-GUIDELINES.md` section 1.10):
+   *
+   * - **It receives the exact revision.** The question's current revision is rendered
+   *   verbatim by the same builder the review uses, and its identifier is recorded on the
+   *   run before the call — so a later edit makes the exchange visibly stale rather than
+   *   silently misattributed.
+   * - **It never touches the question.** No revision is appended, no field is rewritten,
+   *   no lifecycle transition happens, and — unlike a review — not even the quality state
+   *   moves. There is no field in `TutorResponse` that could carry a rewrite and no call
+   *   here that could write one.
+   * - **It records model-knowledge provenance.** `MODEL_KNOWLEDGE` is the honest mode:
+   *   D8's sources do not exist, no source was consulted, and the panel says so in words
+   *   as well (`spec/AI-GUIDELINES.md` section 1.2).
+   *
+   * **Any lifecycle is allowed**, deliberately unlike `reviewQuestion`. A review is a
+   * decision aid, so spending a call reviewing something the owner has taken out of study
+   * is waste; tutoring is *learning*, and wanting to understand a retired question while
+   * reading through the bank's history is a legitimate thing to want. The owner is the one
+   * pressing the button and paying for it.
+   *
+   * The order matches every other run in this module: the `PENDING` row is written before
+   * the provider is called, the provider is called outside any transaction, and the
+   * outcome is recorded afterwards.
+   */
+  async askTutor(
+    slug: CertificationSlug,
+    questionId: string,
+    ask: TutorAsk,
+  ): Promise<TutorAskOutcome> {
+    const certification = await this.deps.certifications.findBySlug(slug);
+
+    if (certification === null) {
+      throw new CertificationNotFoundError(slug);
+    }
+
+    const current =
+      await this.deps.questions.findWithCurrentRevision(questionId);
+
+    // Scoped to the track as well as to the identifier, so a question of another track
+    // cannot be asked about — and paid for — through this track's address.
+    if (
+      current === null ||
+      current.question.certificationId !== certification.id
+    ) {
+      throw new TutorAskNotAnswerableError(
+        "That question no longer exists in this track.",
+      );
+    }
+
+    const choices = contentChoices(current.revision.content);
+    const choiceIds = choices.map((choice) => choice.id);
+    const asked = choices.findIndex((choice) => choice.id === ask.choiceId);
+
+    // Refused before the call rather than after it: an ask about a choice the question
+    // does not have cannot be answered, and finding that out from a validation failure
+    // would mean paying for the discovery.
+    if (ask.kind === "EXPLAIN_CHOICE" && asked === -1) {
+      throw new TutorAskNotAnswerableError(
+        choiceIds.length === 0
+          ? "This question has no choices to ask about."
+          : "That choice is not part of this question any more. Reload the page and pick one of the choices shown.",
+      );
+    }
+
+    const chosen = choices[asked];
+    const [objectives, linkedIds] = await Promise.all([
+      this.deps.objectives.listByCertification(certification.id),
+      this.deps.questions.listObjectiveLinks(questionId),
+    ]);
+    const persona = await this.resolvePersona(certification, null);
+    const prompt = renderPrompt("TUTOR_EXPLANATION", {
+      persona,
+      trackName: certification.name,
+      examCode: certification.examCode,
+      // Only the objectives this question is mapped to, for the reason the review sends
+      // only those: the whole syllabus would be pages of context for one explanation, and
+      // the tutor maps nothing back.
+      objectives: objectives
+        .filter((objective) => linkedIds.includes(objective.id))
+        .map((objective) => ({
+          id: objective.id,
+          code: objective.code,
+          title: objective.title,
+          description: objective.description,
+          kind: objectiveKind(objectives, objective.id),
+        })),
+      spec: {
+        itemCount: TUTOR_ITEM_COUNT,
+        objectiveIds: [],
+        difficulty: null,
+        // The owner's note travels on the ask rather than here, so the tutor template
+        // reads one field and cannot render the note twice.
+        additionalInstructions: null,
+        questionTypes: [],
+        cardTypes: [],
+      },
+      reviewedRevision: current.revision,
+      tutorAsk: ask,
+      // Spread rather than assigned as `undefined`, because the field is genuinely absent
+      // for the five asks that are not about a choice, and the template branches on that
+      // absence.
+      ...(chosen === undefined
+        ? {}
+        : {
+            tutorChoice: {
+              id: chosen.id,
+              // The letter the owner sees, computed the same way the question page and the
+              // answer form compute it, so "why is B wrong" names the same B.
+              letter: choiceLetter(asked),
+              text: chosen.text,
+            },
+          }),
+    });
+    // Over the revision identifier and the ask rather than over the question's text: the
+    // revision is immutable, so the same ask about the same revision hashes the same and
+    // an edit changes the fingerprint by construction. The owner's note is hashed too,
+    // because a different note is a different request. The stem itself is deliberately
+    // not hashed — a fingerprint column must not become a copy of the bank.
+    const inputHash = sha256Hex(
+      [
+        `certification=${certification.id}`,
+        "kind=TUTOR_EXPLANATION",
+        `question=${questionId}`,
+        `revision=${current.revision.id}`,
+        `ask=${ask.kind}`,
+        `choice=${ask.choiceId ?? ""}`,
+        `note=${ask.note ?? ""}`,
+      ].join("\n"),
+    );
+    const pending: GenerationRun = {
+      id: this.deps.ids.nextId(),
+      certificationId: certification.id,
+      itemKind: "TUTOR_EXPLANATION",
+      // The tutor answered from its own knowledge and consulted nothing, which is what
+      // MODEL_KNOWLEDGE records. D8's sources do not exist, so there is no other honest
+      // value, and the panel makes the same claim to the owner in words
+      // (`spec/AI-GUIDELINES.md` section 1.2).
+      generationMode: "MODEL_KNOWLEDGE",
+      // The *review* gateway, not the writing one. Tutoring is a judging-and-explaining
+      // job rather than an authoring one, so it belongs on the model
+      // `BEDROCK_REVIEW_MODEL_ID` configures: an owner who pays for a stronger model to
+      // scrutinise questions wants that model explaining them too, and an owner who
+      // picked a cheaper one for sweeping the bank has said what an explanation is worth
+      // to them. Read from the same gateway the call below goes through, so the recorded
+      // model and the called model cannot drift apart.
+      modelProvider: this.reviewGateway.provider,
+      modelId: this.reviewGateway.modelId,
+      personaId: persona.id,
+      personaVersion: persona.version,
+      promptTemplateId: templateIdForItemKind("TUTOR_EXPLANATION"),
+      promptTemplateVersion: templateVersionForItemKind("TUTOR_EXPLANATION"),
+      inputHash,
+      selectedSourceSnapshotIds: [],
+      requestedItemCount: TUTOR_ITEM_COUNT,
+      successfulItemCount: 0,
+      failedItemCount: 0,
+      usageMetadata: null,
+      failureReason: null,
+      proposedPayload: null,
+      // Stays null forever: `proposesForConfirmation("TUTOR_EXPLANATION")` is false,
+      // because an explanation is not a proposal waiting to be written to the bank.
+      appliedAt: null,
+      subjectQuestionId: questionId,
+      // The exact revision the tutor was shown, recorded before the call, so a failed ask
+      // still says what it was looking at and a later edit makes the exchange visibly
+      // stale (`SPEC.md` section 25.3).
+      subjectRevisionId: current.revision.id,
+      startedAt: this.deps.clock.now(),
+      completedAt: null,
+      status: "PENDING",
+    };
+
+    // Deliberately no duplicate-request guard. Asking the same thing twice is a
+    // reasonable thing to want — a second explanation of something that did not land the
+    // first time is the whole point — and an ask is one cheap call rather than a batch.
+    await this.deps.unitOfWork.transaction(async ({ runs }) => {
+      await runs.create(pending);
+    });
+
+    try {
+      const produced = await this.reviewGateway.generateStructured({
+        system: prompt.system,
+        user: prompt.user,
+        schemaName: TUTOR_SCHEMA_NAME,
+        schemaDescription: TUTOR_SCHEMA_DESCRIPTION,
+        schema: tutorJsonSchema(ask.kind),
+        // Closed over the ask and the question's real choice identifiers, so the gateway
+        // stays ignorant of both and the answer is still checked against them.
+        validate: tutorResponseValidator(ask, choiceIds),
+        maxOutputTokens: maxOutputTokensFor(
+          "TUTOR_EXPLANATION",
+          TUTOR_ITEM_COUNT,
+        ),
+      });
+      const response = produced.value;
+      const completed: GenerationRun = {
+        ...pending,
+        successfulItemCount: TUTOR_ITEM_COUNT,
+        failedItemCount: 0,
+        usageMetadata: produced.usage,
+        proposedPayload: serializeTutorResponse(response),
+        completedAt: this.deps.clock.now(),
+        status: "COMPLETED",
+      };
+
+      await this.deps.unitOfWork.transaction(async ({ runs }) => {
+        await runs.complete(completed);
+      });
+
+      return { run: completed, response };
+    } catch (error) {
+      if (error instanceof ProviderFailure) {
+        return {
+          run: await this.failRun(pending, error.category, TUTOR_ITEM_COUNT),
+          response: null,
         };
       }
 

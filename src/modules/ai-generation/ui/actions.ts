@@ -17,6 +17,7 @@ import {
   generationRequestSchema,
   rejectDraftSchema,
   reviewQuestionSchema,
+  tutorAskSchema,
 } from "@/modules/ai-generation/application/schemas";
 
 /**
@@ -219,6 +220,57 @@ export async function reviewQuestionAction(
   }
 
   // The run history gains a row whatever the outcome was, including a failure.
+  revalidatePath(runsPath(slug));
+
+  return { status: "idle", fieldErrors: {}, values: {} };
+}
+
+/**
+ * Asks the tutor one thing and stays on the question's page.
+ *
+ * No redirect, for the review's reason: the answer belongs beside the question it is about.
+ * Revalidating the question's path is what puts it there — the page re-reads the recent
+ * exchanges on the server, so the newest answer renders in the panel without this action
+ * returning it. That is why the action's own return value carries no answer: a Server
+ * Action's result is not a place to keep model output that the page can read from the run
+ * it was recorded on.
+ *
+ * A provider failure is not a form error here either. The facade records a `FAILED` run and
+ * returns it, the panel keeps showing the exchanges that did succeed, and the spent call is
+ * readable in the run history. What does become a form error is an ask that cannot be
+ * answered at all (`TutorAskNotAnswerableError`) — a question that is gone from this track,
+ * or a choice that has been edited away — because that is a fact about the request.
+ */
+export async function askTutorAction(
+  _state: FormState,
+  form: FormData,
+): Promise<FormState> {
+  const slug = readString(form, "slug");
+
+  try {
+    const input = parseInput(tutorAskSchema, {
+      questionId: readString(form, "questionId"),
+      kind: readString(form, "kind"),
+      choiceId: readString(form, "choiceId"),
+      note: readString(form, "note"),
+    });
+
+    await getGenerationFacade().askTutor(slug, input.questionId, {
+      kind: input.kind,
+      choiceId: input.choiceId,
+      note: input.note,
+    });
+
+    revalidatePath(`${trackPath(slug)}/questions/${input.questionId}`);
+  } catch (error) {
+    if (isDomainError(error)) {
+      return toInvalidFormState(error, form);
+    }
+    throw error;
+  }
+
+  // The run history gains a row whatever the outcome was, including a failure, because an
+  // ask that failed still spent a call.
   revalidatePath(runsPath(slug));
 
   return { status: "idle", fieldErrors: {}, values: {} };

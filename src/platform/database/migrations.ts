@@ -1072,4 +1072,178 @@ UPDATE flashcard_revisions
 DROP TABLE generation_link_backup_0011;
 `,
   },
+  {
+    id: "0012",
+    description:
+      "TUTOR_EXPLANATION runs that answer one ask about one revision",
+    sql: `
+-- Asking the tutor is a sixth kind of generation request, and the second that writes
+-- nothing into the bank. A model is shown one revision, exactly as it stands, together
+-- with one ask — explain the answer, explain why choice c is wrong, explain it more
+-- simply, give an example, ask me a follow-up question — and answers in prose. It does
+-- not rewrite the question, it does not append a revision, it does not change the
+-- lifecycle, and unlike a review it does not even change the quality state: explaining
+-- something is not a judgement about it (\`spec/AI-GUIDELINES.md\` section 1.10).
+--
+-- This migration is 0011 again with one value added, and deliberately so.
+--
+-- 1. item_kind must allow 'TUTOR_EXPLANATION'. SQLite cannot alter a CHECK in place, so
+--    the table is rebuilt exactly as 0006, 0008 and 0011 rebuilt it, link backup
+--    included: questions.generation_run_id, flashcards.generation_run_id and
+--    flashcard_revisions.generation_run_id all reference this table
+--    ON DELETE SET NULL, so a bare DROP TABLE would make the whole bank forget its
+--    provenance. PRAGMA foreign_keys = OFF is a no-op inside the transaction the
+--    migration runner wraps each migration in, so the links are copied out and written
+--    back within that one transaction.
+--
+-- 2. Nothing else changes. The answer lives in proposed_payload as validated JSON, read
+--    back through an application schema (\`application/tutor-schema.ts\`) rather than
+--    cast, and the two columns 0011 added — subject_question_id and subject_revision_id —
+--    already say exactly what a tutor exchange needs to record: which question was being
+--    studied, and which revision the tutor was actually shown. That second column is the
+--    acceptance criterion made durable (\`SPEC.md\` section 25.3, "the tutor receives the
+--    exact revision being discussed"): an exchange whose revision has since been edited
+--    is visibly about wording the owner no longer has.
+--
+--    applied_at stays NULL for a tutor run, for the reason it stays NULL for a review:
+--    'applied' means "the proposal was written into the bank", and an explanation
+--    proposes nothing. That includes the follow-up question, which is tutoring content to
+--    read rather than a draft to accept — putting a question into the bank goes through
+--    the generation pipeline, which already exists.
+--
+-- 3. No new index. The findings panel and the tutor panel both ask the same question of
+--    the same column — what has AI said about this question, most recent first — and
+--    generation_runs_subject_idx on (subject_question_id, started_at) already answers it.
+--    The two are separated by item_kind, which is a filter on a handful of rows per
+--    question rather than a scan.
+
+CREATE TABLE generation_link_backup_0012 (
+  item_table TEXT NOT NULL,
+  item_id TEXT NOT NULL,
+  generation_run_id TEXT NOT NULL
+) STRICT;
+
+INSERT INTO generation_link_backup_0012 (item_table, item_id, generation_run_id)
+  SELECT 'questions', id, generation_run_id
+    FROM questions WHERE generation_run_id IS NOT NULL;
+
+INSERT INTO generation_link_backup_0012 (item_table, item_id, generation_run_id)
+  SELECT 'flashcards', id, generation_run_id
+    FROM flashcards WHERE generation_run_id IS NOT NULL;
+
+INSERT INTO generation_link_backup_0012 (item_table, item_id, generation_run_id)
+  SELECT 'flashcard_revisions', id, generation_run_id
+    FROM flashcard_revisions WHERE generation_run_id IS NOT NULL;
+
+-- Identical to the 0011 definition apart from the widened item_kind CHECK. Repeated in
+-- full rather than patched, for the reason 0006 gives: a rebuilt table is defined by the
+-- statement that creates it.
+CREATE TABLE generation_runs_0012 (
+  id TEXT PRIMARY KEY,
+  certification_id TEXT NOT NULL
+    REFERENCES certifications (id) ON DELETE CASCADE,
+  -- TUTOR_EXPLANATION writes no bank item and proposes nothing to apply. It produces one
+  -- answer to one ask about an item that already exists.
+  item_kind TEXT NOT NULL
+    CHECK (item_kind IN ('QUESTION', 'FLASHCARD', 'ENRICH_VOCABULARY',
+      'OBJECTIVE_IMPORT', 'QUESTION_REVIEW', 'TUTOR_EXPLANATION')),
+  generation_mode TEXT NOT NULL
+    CHECK (generation_mode IN ('MANUAL', 'MODEL_KNOWLEDGE', 'SOURCE_GROUNDED',
+      'HYBRID', 'IMPORTED', 'VARIANT', 'WEB_RESEARCH')),
+  model_provider TEXT NOT NULL,
+  model_id TEXT NOT NULL,
+  persona_id TEXT NOT NULL,
+  persona_version INTEGER NOT NULL CHECK (persona_version >= 1),
+  prompt_template_id TEXT NOT NULL,
+  prompt_template_version INTEGER NOT NULL CHECK (prompt_template_version >= 1),
+  input_hash TEXT NOT NULL,
+  selected_source_snapshot_ids TEXT NOT NULL,
+  requested_item_count INTEGER NOT NULL CHECK (requested_item_count >= 1),
+  successful_item_count INTEGER NOT NULL CHECK (successful_item_count >= 0),
+  failed_item_count INTEGER NOT NULL CHECK (failed_item_count >= 0),
+  usage_metadata TEXT,
+  failure_reason TEXT,
+  -- The validated tree an OBJECTIVE_IMPORT run proposed, the validated findings a
+  -- QUESTION_REVIEW run produced, or the validated answer a TUTOR_EXPLANATION run gave,
+  -- as JSON. NULL for the kinds that produce none of those, and NULL for a run that
+  -- failed before producing one.
+  proposed_payload TEXT,
+  applied_at TEXT,
+  -- The question a QUESTION_REVIEW or TUTOR_EXPLANATION run was about, and the revision
+  -- it was shown. NULL for every other kind, and NULL once the question has been deleted.
+  subject_question_id TEXT
+    REFERENCES questions (id) ON DELETE SET NULL,
+  subject_revision_id TEXT
+    REFERENCES question_revisions (id) ON DELETE SET NULL,
+  started_at TEXT NOT NULL,
+  completed_at TEXT,
+  status TEXT NOT NULL
+    CHECK (status IN ('PENDING', 'COMPLETED', 'PARTIAL', 'FAILED')),
+  CHECK ((status = 'PENDING') = (completed_at IS NULL)),
+  -- Nothing can be applied that was never proposed.
+  CHECK (applied_at IS NULL OR proposed_payload IS NOT NULL),
+  -- A revision is only ever named together with the question it belongs to.
+  CHECK (subject_revision_id IS NULL OR subject_question_id IS NOT NULL)
+) STRICT;
+
+INSERT INTO generation_runs_0012 (id, certification_id, item_kind,
+    generation_mode, model_provider, model_id, persona_id, persona_version,
+    prompt_template_id, prompt_template_version, input_hash,
+    selected_source_snapshot_ids, requested_item_count, successful_item_count,
+    failed_item_count, usage_metadata, failure_reason, proposed_payload,
+    applied_at, subject_question_id, subject_revision_id, started_at,
+    completed_at, status)
+  SELECT id, certification_id, item_kind, generation_mode, model_provider,
+         model_id, persona_id, persona_version, prompt_template_id,
+         prompt_template_version, input_hash, selected_source_snapshot_ids,
+         requested_item_count, successful_item_count, failed_item_count,
+         usage_metadata, failure_reason, proposed_payload, applied_at,
+         subject_question_id, subject_revision_id, started_at,
+         completed_at, status
+    FROM generation_runs;
+
+DROP TABLE generation_runs;
+
+ALTER TABLE generation_runs_0012 RENAME TO generation_runs;
+
+CREATE INDEX generation_runs_track_idx
+  ON generation_runs (certification_id, started_at);
+
+CREATE INDEX generation_runs_input_hash_idx
+  ON generation_runs (certification_id, input_hash);
+
+-- Answers the one question both the findings panel and the tutor panel ask: what has AI
+-- said about this question, most recent first?
+CREATE INDEX generation_runs_subject_idx
+  ON generation_runs (subject_question_id, started_at);
+
+-- The links the DROP nulled, restored from the backup.
+UPDATE questions
+  SET generation_run_id = (
+    SELECT b.generation_run_id FROM generation_link_backup_0012 b
+      WHERE b.item_table = 'questions' AND b.item_id = questions.id)
+  WHERE id IN (
+    SELECT item_id FROM generation_link_backup_0012
+      WHERE item_table = 'questions');
+
+UPDATE flashcards
+  SET generation_run_id = (
+    SELECT b.generation_run_id FROM generation_link_backup_0012 b
+      WHERE b.item_table = 'flashcards' AND b.item_id = flashcards.id)
+  WHERE id IN (
+    SELECT item_id FROM generation_link_backup_0012
+      WHERE item_table = 'flashcards');
+
+UPDATE flashcard_revisions
+  SET generation_run_id = (
+    SELECT b.generation_run_id FROM generation_link_backup_0012 b
+      WHERE b.item_table = 'flashcard_revisions'
+        AND b.item_id = flashcard_revisions.id)
+  WHERE id IN (
+    SELECT item_id FROM generation_link_backup_0012
+      WHERE item_table = 'flashcard_revisions');
+
+DROP TABLE generation_link_backup_0012;
+`,
+  },
 ];

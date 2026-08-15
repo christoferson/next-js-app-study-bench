@@ -15,6 +15,8 @@ import { AnswerForm } from "@/modules/study-sessions/ui/answer-form";
 import { SessionCardItem } from "@/modules/study-sessions/ui/session-card-item";
 import { SessionControls } from "@/modules/study-sessions/ui/session-controls";
 import { describeSessionMode } from "@/modules/study-sessions/domain/study-session";
+import type { Certification } from "@/modules/certifications/domain/certification";
+import type { Question } from "@/modules/question-bank/domain/question";
 
 interface StudySessionPageProps {
   readonly params: Promise<{ readonly sessionId: string }>;
@@ -141,6 +143,10 @@ export default async function StudySessionPage({
             current === null ? summaryPath : `/study/sessions/${sessionId}`
           }
           continueLabel={current === null ? "Finish up" : "Next item"}
+          // The answered question's own track, matched from the session's tracks rather
+          // than fetched: a session already carries them, and a question whose track has
+          // since been removed yields `null` and no link instead of a broken address.
+          tutorHref={tutorHrefFor(view.tracks, feedback.question)}
         />
       )}
 
@@ -203,4 +209,29 @@ export default async function StudySessionPage({
       )}
     </main>
   );
+}
+
+/**
+ * Where "ask the tutor about this" goes for the question just answered.
+ *
+ * The tutor lives on the question's own page, which is addressed by track slug, so the
+ * answered question's track has to be resolved before a link can be built. It is matched
+ * from the tracks the session already loaded rather than fetched again: this is a link, and
+ * a link is not worth a query.
+ *
+ * `null` when the track is not among them, which happens when it has been removed since
+ * the session started. A recorded session stays readable in that case, so the feedback
+ * renders without the link rather than pointing at an address that 404s.
+ */
+function tutorHrefFor(
+  tracks: readonly Certification[],
+  question: Question,
+): string | null {
+  const track = tracks.find(
+    (candidate) => candidate.id === question.certificationId,
+  );
+
+  return track === undefined
+    ? null
+    : `/study-tracks/${track.slug}/questions/${question.id}#tutor`;
 }

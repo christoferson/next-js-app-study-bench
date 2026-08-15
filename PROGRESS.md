@@ -10,9 +10,10 @@ next.
 
 ## Status
 
-D7 authorized by the owner on 2026-08-15, to be delivered in ≤1-hour slices
-(owner's standing rule): slice 1 AI draft review, slice 2 tutor, slice 3 AI
-grading + challenge/dispute.
+D7 authorized by the owner on 2026-08-15, delivered in ≤1-hour slices
+(owner's standing rule). Slice 1 (AI question review) completed 2026-08-15.
+Slice 2 (tutor) authorized and in progress. Slice 3 (AI grading +
+challenge/dispute) remains.
 
 ## Completed milestones
 
@@ -385,12 +386,44 @@ grading + challenge/dispute.
   `cardGuidance` field; the flashcard template (v3) uses it instead of
   question guidance, which had produced three-paragraph exam-question
   scenarios on card fronts.
+- 2026-08-15 (D7 slice 1): AI question review. `question-review` template
+  v1 (skeptical reviewer stance; persona role + prohibitions but not its
+  authoring guidance; exact revision as delimited data; no-rewrite and
+  no-citation instructions). Structured verdict
+  (SOUND/MINOR_ISSUES/MAJOR_ISSUES, answerCorrect, findings with
+  severity/category, suggestedAction) validated with consistency rules.
+  Reviews are QUESTION_REVIEW generation runs (migration `0011`: item-kind
+  CHECK widened with the provenance-preserving rebuild; nullable
+  subject_question_id/subject_revision_id, SET NULL so runs outlive their
+  subject). Review is ON DEMAND end to end (owner decision): it records
+  findings only; "Mark as AI-reviewed" is an explicit owner button offered
+  only when the promotion (UNREVIEWED → AI_REVIEWED on a clean, current
+  review) would succeed; a suggested dispute is a prefilled button into the
+  existing dispute action. Live-verified on a real draft (~3.2k tokens,
+  sane verdict).
+- 2026-08-15 (owner-driven UI batch): read-aloud removed from question
+  pages (vocabulary term audio unaffected); choice letter and text always
+  share a line; "Answer and explanation" box and question content use the
+  full section width with modest padding (reading-measure cap kept for
+  general prose only); granular text size 12–24px via header "Aa" stepper
+  (cookie, server-rendered, legacy preset values migrated; strict guard);
+  per-purpose model env vars (`BEDROCK_GENERATION_MODEL_ID`,
+  `BEDROCK_REVIEW_MODEL_ID`, falling back to `BEDROCK_MODEL_ID` then the
+  default; review runs record the review model); navigation shell
+  (persistent header with Yale→Oxford gradient, active-route nav, `Aa`
+  control, uniform breadcrumbs on ~28 pages, `/settings` hub); owner's
+  palette (#F0CB46/#CCA000/#003566/#001D3D) with WCAG-checked pairings
+  (gold never body text); tightened secondary buttons; lucide-react
+  monochrome icon buttons for inline actions (bundled SVG, no network);
+  collapsible objective domains and long histories; `unpdf` marked
+  server-external (build warning fixed).
 - Known deferred items: ORDERING question type (needed for HSK Writing
   Part 1 word-ordering drills), homograph numbering normalization at import,
   enrichment of the remaining ~1,500 vocabulary words pending owner quality
   review of the pilot, real-device (iOS/Android) audio playback check,
   chunked objective-import extraction for better middle-tier fidelity,
-  persona duplication, stored personas for vocabulary enrichment.
+  persona duplication, stored personas for vocabulary enrichment, batch
+  question review.
 
 ## Deviations
 

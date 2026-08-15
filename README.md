@@ -210,11 +210,11 @@ not while a flashcard made from it exists, and not once it has been answered or
 offered in a session. Sessions are composed by a deterministic strategy that
 reads only the bank: **no AI is involved in starting a session**. AI generation
 creates only drafts, and the one flow that touches content you already have —
-enrichment — appends a revision and never rewrites one. There is no AI tutor, no
-explanation-on-demand, and no source library, grounded generation, or printable
-artifacts yet — those arrive in later milestones. An imported syllabus is read once
-for its outline and the document itself is not kept, which is why it is not a source
-library.
+enrichment — appends a revision and never rewrites one. The AI tutor explains a
+question you already have and writes nothing into the bank at all. There is no
+source library, grounded generation, or printable artifacts yet — those arrive in
+later milestones. An imported syllabus is read once for its outline and the document
+itself is not kept, which is why it is not a source library.
 
 See `SPEC.md` for the full specification and `PROGRESS.md` for implementation
 state.
@@ -529,6 +529,66 @@ never overwritten by a model. Nothing is ever demoted.
 The panel keeps the latest review of a question and marks it as judging an earlier
 revision if the question has since been edited. Reviewing is one question at a
 time; batch review of a whole bank is future work.
+
+### Asking the tutor about a question
+
+"Ask the tutor" on any question page asks the configured model **one thing** about
+the question you already have, and shows the answer under the panel. It costs
+roughly 0.5–1.5k tokens per ask, runs on the fake provider for free like every other
+AI flow, and each ask is its own run in the history at
+`/study-tracks/[slug]/generation-runs` with its own token count.
+
+**It is a menu of asks, not a chat.** There are six buttons and no message box:
+
+- **Explain the answer** — why the marked answer is the answer, and briefly why the
+  others are not.
+- **Explain it simply** — the same thing for somebody meeting the topic for the first
+  time, unfolded rather than compressed.
+- **Explain it technically** — the mechanism, the constraints, and where the boundary
+  with the neighbouring answer falls.
+- **Give an example** — a concrete worked situation, not a restatement of the
+  question.
+- **Why is this choice wrong?** — pick any choice the question does not mark correct
+  and ask about that one specifically.
+- **Ask me a follow-up question** — one further question testing the same
+  understanding from a different angle, with its answer behind a disclosure.
+
+That shape is deliberate. Each ask is a single structured call, validated and
+recorded on its own, so an answer has a recorded model, persona, prompt template
+version, token count, and the **exact revision** it was about. A chat transcript
+would have one provenance record for many claims, and a thread you are billed for by
+accident. The cost of one ask is knowable before you press the button, and asking
+twice is two runs rather than a growing context.
+
+What it never does:
+
+- **It never rewrites the question.** There is nowhere in a tutor answer's shape to
+  put replacement text — no corrected stem, no replacement choice, no revised answer
+  key — so the strongest form of "the tutor cannot silently rewrite a question" is
+  that there is no field to hide one in. The stem, choices, answer key, explanation,
+  lifecycle, and quality state are all untouched by an ask.
+- **It never adds anything to your bank.** A follow-up question it writes is shown
+  for you to think about and is **not** inserted as a question: it will never appear
+  in a study session. If you want to keep it, write it as your own question.
+- **It never cites a source**, because it consulted none. D8's source library does
+  not exist yet, so every answer is model knowledge only and the panel says so on
+  every exchange. Treat an explanation as a study aid to check, not as a reference.
+
+Unlike a review, an ask is allowed at **any lifecycle** — draft, active, retired, or
+archived. Wanting to understand a retired question while reading through the bank is
+a legitimate thing to want, and you are the one pressing the button.
+
+The panel shows the five most recent asks about a question, newest first, and marks
+an answer as being about an earlier revision if you have edited the question since.
+The tutor uses the **review** model (`BEDROCK_REVIEW_MODEL_ID`), because explaining
+and judging are the same kind of job — see
+[One model, or one per purpose](#one-model-or-one-per-purpose).
+
+**During a session**, the feedback panel after an answer offers "Ask the tutor about
+this", which opens that question's page at the tutor panel in a new tab so the
+session stays where it is. Tutoring _inline_, without leaving the session, is future
+work: a model call between one answer and the next is a second wait competing with
+"Next item".
 
 ## Spoken audio
 
@@ -941,6 +1001,31 @@ With `npm run seed` followed by `npm run dev`:
   both "Enrich vocabulary with AI" and "Generate drills"; the AWS demo track keeps
   a single "Generate with AI"
 - Archive the HSK demo track — neither action is offered while it is archived
+
+The AI tutor, on the fake provider (so no AWS account and no spend):
+
+- Open an AWS demo question and scroll to "Ask the tutor" — six asks as buttons, and
+  no message box anywhere
+- Press "Explain the answer" — the button says "Asking…" while the others stay
+  pressable, then an answer appears under "What the tutor said", labelled with the ask
+  and badged `Model knowledge only`
+- Press "Ask me a follow-up question" — a further question appears with its answer
+  behind "Show the answer", and the line under it says it was not added to your
+  question bank; confirm the bank list has not grown
+- Pick a wrong choice from "Why is one of the other choices wrong?" and ask — only
+  the choices the question does not mark correct are offered
+- Confirm the question itself is untouched: same stem, same choices, same answer,
+  same lifecycle, same review state, still revision 1
+- Open `/study-tracks/[slug]/generation-runs` — each ask is its own row labelled
+  `AI tutor answer` / `Explained from model knowledge`, with its token count, and its
+  link lands back on the tutor panel
+- Edit the question, then reload it — every earlier answer now says it is about an
+  earlier revision
+- Answer a question in a session — the feedback panel offers "Ask the tutor about
+  this", which opens the question at the tutor panel in a new tab and leaves the
+  session where it was
+- Retire the question and ask again — the tutor still answers, unlike "Review with
+  AI", which is withdrawn
 
 Audio, with no provider configured (the default, so no AWS account and no spend):
 

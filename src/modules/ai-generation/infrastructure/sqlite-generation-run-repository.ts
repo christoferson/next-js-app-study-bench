@@ -110,10 +110,9 @@ export class SqliteGenerationRunRepository implements GenerationRunRepository {
   /**
    * The newest completed review of one question.
    *
-   * Filtered on `item_kind` as well as on the subject column, even though only a review
-   * ever sets that column: the two conditions say different things, and a future run kind
-   * that also records a subject question must not start appearing in the findings panel
-   * by accident.
+   * Filtered on `item_kind` as well as on the subject column, and that filter is now
+   * load-bearing rather than defensive: tutor runs set the same subject column, so without
+   * it the findings panel would show a tutor's explanation as a review.
    */
   async findLatestReviewForQuestion(
     questionId: string,
@@ -130,6 +129,32 @@ export class SqliteGenerationRunRepository implements GenerationRunRepository {
       .get(questionId) as GenerationRunRow | undefined;
 
     return row === undefined ? null : toGenerationRun(row);
+  }
+
+  /**
+   * The newest completed tutor exchanges about one question.
+   *
+   * Same index as the review query — `(subject_question_id, started_at)` — and the same
+   * two conditions plus a limit. `started_at DESC, id DESC` rather than `started_at`
+   * alone because two asks about the same question can land in the same second on a fast
+   * machine, and a list the owner reads must have a stable order.
+   */
+  async listTutorExchangesForQuestion(
+    questionId: string,
+    limit: number,
+  ): Promise<readonly GenerationRun[]> {
+    const rows = this.database
+      .prepare(
+        `SELECT ${RUN_COLUMNS} FROM generation_runs
+         WHERE subject_question_id = ?
+           AND item_kind = 'TUTOR_EXPLANATION'
+           AND status = 'COMPLETED'
+         ORDER BY started_at DESC, id DESC
+         LIMIT ?`,
+      )
+      .all(questionId, Math.max(1, limit)) as GenerationRunRow[];
+
+    return rows.map(toGenerationRun);
   }
 
   async create(run: GenerationRun): Promise<void> {
@@ -338,6 +363,10 @@ function itemSourceFor(kind: GeneratedItemKind): {
     // the run's own `subject_question_id` rather than found by searching the bank —
     // counting it as an item of the run would claim the run produced a question.
     case "QUESTION_REVIEW":
+    // Nor does a tutor answer, for the same reason plus a stronger one: its follow-up
+    // question is deliberately never written to the bank, so there is no row anywhere that
+    // this run produced.
+    case "TUTOR_EXPLANATION":
       return null;
     case "QUESTION":
       return { table: "questions", condition: "generation_run_id = ?" };

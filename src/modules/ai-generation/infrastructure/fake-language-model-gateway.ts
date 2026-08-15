@@ -21,6 +21,12 @@ import {
 } from "@/modules/ai-generation/application/output-schemas";
 import { OBJECTIVE_IMPORT_SCHEMA_NAME } from "@/modules/ai-generation/application/objective-import-schema";
 import { QUESTION_REVIEW_SCHEMA_NAME } from "@/modules/ai-generation/application/question-review-schema";
+import { TUTOR_SCHEMA_NAME } from "@/modules/ai-generation/application/tutor-schema";
+import {
+  TUTOR_ASK_KINDS,
+  askInstruction,
+} from "@/modules/ai-generation/domain/tutor-exchange";
+import type { TutorAskKind } from "@/modules/ai-generation/domain/tutor-exchange";
 import { MAX_IMPORT_NODES } from "@/modules/ai-generation/domain/objective-import";
 import type {
   LanguageModelGateway,
@@ -96,6 +102,19 @@ export interface FakeLanguageModelGatewayOptions {
    * better than one carrying a literal verdict object.
    */
   readonly questionReviewMode?: "SOUND" | "MAJOR_ISSUES" | "MALFORMED";
+  /**
+   * What a synthesised tutor answer returns.
+   *
+   * `"ANSWER"` answers the ask the prompt carried, in the shape that ask requires.
+   * `"MALFORMED"` answers a different ask than the one that was made -- prose for a
+   * follow-up request, a follow-up question for everything else -- which no repair can
+   * rescue, so the failed-ask path is exercised without scripting a payload by hand.
+   *
+   * Two modes rather than the review's three, because a tutor answer has no verdict to
+   * branch on: the six asks are the variation, and which one was made is read from the
+   * prompt rather than configured here.
+   */
+  readonly tutorMode?: "ANSWER" | "MALFORMED";
 }
 
 /** One prompt as the gateway received it, for tests that inspect what was sent. */
@@ -124,6 +143,8 @@ export class FakeLanguageModelGateway implements LanguageModelGateway {
 
   private readonly questionReviewMode: "SOUND" | "MAJOR_ISSUES" | "MALFORMED";
 
+  private readonly tutorMode: "ANSWER" | "MALFORMED";
+
   private turn = 0;
 
   private readonly prompts: SentPrompt[] = [];
@@ -135,6 +156,7 @@ export class FakeLanguageModelGateway implements LanguageModelGateway {
     this.usage = options.usage === undefined ? DEFAULT_USAGE : options.usage;
     this.objectiveImportMode = options.objectiveImportMode ?? "OUTLINE";
     this.questionReviewMode = options.questionReviewMode ?? "SOUND";
+    this.tutorMode = options.tutorMode ?? "ANSWER";
   }
 
   /** How many provider turns have been taken, for tests that assert repair. */
@@ -195,6 +217,7 @@ export class FakeLanguageModelGateway implements LanguageModelGateway {
       return synthesizePayload(request, {
         objectiveImportMode: this.objectiveImportMode,
         questionReviewMode: this.questionReviewMode,
+        tutorMode: this.tutorMode,
       });
     }
 
@@ -225,6 +248,12 @@ interface PromptFacts {
   readonly uploadedDocument: string;
   /** The stem of the question a review prompt carried, or empty. */
   readonly reviewedStem: string;
+  /** The stem of the question a tutor prompt carried, or empty. */
+  readonly tutoredStem: string;
+  /** Which of the six things a tutor prompt asked for, or `null` if none did. */
+  readonly tutorAskKind: TutorAskKind | null;
+  /** The choice identifier a choice-by-choice ask named, or empty. */
+  readonly tutorChoiceId: string;
 }
 
 function synthesizePayload<Value>(
@@ -232,6 +261,7 @@ function synthesizePayload<Value>(
   modes: {
     readonly objectiveImportMode: "OUTLINE" | "MALFORMED";
     readonly questionReviewMode: "SOUND" | "MAJOR_ISSUES" | "MALFORMED";
+    readonly tutorMode: "ANSWER" | "MALFORMED";
   },
 ): unknown {
   const facts = readPrompt(request.user);
@@ -249,6 +279,8 @@ function synthesizePayload<Value>(
         : { objectives: extractOutline(facts.uploadedDocument) };
     case QUESTION_REVIEW_SCHEMA_NAME:
       return synthesizeReview(facts, modes.questionReviewMode);
+    case TUTOR_SCHEMA_NAME:
+      return synthesizeTutorAnswer(facts, modes.tutorMode);
     default:
       // A schema this gateway has no fixture for is a wiring mistake, not a
       // provider problem, so it is loud.
@@ -621,6 +653,83 @@ function synthesizeReview(
   }
 }
 
+/**
+ * An answer to the one thing a tutor prompt asked.
+ *
+ * Extractive in the same way the review fixture is: the answer quotes the start of the stem
+ * read out of `<owner_question_being_studied>`, so a facade that forgot to send the
+ * revision produces an answer with no stem in it and a failing test. The ask is read from
+ * the prompt too, so the *shape* of the payload follows what was actually asked rather than
+ * what a test remembered to configure -- which is what makes the six asks testable through
+ * one fixture.
+ *
+ * Every synthesised answer says in words that nothing was looked up, because that is what a
+ * real answer must be able to say and a fixture that omitted it would let the panel ship
+ * without the claim (`spec/AI-GUIDELINES.md` section 1.2).
+ */
+function synthesizeTutorAnswer(
+  facts: PromptFacts,
+  mode: "ANSWER" | "MALFORMED",
+): unknown {
+  const excerpt = facts.tutoredStem.slice(0, 60);
+  const kind = facts.tutorAskKind;
+
+  if (mode === "MALFORMED") {
+    // Answers the wrong ask, whichever ask was made, so both the first attempt and the
+    // repair fail the kind check and the owner sees MALFORMED_OUTPUT.
+    return kind === "FOLLOW_UP_QUESTION"
+      ? { kind: "EXPLAIN_ANSWER", text: "Malformed demo answer." }
+      : {
+          kind: "FOLLOW_UP_QUESTION",
+          stem: "Malformed demo follow-up?",
+          answer: "Malformed.",
+          explanation: "Malformed demo explanation.",
+        };
+  }
+
+  // No ask was found in the prompt, so there is nothing to answer. Returned as an empty
+  // answer rather than thrown, so a template that stopped rendering the ask shows up as a
+  // failed run in a facade test rather than as a crash inside the fake.
+  if (kind === null) {
+    return { kind: "EXPLAIN_ANSWER", text: "" };
+  }
+
+  if (kind === "FOLLOW_UP_QUESTION") {
+    return {
+      kind,
+      stem: `Demo follow-up from the fake gateway about "${excerpt}": what would change if the situation were reversed?`,
+      answer:
+        "Demo answer: the fictional opposite of what the stored question says.",
+      explanation:
+        "Demo explanation from the fake gateway. No model was called and nothing was looked up.",
+    };
+  }
+
+  const text = `${describeDemoAsk(kind)} for "${excerpt}". This is demo text from the fake gateway: no model was called and nothing was looked up, so it cites nothing.`;
+
+  return kind === "EXPLAIN_CHOICE"
+    ? { kind, choiceId: facts.tutorChoiceId, text }
+    : { kind, text };
+}
+
+/** How each synthesised answer opens, so the fixture is visibly per-ask. */
+function describeDemoAsk(
+  kind: Exclude<TutorAskKind, "FOLLOW_UP_QUESTION">,
+): string {
+  switch (kind) {
+    case "EXPLAIN_ANSWER":
+      return "Demo explanation of the marked answer";
+    case "EXPLAIN_CHOICE":
+      return "Demo explanation of why that choice is not the one";
+    case "EXPLAIN_SIMPLER":
+      return "Demo plain-language explanation";
+    case "EXPLAIN_TECHNICAL":
+      return "Demo technical explanation";
+    case "GIVE_EXAMPLE":
+      return "Demo worked example";
+  }
+}
+
 /** Objectives for one item: at most one, rotating through what was offered. */
 function pickObjective(
   objectiveIds: readonly string[],
@@ -663,22 +772,44 @@ function readPrompt(user: string): PromptFacts {
     cardTypes,
     enrichmentTerms: readEnrichmentTerms(user),
     uploadedDocument: readDelimitedBlock(user, "owner_uploaded_document"),
-    reviewedStem: readReviewedStem(user),
+    reviewedStem: readStem(user, "owner_question_under_review"),
+    tutoredStem: readStem(user, "owner_question_being_studied"),
+    tutorAskKind: readTutorAskKind(user),
+    tutorChoiceId:
+      matchLine(user, /^Return that identifier, (\S+?), as choiceId\b/m) ?? "",
   };
 }
 
 /**
- * The stem of the reviewed question, read from inside its own delimiters.
+ * The stem of one delimited question, read from inside its own delimiters.
  *
- * The line after `Stem:` within `<owner_question_under_review>`, so a stem is found where
- * the template puts one and text elsewhere in the message cannot be mistaken for it.
+ * The line after `Stem:` within the named block, so a stem is found where the template
+ * puts one and text elsewhere in the message cannot be mistaken for it.
+ *
+ * Parameterised by tag because the review and the tutor use different delimiters on
+ * purpose: a fake that read the review's tags for a tutor prompt would find an empty stem
+ * and produce an answer with nothing extractive in it, which is exactly the mistake the
+ * extractive fixture exists to catch.
  */
-function readReviewedStem(user: string): string {
-  const block = readDelimitedBlock(user, "owner_question_under_review");
-  const lines = block.split("\n");
+function readStem(user: string, tag: string): string {
+  const lines = readDelimitedBlock(user, tag).split("\n");
   const index = lines.findIndex((line) => line === "Stem:");
 
   return index === -1 ? "" : (lines[index + 1] ?? "").trim();
+}
+
+/**
+ * Which ask a tutor prompt made, recognised by its own instruction sentence.
+ *
+ * Matched against `askInstruction` rather than against a label written here, so the fake
+ * reads the same sentence the model reads. A facade that forgot to render the ask
+ * therefore matches nothing, the fixture answers with empty text, and the test fails
+ * instead of passing on an invented default.
+ */
+function readTutorAskKind(user: string): TutorAskKind | null {
+  return (
+    TUTOR_ASK_KINDS.find((kind) => user.includes(askInstruction(kind))) ?? null
+  );
 }
 
 function readCount(user: string): number {

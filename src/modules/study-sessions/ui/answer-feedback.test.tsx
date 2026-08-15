@@ -23,6 +23,7 @@ function renderFeedback(
     readonly revision?: QuestionRevision;
     readonly continueHref?: string;
     readonly continueLabel?: string;
+    readonly tutorHref?: string | null;
   } = {},
 ): void {
   render(
@@ -31,6 +32,11 @@ function renderFeedback(
       revision={options.revision ?? revisionFixture()}
       continueHref={options.continueHref ?? "/study/sessions/session-1"}
       continueLabel={options.continueLabel ?? "Next question"}
+      tutorHref={
+        options.tutorHref === undefined
+          ? "/study-tracks/demo/questions/question-1#tutor"
+          : options.tutorHref
+      }
     />,
   );
 }
@@ -297,5 +303,38 @@ describe("AnswerFeedback", () => {
     expect(
       screen.getByRole("link", { name: "Finish session" }),
     ).toHaveAttribute("href", "/study/sessions/session-1/complete");
+  });
+
+  it("offers the tutor on the question's own page, in a new tab", () => {
+    // In-session tutoring is a deep link rather than a panel here: asking inline would put
+    // a model call and a second pending state between one answer and the next. The new tab
+    // is what keeps the session on screen.
+    renderFeedback();
+
+    const link = screen.getByRole("link", { name: "Ask the tutor about this" });
+
+    expect(link).toHaveAttribute(
+      "href",
+      "/study-tracks/demo/questions/question-1#tutor",
+    );
+    expect(link).toHaveAttribute("target", "_blank");
+  });
+
+  it("keeps continuing as the primary action, with the tutor second and quiet", () => {
+    renderFeedback();
+
+    expect(screen.getByRole("link", { name: "Next question" })).toHaveClass(
+      "button",
+    );
+    expect(
+      screen.getByRole("link", { name: "Ask the tutor about this" }),
+    ).toHaveClass("button-quiet");
+  });
+
+  it("shows no tutor link when the question's track cannot be resolved", () => {
+    // A session whose track has since been removed still has to render its feedback.
+    renderFeedback({ tutorHref: null });
+
+    expect(screen.queryByRole("link", { name: /Ask the tutor/ })).toBeNull();
   });
 });

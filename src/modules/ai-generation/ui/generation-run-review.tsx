@@ -10,6 +10,7 @@ import {
   describeItemKindSingular,
   revisesExistingItems,
 } from "@/modules/ai-generation/domain/generation-run";
+import type { GeneratedItemKind } from "@/modules/ai-generation/domain/generation-run";
 import type {
   GeneratedItemReview,
   GenerationRunDetailView,
@@ -45,11 +46,12 @@ export function GenerationRunReview({ view }: GenerationRunReviewProps) {
   const { certification, run, counts, items, persona } = view;
   const slug = certification.slug;
   const revises = revisesExistingItems(run.itemKind);
-  // A review produced no items at all, so the accept/reject half of this screen has
-  // nothing to show. What it did produce — the findings — belongs on the question, which
-  // is where they are read and where the actions they argue for live. This screen keeps
-  // the provenance block, which is the part that is the same for every model call.
-  const isReview = run.itemKind === "QUESTION_REVIEW";
+  // A review and a tutor answer both produced no items at all, so the accept/reject half
+  // of this screen has nothing to show for either. What they did produce — findings, an
+  // explanation — belongs on the question, which is where it is read and where the actions
+  // it argues for live. This screen keeps the provenance block, which is the part that is
+  // the same for every model call.
+  const subject = subjectRunKind(run.itemKind);
 
   return (
     <>
@@ -57,20 +59,20 @@ export function GenerationRunReview({ view }: GenerationRunReviewProps) {
         <p className="eyebrow">{certification.name}</p>
         <div className="card-heading">
           <h1>
-            {isReview
-              ? describeItemKind(run.itemKind)
-              : `${describeItemKind(run.itemKind)} from AI`}
+            {subject === null
+              ? `${describeItemKind(run.itemKind)} from AI`
+              : describeItemKind(run.itemKind)}
           </h1>
           <RunStatusBadge status={run.status} />
           <span className="badge">
-            {isReview
-              ? "Judged from model knowledge"
-              : "AI generated — model knowledge"}
+            {subject === null
+              ? "AI generated — model knowledge"
+              : subject.provenance}
           </span>
         </div>
         <p className="lede">
-          {isReview
-            ? "Judged from the model's own knowledge, with no source consulted and nothing verified. The review changed nothing about the question except, where it found nothing wrong, recording that it has been AI-reviewed."
+          {subject !== null
+            ? subject.lede
             : revises
               ? "Written from the model's own knowledge, with no source consulted and nothing verified. Each card below kept everything it already said and gained a new revision with the extra detail, so its previous text is still on its page."
               : "Written from the model's own knowledge, with no source consulted and nothing verified. Read each one before you activate it — none of it is official exam material."}
@@ -88,9 +90,9 @@ export function GenerationRunReview({ view }: GenerationRunReviewProps) {
         <FakeProviderNotice provider={run.modelProvider} subject="past" />
 
         <dl className="meta">
-          {isReview ? (
+          {subject !== null ? (
             <div className="meta-item">
-              <dt>Reviewed</dt>
+              <dt>{subject.term}</dt>
               <dd>
                 {run.subjectQuestionId === null ? (
                   // `ON DELETE SET NULL`: the question is gone, and the run stays because
@@ -98,9 +100,9 @@ export function GenerationRunReview({ view }: GenerationRunReviewProps) {
                   "A question that has since been deleted"
                 ) : (
                   <Link
-                    href={`/study-tracks/${slug}/questions/${run.subjectQuestionId}`}
+                    href={`/study-tracks/${slug}/questions/${run.subjectQuestionId}${subject.anchor}`}
                   >
-                    One question — read the findings on it
+                    {subject.link}
                   </Link>
                 )}
               </dd>
@@ -179,7 +181,7 @@ export function GenerationRunReview({ view }: GenerationRunReviewProps) {
           >
             All runs
           </Link>
-          {isReview ? null : (
+          {subject !== null ? null : (
             <Link
               className="button-quiet"
               href={
@@ -194,15 +196,11 @@ export function GenerationRunReview({ view }: GenerationRunReviewProps) {
         </div>
       </header>
 
-      {isReview ? (
+      {subject !== null ? (
         <section aria-labelledby="items-heading" className="section">
           <div className="section-heading">
-            <h2 id="items-heading">What it judged</h2>
-            <p className="section-note">
-              A review writes nothing into the bank, so there is nothing here to
-              accept or reject. Its verdict and findings are on the question it
-              was about.
-            </p>
+            <h2 id="items-heading">{subject.itemsHeading}</h2>
+            <p className="section-note">{subject.itemsNote}</p>
           </div>
         </section>
       ) : (
@@ -358,4 +356,57 @@ function title(item: GeneratedItemReview): string {
   return item.kind === "QUESTION"
     ? stemExcerpt(item.item.revision.stem)
     : textExcerpt(cardSummary(item.item.revision.content));
+}
+
+/**
+ * How a run that is *about* one question describes itself, or `null` for one that produced
+ * bank items.
+ *
+ * The same shape as the run list's own version and for the same reason: the two subject
+ * kinds share this whole screen and differ only in wording, and an exhaustive switch means a
+ * third kind of run about a question has to say what it is rather than being described as
+ * generated content until somebody notices.
+ *
+ * Every `lede` here states that nothing was looked up, because this page is where a model
+ * call is inspected months later and the claim has to survive that long
+ * (`spec/AI-GUIDELINES.md` section 1.2).
+ */
+function subjectRunKind(kind: GeneratedItemKind): {
+  readonly provenance: string;
+  readonly lede: string;
+  readonly term: string;
+  readonly link: string;
+  readonly anchor: string;
+  readonly itemsHeading: string;
+  readonly itemsNote: string;
+} | null {
+  switch (kind) {
+    case "QUESTION_REVIEW":
+      return {
+        provenance: "Judged from model knowledge",
+        lede: "Judged from the model's own knowledge, with no source consulted and nothing verified. The review changed nothing about the question except, where it found nothing wrong, recording that it has been AI-reviewed.",
+        term: "Reviewed",
+        link: "One question — read the findings on it",
+        anchor: "",
+        itemsHeading: "What it judged",
+        itemsNote:
+          "A review writes nothing into the bank, so there is nothing here to accept or reject. Its verdict and findings are on the question it was about.",
+      };
+    case "TUTOR_EXPLANATION":
+      return {
+        provenance: "Explained from model knowledge",
+        lede: "Answered from the model's own knowledge, with no source consulted, nothing verified, and nothing cited. The tutor changed nothing at all: it explained the question as it was stored, and any follow-up question it wrote was for reading rather than for keeping.",
+        term: "Explained",
+        link: "One question — read the answer on it",
+        anchor: "#tutor",
+        itemsHeading: "What it explained",
+        itemsNote:
+          "A tutor answer writes nothing into the bank — not even a follow-up question it wrote — so there is nothing here to accept or reject. The answer itself is on the question it was about.",
+      };
+    case "QUESTION":
+    case "FLASHCARD":
+    case "ENRICH_VOCABULARY":
+    case "OBJECTIVE_IMPORT":
+      return null;
+  }
 }

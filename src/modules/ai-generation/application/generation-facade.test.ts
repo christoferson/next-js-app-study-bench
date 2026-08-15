@@ -25,7 +25,10 @@ import {
   GeneratedDraftNotRejectableError,
   GenerationBatchTooLargeError,
   QuestionNotReviewableError,
+  TutorAskNotAnswerableError,
 } from "@/modules/ai-generation/domain/errors";
+import { TUTOR_ASK_KINDS } from "@/modules/ai-generation/domain/tutor-exchange";
+import type { TutorAsk } from "@/modules/ai-generation/domain/tutor-exchange";
 import {
   MAX_BATCH_ITEMS,
   MAX_ENRICHMENT_ITEMS,
@@ -2360,6 +2363,490 @@ describe("GenerationFacade", () => {
       expect(
         await reviewFacade("SOUND").facade.findQuestionReview(generatedId),
       ).toBeNull();
+    });
+  });
+
+  describe("asking the tutor", () => {
+    /** One question of the AWS track with something worth explaining. */
+    async function seedTutoredQuestion(
+      overrides: Partial<Question> = {},
+    ): Promise<string> {
+      const question = questionFixture({
+        id: "question-being-studied",
+        certificationId: AWS_TRACK.id,
+        currentRevisionId: "revision-being-studied",
+        ...overrides,
+      });
+
+      await questions.create(
+        question,
+        revisionFixture({
+          id: question.currentRevisionId,
+          questionId: question.id,
+          stem: "Which demo service stores objects?",
+          explanation: "Because objects live in buckets.",
+        }),
+      );
+
+      return question.id;
+    }
+
+    function tutorFacade(mode: "ANSWER" | "MALFORMED" = "ANSWER"): {
+      facade: GenerationFacade;
+      gateway: FakeLanguageModelGateway;
+    } {
+      const gateway = new FakeLanguageModelGateway({ tutorMode: mode });
+
+      return { facade: facadeForGateway(gateway), gateway };
+    }
+
+    function ask(overrides: Partial<TutorAsk> = {}): TutorAsk {
+      return {
+        kind: "EXPLAIN_ANSWER",
+        choiceId: null,
+        note: null,
+        ...overrides,
+      };
+    }
+
+    it("answers every one of the six asks and records each as its own run", async () => {
+      const questionId = await seedTutoredQuestion();
+      const { facade } = tutorFacade();
+
+      for (const kind of TUTOR_ASK_KINDS) {
+        const outcome = await facade.askTutor(
+          AWS_TRACK.slug,
+          questionId,
+          ask({
+            kind,
+            choiceId: kind === "EXPLAIN_CHOICE" ? "choice-2" : null,
+          }),
+        );
+
+        expect(outcome.run.status).toBe("COMPLETED");
+        expect(outcome.response?.kind).toBe(kind);
+      }
+
+      // Six asks, six runs. There is no thread being extended, so nothing is amended.
+      const history = await runs.list({
+        certificationId: AWS_TRACK.id,
+        limit: 50,
+        offset: 0,
+      });
+
+      expect(
+        history.items.filter((run) => run.itemKind === "TUTOR_EXPLANATION"),
+      ).toHaveLength(TUTOR_ASK_KINDS.length);
+    });
+
+    it("records a tutor run with its provenance and its subject", async () => {
+      const questionId = await seedTutoredQuestion();
+      const { run } = await tutorFacade().facade.askTutor(
+        AWS_TRACK.slug,
+        questionId,
+        ask(),
+      );
+
+      expect(run.itemKind).toBe("TUTOR_EXPLANATION");
+      expect(run.certificationId).toBe(AWS_TRACK.id);
+      // Nothing was looked up, and the run says so rather than claiming a grounded mode.
+      expect(run.generationMode).toBe("MODEL_KNOWLEDGE");
+      expect(run.promptTemplateId).toBe("tutor-explanation");
+      expect(run.promptTemplateVersion).toBe(1);
+      expect(run.personaId).toBe("technical-certification");
+      expect(run.inputHash).toMatch(/^[0-9a-f]{64}$/);
+      expect(run.requestedItemCount).toBe(1);
+      expect(run.successfulItemCount).toBe(1);
+      expect(run.usageMetadata).not.toBeNull();
+      // The exact question and revision explained, recorded on the run so a later edit
+      // makes the exchange visibly stale (`SPEC.md` section 25.3).
+      expect(run.subjectQuestionId).toBe(questionId);
+      expect(run.subjectRevisionId).toBe("revision-being-studied");
+      // An explanation is not a proposal, so there is nothing to apply.
+      expect(run.appliedAt).toBeNull();
+    });
+
+    it("sends the exact revision to the model, as data", async () => {
+      const questionId = await seedTutoredQuestion();
+      const { facade, gateway } = tutorFacade();
+
+      await facade.askTutor(AWS_TRACK.slug, questionId, ask());
+
+      const prompt = gateway.promptsSent[0];
+
+      expect(prompt?.user).toContain("<owner_question_being_studied>");
+      expect(prompt?.user).toContain("Which demo service stores objects?");
+      expect(prompt?.user).toContain("Marked as correct: choice-1");
+      // And none of it in the system message, where it would be an instruction.
+      expect(prompt?.system).not.toContain(
+        "Which demo service stores objects?",
+      );
+    });
+
+    it("carries the owner's note as data rather than as instructions", async () => {
+      const questionId = await seedTutoredQuestion();
+      const { facade, gateway } = tutorFacade();
+
+      await facade.askTutor(
+        AWS_TRACK.slug,
+        questionId,
+        ask({ note: "I thought EBS was object storage" }),
+      );
+
+      const prompt = gateway.promptsSent[0];
+
+      expect(prompt?.user).toContain("<owner_request>");
+      expect(prompt?.user).toContain("I thought EBS was object storage");
+      expect(prompt?.system).not.toContain("I thought EBS was object storage");
+    });
+
+    it("asks the review model, not the writing one, when the two differ", async () => {
+      // Tutoring is a judging-and-explaining job, so it goes to whatever
+      // `BEDROCK_REVIEW_MODEL_ID` names.
+      const questionId = await seedTutoredQuestion();
+      const writer = new FakeLanguageModelGateway({
+        provider: "writer-provider",
+        modelId: "demo.writer:0",
+      });
+      const judge = new FakeLanguageModelGateway({
+        provider: "judge-provider",
+        modelId: "demo.judge:0",
+      });
+      const facade = new GenerationFacade({
+        runs,
+        questions,
+        flashcards,
+        certifications: new SqliteCertificationRepository(database),
+        objectives: new SqliteObjectiveRepository(database),
+        personas: new SqlitePersonaRepository(database),
+        unitOfWork: new SqliteGenerationUnitOfWork(database),
+        gateway: writer,
+        reviewGateway: judge,
+        clock,
+        ids,
+      });
+      const { run } = await facade.askTutor(AWS_TRACK.slug, questionId, ask());
+
+      expect(run.modelId).toBe("demo.judge:0");
+      expect(run.modelProvider).toBe("judge-provider");
+      expect(judge.turnsTaken).toBe(1);
+      expect(writer.turnsTaken).toBe(0);
+      expect((await runs.findById(run.id))?.modelId).toBe("demo.judge:0");
+    });
+
+    it("stores the answer so it can be read back through the same schema", async () => {
+      const questionId = await seedTutoredQuestion();
+      const { facade } = tutorFacade();
+      const { run } = await facade.askTutor(
+        AWS_TRACK.slug,
+        questionId,
+        ask({ kind: "EXPLAIN_SIMPLER" }),
+      );
+      const exchanges = await facade.findTutorExchanges(questionId);
+
+      expect(exchanges).toHaveLength(1);
+      expect(exchanges[0]?.run.id).toBe(run.id);
+      expect(exchanges[0]?.response?.kind).toBe("EXPLAIN_SIMPLER");
+      expect(exchanges[0]?.staleRevision).toBe(false);
+    });
+
+    it("keeps a follow-up question out of the bank", async () => {
+      // The whole point of the ephemeral follow-up: it is tutoring content, not an item.
+      const questionId = await seedTutoredQuestion();
+      const before = await questions.countsByCertification(AWS_TRACK.id);
+      const { facade } = tutorFacade();
+      const { run, response } = await facade.askTutor(
+        AWS_TRACK.slug,
+        questionId,
+        ask({ kind: "FOLLOW_UP_QUESTION" }),
+      );
+
+      expect(response?.kind).toBe("FOLLOW_UP_QUESTION");
+      expect(await questions.countsByCertification(AWS_TRACK.id)).toEqual(
+        before,
+      );
+      // And the run claims no items either, so the run screen cannot offer one to accept.
+      expect(await runs.listItemIds(run.id)).toEqual([]);
+      expect((await runs.countItems(run.id)).total).toBe(0);
+    });
+
+    it("changes nothing at all about the question", async () => {
+      // The acceptance criterion: "the tutor cannot silently rewrite a question". Not even
+      // the quality state moves, unlike a review.
+      const questionId = await seedTutoredQuestion();
+      const before = await questions.findWithCurrentRevision(questionId);
+      const { facade } = tutorFacade();
+
+      await facade.askTutor(AWS_TRACK.slug, questionId, ask());
+
+      expect(await questions.findWithCurrentRevision(questionId)).toEqual(
+        before,
+      );
+    });
+
+    it("marks an exchange stale once the question is edited", async () => {
+      const questionId = await seedTutoredQuestion();
+      const { facade } = tutorFacade();
+
+      await facade.askTutor(AWS_TRACK.slug, questionId, ask());
+      await questions.appendRevision(
+        revisionFixture({
+          id: "revision-after-the-ask",
+          questionId,
+          revisionNumber: 2,
+          stem: "Which demo service stores objects, revised?",
+        }),
+        START,
+      );
+
+      const exchanges = await facade.findTutorExchanges(questionId);
+
+      expect(exchanges[0]?.staleRevision).toBe(true);
+    });
+
+    it("returns the recent exchanges newest first, bounded by the limit", async () => {
+      const questionId = await seedTutoredQuestion();
+      const { facade } = tutorFacade();
+      const askedKinds = [
+        "EXPLAIN_ANSWER",
+        "EXPLAIN_SIMPLER",
+        "EXPLAIN_TECHNICAL",
+      ] as const;
+
+      for (const [index, kind] of askedKinds.entries()) {
+        // Distinct timestamps, so "newest first" is about the recorded order rather than
+        // about insertion luck.
+        clock.set(`2026-04-0${index + 1}T09:00:00.000Z`);
+        await facade.askTutor(AWS_TRACK.slug, questionId, ask({ kind }));
+      }
+
+      const all = await facade.findTutorExchanges(questionId);
+
+      expect(all.map((exchange) => exchange.response?.kind)).toEqual([
+        "EXPLAIN_TECHNICAL",
+        "EXPLAIN_SIMPLER",
+        "EXPLAIN_ANSWER",
+      ]);
+
+      const limited = await facade.findTutorExchanges(questionId, 2);
+
+      expect(limited.map((exchange) => exchange.response?.kind)).toEqual([
+        "EXPLAIN_TECHNICAL",
+        "EXPLAIN_SIMPLER",
+      ]);
+    });
+
+    it("shows only exchanges about the question that was asked about", async () => {
+      const first = await seedTutoredQuestion();
+      const second = await seedTutoredQuestion({
+        id: "question-other",
+        currentRevisionId: "revision-other",
+      });
+      const { facade } = tutorFacade();
+
+      await facade.askTutor(AWS_TRACK.slug, first, ask());
+
+      expect(await facade.findTutorExchanges(second)).toEqual([]);
+    });
+
+    it("does not mistake a review of the same question for a tutor answer", async () => {
+      // Both kinds set `subject_question_id`, so the item-kind filter is load-bearing in
+      // both directions rather than defensive.
+      const questionId = await seedTutoredQuestion();
+
+      await facadeForGateway(
+        new FakeLanguageModelGateway({ questionReviewMode: "SOUND" }),
+      ).reviewQuestion(AWS_TRACK.slug, questionId);
+
+      const { facade } = tutorFacade();
+
+      expect(await facade.findTutorExchanges(questionId)).toEqual([]);
+
+      await facade.askTutor(AWS_TRACK.slug, questionId, ask());
+
+      // And the review is still the review, not the answer that was just recorded.
+      expect((await facade.findQuestionReview(questionId))?.run.itemKind).toBe(
+        "QUESTION_REVIEW",
+      );
+      expect(await facade.findTutorExchanges(questionId)).toHaveLength(1);
+    });
+
+    it("records a failed run rather than throwing when the answer never validates", async () => {
+      const questionId = await seedTutoredQuestion();
+      const { facade, gateway } = tutorFacade("MALFORMED");
+      const outcome = await facade.askTutor(AWS_TRACK.slug, questionId, ask());
+
+      expect(outcome.run.status).toBe("FAILED");
+      expect(outcome.run.failureReason).toBe("MALFORMED_OUTPUT");
+      expect(outcome.response).toBeNull();
+      // One repair attempt, then it stops: an ask does not retry forever.
+      expect(gateway.turnsTaken).toBe(2);
+      // The failed run still says what it was looking at, because the subject is recorded
+      // before the call.
+      expect(outcome.run.subjectQuestionId).toBe(questionId);
+      expect(outcome.run.subjectRevisionId).toBe("revision-being-studied");
+      // And it is not shown as an exchange, because it has no answer to show.
+      expect(await facade.findTutorExchanges(questionId)).toEqual([]);
+    });
+
+    it("records a failed run when the provider itself fails", async () => {
+      const questionId = await seedTutoredQuestion();
+      const gateway = new FakeLanguageModelGateway({
+        responses: [{ failure: "PROVIDER_THROTTLED" }],
+      });
+      const outcome = await facadeForGateway(gateway).askTutor(
+        AWS_TRACK.slug,
+        questionId,
+        ask(),
+      );
+
+      expect(outcome.run.status).toBe("FAILED");
+      expect(outcome.run.failureReason).toBe("PROVIDER_THROTTLED");
+      expect(outcome.response).toBeNull();
+    });
+
+    it("names the choice being asked about, and files the answer against it", async () => {
+      const questionId = await seedTutoredQuestion();
+      const { facade, gateway } = tutorFacade();
+      const outcome = await facade.askTutor(
+        AWS_TRACK.slug,
+        questionId,
+        ask({ kind: "EXPLAIN_CHOICE", choiceId: "choice-2" }),
+      );
+      const prompt = gateway.promptsSent[0];
+
+      // The letter the owner reads, computed the same way the question page computes it —
+      // lower case, because that is what `choiceLetter` renders on the page the owner was
+      // looking at when they pressed the button.
+      expect(prompt?.user).toContain("whose identifier is choice-2");
+      expect(prompt?.user).toContain("The choice they asked about is b,");
+      expect(
+        outcome.response?.kind === "EXPLAIN_CHOICE"
+          ? outcome.response.choiceId
+          : null,
+      ).toBe("choice-2");
+    });
+
+    it("refuses an ask about a choice the question does not have, before spending a call", async () => {
+      const questionId = await seedTutoredQuestion();
+      const { facade, gateway } = tutorFacade();
+
+      await expect(
+        facade.askTutor(
+          AWS_TRACK.slug,
+          questionId,
+          ask({ kind: "EXPLAIN_CHOICE", choiceId: "choice-gone" }),
+        ),
+      ).rejects.toBeInstanceOf(TutorAskNotAnswerableError);
+      // Nothing was asked and nothing was recorded: discovering this from a validation
+      // failure would mean paying for the discovery.
+      expect(gateway.turnsTaken).toBe(0);
+      expect(
+        (
+          await runs.list({
+            certificationId: AWS_TRACK.id,
+            limit: 10,
+            offset: 0,
+          })
+        ).items,
+      ).toEqual([]);
+    });
+
+    it("refuses to answer about a question of another track", async () => {
+      const questionId = await seedTutoredQuestion();
+
+      await expect(
+        tutorFacade().facade.askTutor(HSK_TRACK.slug, questionId, ask()),
+      ).rejects.toBeInstanceOf(TutorAskNotAnswerableError);
+    });
+
+    it("refuses to answer about a question that no longer exists", async () => {
+      await expect(
+        tutorFacade().facade.askTutor(
+          AWS_TRACK.slug,
+          "no-such-question",
+          ask(),
+        ),
+      ).rejects.toBeInstanceOf(TutorAskNotAnswerableError);
+    });
+
+    it("refuses an unknown track before anything else", async () => {
+      await expect(
+        tutorFacade().facade.askTutor(
+          "no-such-track",
+          "question-being-studied",
+          ask(),
+        ),
+      ).rejects.toBeInstanceOf(CertificationNotFoundError);
+    });
+
+    it("tutors a question at any lifecycle, including one out of study", async () => {
+      // Deliberately unlike a review: wanting to understand a retired question while
+      // reading through the bank is a legitimate thing to want, and the owner is the one
+      // pressing the button.
+      for (const status of [
+        "DRAFT",
+        "ACTIVE",
+        "RETIRED",
+        "ARCHIVED",
+      ] as const) {
+        const questionId = await seedTutoredQuestion({
+          id: `question-${status}`,
+          currentRevisionId: `revision-${status}`,
+          lifecycleStatus: status,
+        });
+        const outcome = await tutorFacade().facade.askTutor(
+          AWS_TRACK.slug,
+          questionId,
+          ask(),
+        );
+
+        expect(outcome.run.status).toBe("COMPLETED");
+      }
+    });
+
+    it("asks again when the same thing is asked twice", async () => {
+      // No duplicate guard: a second explanation of something that did not land the first
+      // time is the point, and an ask is one cheap call rather than a batch.
+      const questionId = await seedTutoredQuestion();
+      const { facade, gateway } = tutorFacade();
+
+      await facade.askTutor(AWS_TRACK.slug, questionId, ask());
+      await facade.askTutor(AWS_TRACK.slug, questionId, ask());
+
+      expect(gateway.turnsTaken).toBe(2);
+      expect(await facade.findTutorExchanges(questionId)).toHaveLength(2);
+    });
+
+    it("fingerprints the ask, so a different ask about the same revision differs", async () => {
+      const questionId = await seedTutoredQuestion();
+      const { facade } = tutorFacade();
+      const same = await facade.askTutor(AWS_TRACK.slug, questionId, ask());
+      const repeat = await facade.askTutor(AWS_TRACK.slug, questionId, ask());
+      const other = await facade.askTutor(
+        AWS_TRACK.slug,
+        questionId,
+        ask({ kind: "EXPLAIN_SIMPLER" }),
+      );
+      const noted = await facade.askTutor(
+        AWS_TRACK.slug,
+        questionId,
+        ask({ note: "in terms of durability" }),
+      );
+
+      expect(repeat.run.inputHash).toBe(same.run.inputHash);
+      expect(other.run.inputHash).not.toBe(same.run.inputHash);
+      expect(noted.run.inputHash).not.toBe(same.run.inputHash);
+      // The fingerprint is not a copy of the bank.
+      expect(same.run.inputHash).not.toContain("objects");
+    });
+
+    it("has nothing to show for a question never asked about", async () => {
+      const questionId = await seedTutoredQuestion();
+
+      expect(await tutorFacade().facade.findTutorExchanges(questionId)).toEqual(
+        [],
+      );
     });
   });
 

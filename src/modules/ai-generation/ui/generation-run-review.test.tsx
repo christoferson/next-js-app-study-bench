@@ -695,4 +695,99 @@ describe("GenerationRunReview", () => {
       expect(screen.queryByRole("link", { name: /findings/ })).toBeNull();
     });
   });
+
+  describe("a run that answered one ask about a question", () => {
+    const TUTOR_RUN: GenerationRun = generationRunFixture({
+      itemKind: "TUTOR_EXPLANATION",
+      promptTemplateId: "tutor-explanation",
+      subjectQuestionId: "question-9",
+      subjectRevisionId: "revision-9",
+      requestedItemCount: 1,
+      successfulItemCount: 1,
+      completedAt: "2026-04-01T09:00:03.000Z",
+      status: "COMPLETED",
+    });
+
+    function renderTutorRun(run: GenerationRun = TUTOR_RUN): void {
+      renderReview({
+        run,
+        items: [],
+        counts: { total: 0, draft: 0, active: 0 },
+      });
+    }
+
+    it("titles the run as an explanation rather than as material from AI", () => {
+      renderTutorRun();
+
+      expect(
+        screen.getByRole("heading", { name: /^AI tutor answer/ }),
+      ).toBeVisible();
+      expect(screen.getByText("Explained from model knowledge")).toBeVisible();
+      expect(document.body.textContent ?? "").not.toMatch(/AI generated/);
+    });
+
+    it("says nothing was looked up, cited, or changed", () => {
+      // This screen is where a model call is inspected months later, so the claim has to be
+      // legible then (`spec/AI-GUIDELINES.md` section 1.2).
+      renderTutorRun();
+
+      expect(
+        screen.getByText(/nothing verified, and nothing cited/),
+      ).toBeVisible();
+      expect(
+        screen.getByText(/The tutor changed nothing at all/),
+      ).toBeVisible();
+    });
+
+    it("links the question at the tutor panel, where the answer is", () => {
+      renderTutorRun();
+
+      expect(
+        screen.getByRole("link", {
+          name: "One question — read the answer on it",
+        }),
+      ).toHaveAttribute(
+        "href",
+        "/study-tracks/demo-cloud-practitioner/questions/question-9#tutor",
+      );
+      expect(screen.queryByText("Requested", { selector: "dt" })).toBeNull();
+    });
+
+    it("keeps the provenance block, which is what makes an ask costed", () => {
+      renderTutorRun();
+
+      expect(metaValue("Prompt template")).toBe("tutor-explanation v1");
+      expect(metaValue("Model")).toBe("fake-deterministic via fake");
+      expect(metaValue("Tokens")).toBeDefined();
+    });
+
+    it("offers nothing to accept, not even a follow-up question it wrote", () => {
+      renderTutorRun();
+
+      expect(
+        screen.getByRole("heading", { name: "What it explained" }),
+      ).toBeVisible();
+      expect(screen.queryByRole("button", { name: /^Reject/ })).toBeNull();
+      expect(
+        screen.getByText(/not even a follow-up question it wrote/),
+      ).toBeVisible();
+      expect(screen.queryByRole("link", { name: "Generate again" })).toBeNull();
+    });
+
+    it("says so when the tutored question has since been deleted", () => {
+      renderTutorRun(
+        generationRunFixture({
+          itemKind: "TUTOR_EXPLANATION",
+          promptTemplateId: "tutor-explanation",
+          subjectQuestionId: null,
+          subjectRevisionId: null,
+          status: "COMPLETED",
+        }),
+      );
+
+      expect(metaValue("Explained")).toBe(
+        "A question that has since been deleted",
+      );
+    });
+  });
 });

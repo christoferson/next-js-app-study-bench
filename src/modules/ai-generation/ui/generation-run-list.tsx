@@ -4,6 +4,7 @@ import {
   describeItemKind,
   describeRunStatus,
 } from "@/modules/ai-generation/domain/generation-run";
+import type { GeneratedItemKind } from "@/modules/ai-generation/domain/generation-run";
 import type { GenerationRunSummary } from "@/modules/ai-generation/application/generation-facade";
 import { RunStatusBadge } from "./run-status-badge";
 
@@ -27,11 +28,11 @@ export function GenerationRunList({ slug, runs }: GenerationRunListProps) {
   return (
     <ul className="card-list">
       {runs.map(({ run, counts }) => {
-        // A review wrote nothing into either bank, so the two facts every other row
-        // carries — a provenance badge for generated content, and how much of the batch
-        // survives — are both false for it. It gets what it does have instead: the
-        // question it judged.
-        const isReview = run.itemKind === "QUESTION_REVIEW";
+        // A review and a tutor answer both wrote nothing into either bank, so the two
+        // facts every other row carries — a provenance badge for generated content, and
+        // how much of the batch survives — are false for them. They get what they do
+        // have instead: the question they were about.
+        const subject = subjectRunKind(run.itemKind);
 
         return (
           <li className="card" key={run.id}>
@@ -39,17 +40,17 @@ export function GenerationRunList({ slug, runs }: GenerationRunListProps) {
               <RunStatusBadge status={run.status} />
               <span className="badge">{describeItemKind(run.itemKind)}</span>
               <span className="badge">
-                {isReview
-                  ? "Judged from model knowledge"
-                  : "AI generated — model knowledge"}
+                {subject === null
+                  ? "AI generated — model knowledge"
+                  : subject.provenance}
               </span>
             </div>
 
             <h3 className="card-title">
               <Link href={`/study-tracks/${slug}/generation-runs/${run.id}`}>
-                {isReview
-                  ? `${describeRunStatus(run.status)} · one question judged`
-                  : `${describeRunStatus(run.status)} · ${run.successfulItemCount} of ${run.requestedItemCount} written`}
+                {subject === null
+                  ? `${describeRunStatus(run.status)} · ${run.successfulItemCount} of ${run.requestedItemCount} written`
+                  : `${describeRunStatus(run.status)} · ${subject.outcome}`}
               </Link>
             </h3>
 
@@ -59,26 +60,22 @@ export function GenerationRunList({ slug, runs }: GenerationRunListProps) {
               </p>
             )}
 
-            {isReview ? (
-              run.subjectQuestionId === null ? (
-                // Set null by `ON DELETE SET NULL` when the question was deleted. The run
-                // stays, because it records a model call that really happened.
-                <p className="question-row-meta">
-                  The question this review was about has since been deleted.
-                </p>
-              ) : (
-                <p className="question-row-meta">
-                  <Link
-                    href={`/study-tracks/${slug}/questions/${run.subjectQuestionId}`}
-                  >
-                    Read the findings on the question
-                  </Link>
-                </p>
-              )
-            ) : (
+            {subject === null ? (
               <p className="question-row-meta">
                 {counts.total} kept · {counts.draft} still draft ·{" "}
                 {counts.active} active
+              </p>
+            ) : run.subjectQuestionId === null ? (
+              // Set null by `ON DELETE SET NULL` when the question was deleted. The run
+              // stays, because it records a model call that really happened.
+              <p className="question-row-meta">{subject.deleted}</p>
+            ) : (
+              <p className="question-row-meta">
+                <Link
+                  href={`/study-tracks/${slug}/questions/${run.subjectQuestionId}${subject.anchor}`}
+                >
+                  {subject.link}
+                </Link>
               </p>
             )}
 
@@ -91,4 +88,46 @@ export function GenerationRunList({ slug, runs }: GenerationRunListProps) {
       })}
     </ul>
   );
+}
+
+/**
+ * How a run that is *about* one question describes itself, or `null` for one that
+ * produced bank items.
+ *
+ * One function rather than two booleans on the row, because the two subject kinds differ in
+ * every string while sharing the whole shape — and because a third kind of run about a
+ * question would otherwise be added as a third boolean and read as generated content until
+ * somebody noticed. The tutor's link carries the `#tutor` anchor so a run history row lands
+ * on the panel holding the answer rather than at the top of the question.
+ */
+function subjectRunKind(kind: GeneratedItemKind): {
+  readonly provenance: string;
+  readonly outcome: string;
+  readonly link: string;
+  readonly deleted: string;
+  readonly anchor: string;
+} | null {
+  switch (kind) {
+    case "QUESTION_REVIEW":
+      return {
+        provenance: "Judged from model knowledge",
+        outcome: "one question judged",
+        link: "Read the findings on the question",
+        deleted: "The question this review was about has since been deleted.",
+        anchor: "",
+      };
+    case "TUTOR_EXPLANATION":
+      return {
+        provenance: "Explained from model knowledge",
+        outcome: "one tutor answer",
+        link: "Read the answer on the question",
+        deleted: "The question this answer was about has since been deleted.",
+        anchor: "#tutor",
+      };
+    case "QUESTION":
+    case "FLASHCARD":
+    case "ENRICH_VOCABULARY":
+    case "OBJECTIVE_IMPORT":
+      return null;
+  }
 }

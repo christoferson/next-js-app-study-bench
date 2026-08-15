@@ -333,6 +333,28 @@ export class QuestionNotReviewableError extends DomainError {
 }
 
 /**
+ * The tutor cannot be asked this.
+ *
+ * Its own error rather than reuse of `QuestionNotReviewableError`, because it means
+ * something different: a review is refused because of the question's *lifecycle*, while
+ * tutoring is allowed at any lifecycle and is refused only when the ask cannot be
+ * answered at all — the question is gone from this track, or it names a choice the
+ * question does not have. Both cases mean a stale page, so the message tells the owner to
+ * reload rather than to change the question.
+ */
+export class TutorAskNotAnswerableError extends DomainError {
+  readonly code = "TUTOR_ASK_NOT_ANSWERABLE";
+
+  constructor(readonly detail: string) {
+    super(detail);
+  }
+
+  fieldMessages(): Readonly<Record<string, readonly string[]>> {
+    return { "": [this.detail] };
+  }
+}
+
+/**
  * A provider failure reduced to a category.
  *
  * Not a `DomainError`: it never reaches a form. The facade catches it, records

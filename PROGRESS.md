@@ -2,11 +2,17 @@
 
 ## Current milestone
 
-D6 — Bedrock AI Foundation and Raw-Knowledge Generation
+Between milestones. D6 completed 2026-08-12; D10 (Polly audio) was brought
+forward and completed 2026-08-14 by owner decision. Substantial
+user-authorized non-milestone work through 2026-08-15 is recorded in
+Decisions below. D7 slice 1 (AI review of draft questions) is authorized
+next.
 
 ## Status
 
-Completed on 2026-08-12. Awaiting explicit authorization for D7.
+D7 authorized by the owner on 2026-08-15, to be delivered in ≤1-hour slices
+(owner's standing rule): slice 1 AI draft review, slice 2 tutor, slice 3 AI
+grading + challenge/dispute.
 
 ## Completed milestones
 
@@ -16,21 +22,19 @@ Completed on 2026-08-12. Awaiting explicit authorization for D7.
 - D4 — Flashcards and Review Scheduling (2026-08-11)
 - D5 — Quick Study Sessions and Progress (2026-08-11)
 - D6 — Bedrock AI Foundation and Raw-Knowledge Generation (2026-08-12)
+- D10 — Polly Audio Generation (2026-08-14, brought forward; audio study
+  packs deferred to D9, listening question type and audio card type
+  deferred, S3 storage deferred to D13)
 
 ## In progress
 
-- None
+- D7 — AI Tutor and Question Quality Workflow (authorized 2026-08-15,
+  slice 1 starting)
 
 ## Planned milestones
 
-- D7 — AI Tutor and Question Quality Workflow (proposed next, not authorized)
-- D4 — Flashcards and Review Scheduling
-- D5 — Quick Study Sessions and Progress
-- D6 — Bedrock AI Foundation and Raw-Knowledge Generation
-- D7 — AI Tutor and Question Quality Workflow
 - D8 — Source Library and Grounded Generation
 - D9 — Printable Study Packs and Data Exports
-- D10 — Polly Audio Generation
 - D11 — Transcribe Speech Input and Evaluation
 - D12 — Offline and Installable PWA
 - D13 — PostgreSQL, S3, ECS, and Production Hardening
@@ -322,10 +326,71 @@ Completed on 2026-08-12. Awaiting explicit authorization for D7.
   third request cache-hit). Deferred to their milestones: audio study packs
   (D9), LISTENING_COMPREHENSION question type, dedicated audio card type,
   S3 storage (D13).
+- 2026-08-14 (post-D10 fixes, user-driven): Audio UX reworked after owner
+  feedback. One-click speaker button per clip (no "Generate audio"
+  two-step, no native transport bar, no implementation vocabulary on study
+  surfaces); play() stays inside the click's user activation for mobile
+  autoplay. Study surfaces render no audio controls at all when
+  `SPEECH_PROVIDER` is not `polly` (the silent-fake trap is unreachable;
+  `/settings/audio` explains setup). Vocabulary cards offer audio for the
+  TERM ONLY (owner decision; example-sentence clips removed — the rule
+  lives in one domain function, `flashcardClipRequests`). Play buttons also
+  appear in the flashcard bank list rows (far right of the badge line) via
+  a batched cache read. Two silent fake-provider clips purged from the dev
+  DB.
+- 2026-08-14 (bug-fix batch, user-driven): Track hard delete. Archived
+  tracks (and only archived — archive-first is the confirmation) gained
+  "Delete permanently": one transaction purges the track and everything
+  that ever referenced it (objectives, questions, revisions, flashcards,
+  reviews, schedules, generation runs, sessions with items and attempts) —
+  unconditional by owner decision, study history does not block. A contract
+  test seeds all 14 dependent tables and asserts zero rows after.
+- 2026-08-14 (feature, user-authorized): Import objectives.
+  "Import objectives" on the track page: upload a PDF/.txt (or paste;
+  drag-and-drop supported), text extracted via `unpdf` (the one new
+  dependency, server-external in next.config.ts to avoid a webpack
+  import.meta warning), AI extracts an objective tree (copy-only prompt,
+  `objective-import` template v1, document as untrusted data in delimiters),
+  validated (depth ≤3, ≤150 nodes) and stored on the generation run row
+  (migration `0008`: run-kind CHECK widened + `proposed_payload` +
+  `applied_at`). Confirm page shows the tree; owner picks
+  OFFICIAL_SYLLABUS vs AI_PROPOSED; Apply inserts in one transaction;
+  re-apply refused. Uploaded files are NOT persisted (source library is
+  D8). Live test on the real exam guide: weights extracted exactly; the
+  model collapsed the middle task tier — visible on the confirm screen;
+  chunked extraction is a known follow-up. Two live-found bugs fixed
+  (empty-outline fabrication; text/html accepted).
+- 2026-08-15 (feature, user-authorized, 3 slices): Personas. Slice 1:
+  `personas` table (migration `0009`, stable `persona_key` for provenance,
+  version counter), managed at /settings/personas, created from 6 curated
+  templates (AWS associate, AWS professional/specialty, generic technical,
+  HSK, JLPT, generic language) — copy-on-create, editing bumps version.
+  Slice 2: tracks gained nullable `persona_id` (migration `0010`, FK ON
+  DELETE RESTRICT); persona selects on track forms (always visible, with a
+  create-personas hint when the library is empty and a "Current assignment
+  (kept)" option for archetype-filtered assignments) and on the generation
+  and objective-import forms (default = track's, else automatic by study
+  type); archetype-restricted assignment; runs record persona_key +
+  version (never the uuid; renames keep history explicable; stale
+  assignment falls back to the built-in rather than failing a paid call);
+  personas assigned to tracks cannot be deleted. Slice 3: JSON
+  export/import — versioned envelope (`studybench_persona: 1`, content
+  only, no ids/timestamps), export via
+  /settings/personas/[id]/export (attachment, sanitized filename), import
+  via file/paste/drag-drop into the same prepopulated review form
+  templates use (import never writes directly); round-trip equality is
+  tested. Vocabulary enrichment still uses the built-in HSK persona
+  (language-specific machinery) — future concern.
+- 2026-08-14/15 (prompt fix, user-reported): personas gained a separate
+  `cardGuidance` field; the flashcard template (v3) uses it instead of
+  question guidance, which had produced three-paragraph exam-question
+  scenarios on card fronts.
 - Known deferred items: ORDERING question type (needed for HSK Writing
   Part 1 word-ordering drills), homograph numbering normalization at import,
   enrichment of the remaining ~1,500 vocabulary words pending owner quality
-  review of the pilot, real-device (iOS/Android) audio playback check.
+  review of the pilot, real-device (iOS/Android) audio playback check,
+  chunked objective-import extraction for better middle-tier fidelity,
+  persona duplication, stored personas for vocabulary enrichment.
 
 ## Deviations
 

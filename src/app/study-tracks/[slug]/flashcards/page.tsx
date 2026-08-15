@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { ReactNode } from "react";
+import { Breadcrumbs, TRACKS_CRUMB, trackCrumb } from "@/shared/ui/breadcrumbs";
+import { CollapsibleSection } from "@/shared/ui/collapsible-section";
 import { parseInput } from "@/shared/parse-input";
 import { getFlashcardFacade } from "@/modules/flashcards/composition";
 import { flashcardFilterSchema } from "@/modules/flashcards/application/schemas";
@@ -63,9 +65,10 @@ export default async function FlashcardBankPage({
 
   return (
     <main className="page">
-      <nav aria-label="Breadcrumb" className="breadcrumb">
-        <Link href={trackPath}>Back to {view.certification.name}</Link>
-      </nav>
+      <Breadcrumbs
+        trail={[TRACKS_CRUMB, trackCrumb(view.certification)]}
+        current="Flashcards"
+      />
 
       <header className="page-header">
         <p className="eyebrow">Flashcards</p>
@@ -88,16 +91,16 @@ export default async function FlashcardBankPage({
         </div>
       </header>
 
-      <section aria-labelledby="filters-heading" className="section">
-        <div className="section-heading">
-          <h2 id="filters-heading">Filters</h2>
-        </div>
+      {/* Open by default, unlike the histories: filters are a control the owner came here to
+          use, and one hidden behind a press is one they will not find. Collapsing is for
+          getting the form out of the way of the results on a phone. */}
+      <CollapsibleSection id="filters" title="Filters" open>
         <FlashcardFilterForm
           action={bankPath}
           filters={filters}
           objectives={view.objectives}
         />
-      </section>
+      </CollapsibleSection>
 
       <section aria-labelledby="cards-heading" className="section">
         <div className="section-heading">

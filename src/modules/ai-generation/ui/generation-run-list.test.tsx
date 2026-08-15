@@ -26,6 +26,22 @@ const COMPLETED: GenerationRunSummary = {
   counts: { total: 3, draft: 1, active: 2 },
 };
 
+/** One review run: a model call that produced findings and no content. */
+const REVIEW: GenerationRunSummary = {
+  run: generationRunFixture({
+    id: "run-3",
+    itemKind: "QUESTION_REVIEW",
+    subjectQuestionId: "question-7",
+    subjectRevisionId: "revision-7",
+    requestedItemCount: 1,
+    successfulItemCount: 1,
+    startedAt: "2026-04-03T10:00:00.000Z",
+    completedAt: "2026-04-03T10:00:04.000Z",
+    status: "COMPLETED",
+  }),
+  counts: { total: 0, draft: 0, active: 0 },
+};
+
 const RUNS: readonly GenerationRunSummary[] = [
   COMPLETED,
   {
@@ -102,6 +118,56 @@ describe("GenerationRunList", () => {
     render(<GenerationRunList slug="demo" runs={[COMPLETED]} />);
 
     expect(document.body.textContent ?? "").not.toMatch(/rate limiting/);
+  });
+
+  it("labels a review row and links it to the question it judged", () => {
+    // A review wrote nothing into either bank, so the row's useful destination is the
+    // question whose findings it produced, not a review screen with no items on it.
+    render(<GenerationRunList slug="demo" runs={[REVIEW]} />);
+
+    expect(screen.getByText("AI question review")).toBeVisible();
+    expect(
+      screen.getByRole("link", { name: "Read the findings on the question" }),
+    ).toHaveAttribute("href", "/study-tracks/demo/questions/question-7");
+  });
+
+  it("says a review judged rather than wrote, and counts nothing", () => {
+    render(<GenerationRunList slug="demo" runs={[REVIEW]} />);
+
+    expect(
+      screen.getByRole("link", { name: "Completed · one question judged" }),
+    ).toBeVisible();
+    expect(document.body.textContent ?? "").not.toMatch(/kept ·/);
+    // Not presented as generated content, because nothing was generated.
+    expect(screen.getByText("Judged from model knowledge")).toBeVisible();
+    expect(document.body.textContent ?? "").not.toMatch(/AI generated/);
+  });
+
+  it("says so when the reviewed question has since been deleted", () => {
+    // `ON DELETE SET NULL`: the run stays, because it records a model call that happened.
+    render(
+      <GenerationRunList
+        slug="demo"
+        runs={[
+          {
+            run: generationRunFixture({
+              id: "run-4",
+              itemKind: "QUESTION_REVIEW",
+              subjectQuestionId: null,
+              status: "COMPLETED",
+            }),
+            counts: { total: 0, draft: 0, active: 0 },
+          },
+        ]}
+      />,
+    );
+
+    expect(
+      screen.getByText(
+        "The question this review was about has since been deleted.",
+      ),
+    ).toBeVisible();
+    expect(screen.queryByRole("link", { name: /findings/ })).toBeNull();
   });
 
   it("renders nothing but an empty list when there are no runs", () => {

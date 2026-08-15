@@ -41,6 +41,8 @@ export function generationRunFixture(
     failureReason: null,
     proposedPayload: null,
     appliedAt: null,
+    subjectQuestionId: null,
+    subjectRevisionId: null,
     startedAt: FIXTURE_TIME,
     completedAt: null,
     status: "PENDING",

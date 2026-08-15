@@ -594,4 +594,105 @@ describe("GenerationRunReview", () => {
       ).toBeVisible();
     });
   });
+
+  describe("a run that reviewed a question", () => {
+    const REVIEW_RUN: GenerationRun = generationRunFixture({
+      itemKind: "QUESTION_REVIEW",
+      promptTemplateId: "question-review",
+      subjectQuestionId: "question-7",
+      subjectRevisionId: "revision-7",
+      requestedItemCount: 1,
+      successfulItemCount: 1,
+      completedAt: "2026-04-01T09:00:03.000Z",
+      status: "COMPLETED",
+    });
+
+    function renderQuestionReview(run: GenerationRun = REVIEW_RUN): void {
+      renderReview({
+        run,
+        items: [],
+        counts: { total: 0, draft: 0, active: 0 },
+      });
+    }
+
+    it("titles the run as a judgement rather than as material from AI", () => {
+      renderQuestionReview();
+
+      expect(
+        screen.getByRole("heading", { name: /^AI question review/ }),
+      ).toBeVisible();
+      expect(screen.getByText("Judged from model knowledge")).toBeVisible();
+      expect(document.body.textContent ?? "").not.toMatch(/AI generated/);
+    });
+
+    it("says the review changed nothing but the reviewed marker", () => {
+      renderQuestionReview();
+
+      expect(
+        screen.getByText(/The review changed nothing about the question/),
+      ).toBeVisible();
+    });
+
+    it("points at the question instead of counting items it never wrote", () => {
+      renderQuestionReview();
+
+      expect(
+        screen.getByRole("link", {
+          name: "One question — read the findings on it",
+        }),
+      ).toHaveAttribute(
+        "href",
+        "/study-tracks/demo-cloud-practitioner/questions/question-7",
+      );
+      expect(screen.queryByText("Requested", { selector: "dt" })).toBeNull();
+      expect(
+        screen.queryByText("Still in the bank", { selector: "dt" }),
+      ).toBeNull();
+    });
+
+    it("keeps the provenance block, which is why the run exists", () => {
+      renderQuestionReview();
+
+      expect(metaValue("Prompt template")).toBe("question-review v1");
+      expect(metaValue("Model")).toBe("fake-deterministic via fake");
+    });
+
+    it("offers nothing to accept or reject, because nothing was produced", () => {
+      renderQuestionReview();
+
+      expect(
+        screen.getByRole("heading", { name: "What it judged" }),
+      ).toBeVisible();
+      expect(screen.queryByRole("button", { name: /^Reject/ })).toBeNull();
+      expect(screen.queryByText("This run saved nothing.")).toBeNull();
+      expect(
+        screen.getByText(/A review writes nothing into the bank/),
+      ).toBeVisible();
+    });
+
+    it("does not offer to generate again from a review screen", () => {
+      // "Generate again" would write new drafts, which is not what the owner was doing.
+      renderQuestionReview();
+
+      expect(screen.queryByRole("link", { name: "Generate again" })).toBeNull();
+      expect(screen.getByRole("link", { name: "All runs" })).toBeVisible();
+    });
+
+    it("says so when the reviewed question has since been deleted", () => {
+      renderQuestionReview(
+        generationRunFixture({
+          itemKind: "QUESTION_REVIEW",
+          promptTemplateId: "question-review",
+          subjectQuestionId: null,
+          subjectRevisionId: null,
+          status: "COMPLETED",
+        }),
+      );
+
+      expect(metaValue("Reviewed")).toBe(
+        "A question that has since been deleted",
+      );
+      expect(screen.queryByRole("link", { name: /findings/ })).toBeNull();
+    });
+  });
 });

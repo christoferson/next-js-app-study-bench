@@ -313,6 +313,26 @@ export class GenerationNotConfiguredError extends DomainError {
 }
 
 /**
+ * The owner asked to review a question that cannot be reviewed.
+ *
+ * Two ways here, both from a stale page: the question was deleted in another tab, or it
+ * was retired or archived since the page was rendered. A refusal rather than a no-op
+ * because a review costs a model call, and quietly reviewing something the owner has taken
+ * out of study would spend it on nothing.
+ */
+export class QuestionNotReviewableError extends DomainError {
+  readonly code = "QUESTION_NOT_REVIEWABLE";
+
+  constructor(readonly detail: string) {
+    super(detail);
+  }
+
+  fieldMessages(): Readonly<Record<string, readonly string[]>> {
+    return { "": [this.detail] };
+  }
+}
+
+/**
  * A provider failure reduced to a category.
  *
  * Not a `DomainError`: it never reaches a form. The facade catches it, records

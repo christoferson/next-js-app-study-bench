@@ -1,5 +1,5 @@
-import Link from "next/link";
 import { notFound } from "next/navigation";
+import { Breadcrumbs, TRACKS_CRUMB, trackCrumb } from "@/shared/ui/breadcrumbs";
 import { getFlashcardFacade } from "@/modules/flashcards/composition";
 import { CardFace } from "@/modules/flashcards/ui/card-face";
 import { CardTypeBadge } from "@/modules/flashcards/ui/flashcard-badges";
@@ -44,9 +44,14 @@ export default async function FlashcardRevisionPage({
 
   return (
     <main className="page">
-      <nav aria-label="Breadcrumb" className="breadcrumb">
-        <Link href={cardPath}>Back to this card</Link>
-      </nav>
+      <Breadcrumbs
+        trail={[
+          TRACKS_CRUMB,
+          trackCrumb(view.certification),
+          { label: "Flashcard", href: cardPath },
+        ]}
+        current={`Revision ${view.revision.revisionNumber}`}
+      />
 
       <header className="page-header">
         <p className="eyebrow">{view.certification.name}</p>

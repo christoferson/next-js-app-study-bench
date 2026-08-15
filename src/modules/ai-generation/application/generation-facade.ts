@@ -13,6 +13,7 @@ import type { CertificationRepository } from "@/modules/certifications/ports/cer
 import type { ObjectiveRepository } from "@/modules/certifications/ports/objective-repository";
 import type {
   Question,
+  QuestionLifecycleStatus,
   QuestionWithRevision,
 } from "@/modules/question-bank/domain/question";
 import type { FlashcardWithRevision } from "@/modules/flashcards/domain/flashcard";
@@ -23,6 +24,7 @@ import {
   GenerationBatchTooLargeError,
   GenerationRunNotFoundError,
   ProviderFailure,
+  QuestionNotReviewableError,
 } from "@/modules/ai-generation/domain/errors";
 import {
   checkFlashcardDrafts,
@@ -47,6 +49,12 @@ import {
   MAX_ENRICHMENT_ITEMS,
   maxOutputTokensFor,
 } from "@/modules/ai-generation/domain/generation-limits";
+import {
+  QUESTION_REVIEW_ITEM_COUNT,
+  qualityStatusAfterReview,
+  recommendsDispute,
+} from "@/modules/ai-generation/domain/question-review";
+import type { QuestionReview } from "@/modules/ai-generation/domain/question-review";
 import type {
   GeneratedItemKind,
   GenerationRun,
@@ -96,6 +104,14 @@ import {
   validateFlashcardOutput,
   validateQuestionOutput,
 } from "./output-schemas";
+import {
+  QUESTION_REVIEW_SCHEMA_DESCRIPTION,
+  QUESTION_REVIEW_SCHEMA_NAME,
+  questionReviewJsonSchema,
+  readQuestionReview,
+  serializeQuestionReview,
+  validateQuestionReview,
+} from "./question-review-schema";
 import type {
   EnrichmentRequestInput,
   GenerationRequestInput,
@@ -272,6 +288,63 @@ export function isEnrichmentDuplicateNotice(
   return "duplicateOf" in result;
 }
 
+/**
+ * The latest AI review of one question, as the question's page shows it.
+ *
+ * A view rather than the run row, because the panel needs three things the run row cannot
+ * answer on its own: the findings parsed back through their schema, whether the revision
+ * reviewed is still the question's current one, and whether the review's own
+ * recommendation warrants offering the dispute button.
+ *
+ * `review` is `null` when the stored payload can no longer be read — a hand-edited row, or
+ * a payload from a schema that has since changed. The panel then says the review cannot be
+ * read rather than rendering an empty verdict, which is the same choice the objective-import
+ * confirm page makes.
+ */
+export interface QuestionReviewView {
+  readonly run: GenerationRun;
+  readonly review: QuestionReview | null;
+  /**
+   * Set when the question has been edited since this review was made.
+   *
+   * The review judged one immutable revision, so an edit does not make it wrong — it makes
+   * it about wording the owner no longer has. Saying so is the honest option: silently
+   * showing it beside the new text would attribute findings to text the reviewer never saw
+   * (`SPEC.md` section 25.3).
+   */
+  readonly staleRevision: boolean;
+  /**
+   * Whether the panel offers the prefilled dispute button.
+   *
+   * `false` for a question that is already disputed: the button would set the state it is
+   * already in and overwrite the owner's own recorded reason with the model's summary.
+   */
+  readonly offersDispute: boolean;
+  /**
+   * Whether the panel offers "Mark as AI-reviewed" — true only when the stored
+   * review is clean, current, and the question is still `UNREVIEWED`, i.e. when
+   * accepting would actually succeed.
+   */
+  readonly offersAccept: boolean;
+}
+
+/**
+ * What one review request produced.
+ *
+ * The run is always here, including when it failed, for the reason `GenerationOutcome`
+ * gives: the caller returns to the question's page either way, and a provider outage is
+ * something the owner reads rather than an error screen.
+ *
+ * `qualityStatusChanged` is what the page needs to say what happened. A review that found
+ * nothing wrong promotes an unreviewed question to `AI_REVIEWED`; every other combination
+ * leaves the question exactly as it was, and the difference is not visible from the run.
+ */
+export interface QuestionReviewOutcome {
+  readonly run: GenerationRun;
+  readonly review: QuestionReview | null;
+  readonly qualityStatusChanged: boolean;
+}
+
 /** The run review screen (`SPEC.md` section 24.2, generation preview). */
 export interface GenerationRunDetailView {
   readonly certification: Certification;
@@ -352,14 +425,38 @@ export interface GenerationFacadeDependencies {
   /** The owner's own personas, for track assignment and per-request choice. */
   readonly personas: PersonaRepository;
   readonly unitOfWork: GenerationUnitOfWork;
-  /** The model. Composed in, so the fake gateway is a wiring choice. */
+  /**
+   * The model that writes content. Composed in, so the fake gateway is a wiring
+   * choice.
+   */
   readonly gateway: LanguageModelGateway;
+  /**
+   * The model that judges content — currently only `reviewQuestion`.
+   *
+   * Optional, defaulting to `gateway`, because writing and judging are separately
+   * configurable (`BEDROCK_REVIEW_MODEL_ID`) but not separately *required*: an owner
+   * who configures one model, and every existing caller that composes one gateway, get
+   * the same behaviour as before. A second dependency rather than a per-call model
+   * argument keeps the property the runs depend on — a gateway reports the one model it
+   * calls, and the run records that — true of both paths.
+   */
+  readonly reviewGateway?: LanguageModelGateway;
   readonly clock: Clock;
   readonly ids: IdGenerator;
 }
 
 export class GenerationFacade {
   constructor(private readonly deps: GenerationFacadeDependencies) {}
+
+  /**
+   * The gateway a review call goes through.
+   *
+   * Falls back to the writing gateway, so "not separately configured" means "the same
+   * model", never "no model".
+   */
+  private get reviewGateway(): LanguageModelGateway {
+    return this.deps.reviewGateway ?? this.deps.gateway;
+  }
 
   /**
    * The persona one request generates with.
@@ -500,6 +597,311 @@ export class GenerationFacade {
       items: await this.loadItems(run.itemKind, run.id, itemIds),
       persona: await this.findRecordedPersona(run),
     };
+  }
+
+  /**
+   * The latest AI review of one question, for the findings panel on its page.
+   *
+   * Returns `null` when the question has never been reviewed, which is the ordinary case
+   * and not a failure: the page then shows the Review button and no panel.
+   */
+  async findQuestionReview(
+    questionId: string,
+  ): Promise<QuestionReviewView | null> {
+    const run = await this.deps.runs.findLatestReviewForQuestion(questionId);
+
+    if (run === null) {
+      return null;
+    }
+
+    const current =
+      await this.deps.questions.findWithCurrentRevision(questionId);
+
+    if (current === null) {
+      return null;
+    }
+
+    const review = readQuestionReview(run.proposedPayload);
+    const staleRevision =
+      run.subjectRevisionId !== null &&
+      run.subjectRevisionId !== current.question.currentRevisionId;
+
+    return {
+      run,
+      review,
+      staleRevision,
+      offersDispute:
+        review !== null &&
+        recommendsDispute(review) &&
+        current.question.qualityStatus !== "DISPUTED",
+      // The explicit accept: offered only while the one allowed promotion is
+      // actually available, so the button never renders just to refuse.
+      offersAccept:
+        review !== null &&
+        !staleRevision &&
+        qualityStatusAfterReview(review, current.question.qualityStatus) !==
+          null,
+    };
+  }
+
+  /**
+   * Asks a model to review one question, and records what it said.
+   *
+   * On `GenerationFacade` rather than in a facade of its own — unlike the objective
+   * import, which got one. The deciding difference is that a review is *the same shape of
+   * flow* as a generation run: resolve the track, resolve the persona, render a versioned
+   * prompt, make one structured call, record a run with its provenance and its tokens.
+   * Every one of those steps is already here, and `findRecordedPersona`, the failure
+   * handling, and the run history are shared unchanged. The import needed its own facade
+   * because its flow has three phases with an owner decision in the middle and a write
+   * into a different module's hierarchy; a review has one phase and writes nothing but a
+   * run row and, at most, one quality flag.
+   *
+   * What this method must never do is the substance of the acceptance criteria
+   * (`SPEC.md` section 25.3, `spec/AI-GUIDELINES.md` section 1.10):
+   *
+   * - **It never touches the question's content.** No revision is appended, no field is
+   *   rewritten. The answer shape has no room for replacement text, and this method has no
+   *   call that could write it if it did.
+   * - **It never touches the lifecycle.** A review does not activate, retire, or archive
+   *   anything. A `MAJOR_ISSUES` verdict on an active question leaves it active and in
+   *   study, because pulling a question out of study is the owner's decision — offered as
+   *   the prefilled dispute button, which is one click and the owner's click.
+   * - **The only thing it may write to the question is a quality promotion**, and only the
+   *   one `qualityStatusAfterReview` allows: `UNREVIEWED` to `AI_REVIEWED`, on a `SOUND`
+   *   verdict with a correct answer. Every other case leaves the state alone.
+   *
+   * The order matches every other run in this module: the `PENDING` row is written before
+   * the provider is called, the provider is called outside any transaction, and the
+   * outcome is recorded afterwards.
+   */
+  async reviewQuestion(
+    slug: CertificationSlug,
+    questionId: string,
+  ): Promise<QuestionReviewOutcome> {
+    const certification = await this.deps.certifications.findBySlug(slug);
+
+    if (certification === null) {
+      throw new CertificationNotFoundError(slug);
+    }
+
+    const current =
+      await this.deps.questions.findWithCurrentRevision(questionId);
+
+    // Scoped to the track as well as to the identifier, so a question of another track
+    // cannot be reviewed — and paid for — through this track's address.
+    if (
+      current === null ||
+      current.question.certificationId !== certification.id
+    ) {
+      throw new QuestionNotReviewableError(
+        "That question no longer exists in this track.",
+      );
+    }
+
+    if (!isReviewableLifecycle(current.question.lifecycleStatus)) {
+      throw new QuestionNotReviewableError(
+        "Only a draft or active question can be reviewed. Reviewing a retired or archived question would spend a model call on something you have taken out of study.",
+      );
+    }
+
+    const [objectives, linkedIds] = await Promise.all([
+      this.deps.objectives.listByCertification(certification.id),
+      this.deps.questions.listObjectiveLinks(questionId),
+    ]);
+    const persona = await this.resolvePersona(certification, null);
+    const prompt = renderPrompt("QUESTION_REVIEW", {
+      persona,
+      trackName: certification.name,
+      examCode: certification.examCode,
+      // Only the objectives this question is actually mapped to. The whole track's
+      // syllabus would be pages of context for a judgement about one item, and the
+      // reviewer maps nothing back, so there is no identifier list it needs to choose from.
+      objectives: objectives
+        .filter((objective) => linkedIds.includes(objective.id))
+        .map((objective) => ({
+          id: objective.id,
+          code: objective.code,
+          title: objective.title,
+          description: objective.description,
+          kind: objectiveKind(objectives, objective.id),
+        })),
+      spec: {
+        itemCount: QUESTION_REVIEW_ITEM_COUNT,
+        objectiveIds: [],
+        difficulty: null,
+        additionalInstructions: null,
+        questionTypes: [],
+        cardTypes: [],
+      },
+      reviewedRevision: current.revision,
+    });
+    // Over the revision identifier rather than over the question's text: the revision is
+    // immutable, so the same revision reviewed twice hashes the same and an edit changes
+    // the fingerprint by construction. The stem itself is deliberately not hashed — a
+    // fingerprint column must not become a copy of the bank.
+    const inputHash = sha256Hex(
+      [
+        `certification=${certification.id}`,
+        "kind=QUESTION_REVIEW",
+        `question=${questionId}`,
+        `revision=${current.revision.id}`,
+      ].join("\n"),
+    );
+    const pending: GenerationRun = {
+      id: this.deps.ids.nextId(),
+      certificationId: certification.id,
+      itemKind: "QUESTION_REVIEW",
+      // The reviewer judged from its own knowledge and consulted nothing, which is what
+      // MODEL_KNOWLEDGE records. Claiming a grounded mode would be a false provenance
+      // record, and it is the same claim the panel makes to the owner in words
+      // (`spec/AI-GUIDELINES.md` section 1.2).
+      generationMode: "MODEL_KNOWLEDGE",
+      // The *review* gateway, not the writing one: a review may be configured to a
+      // different model, and the run must record the model that was actually asked
+      // (`spec/AI-GUIDELINES.md` provenance). Read from the same gateway the call below
+      // goes through, so the two cannot drift apart.
+      modelProvider: this.reviewGateway.provider,
+      modelId: this.reviewGateway.modelId,
+      personaId: persona.id,
+      personaVersion: persona.version,
+      promptTemplateId: templateIdForItemKind("QUESTION_REVIEW"),
+      promptTemplateVersion: templateVersionForItemKind("QUESTION_REVIEW"),
+      inputHash,
+      selectedSourceSnapshotIds: [],
+      requestedItemCount: QUESTION_REVIEW_ITEM_COUNT,
+      successfulItemCount: 0,
+      failedItemCount: 0,
+      usageMetadata: null,
+      failureReason: null,
+      proposedPayload: null,
+      // Stays null forever for a review: `proposesForConfirmation("QUESTION_REVIEW")` is
+      // false, because a finding is not a proposal waiting to be written to the bank.
+      appliedAt: null,
+      subjectQuestionId: questionId,
+      // The exact revision judged, recorded before the call, so a failed review still
+      // says what it was looking at and a later edit makes the review visibly stale.
+      subjectRevisionId: current.revision.id,
+      startedAt: this.deps.clock.now(),
+      completedAt: null,
+      status: "PENDING",
+    };
+
+    // Deliberately no duplicate-batch guard. Re-reviewing the same revision is a
+    // reasonable thing to want — a second opinion after an edit elsewhere, or after
+    // changing the model — and a review is one cheap call rather than a batch of ten.
+    await this.deps.unitOfWork.transaction(async ({ runs }) => {
+      await runs.create(pending);
+    });
+
+    try {
+      const produced = await this.reviewGateway.generateStructured({
+        system: prompt.system,
+        user: prompt.user,
+        schemaName: QUESTION_REVIEW_SCHEMA_NAME,
+        schemaDescription: QUESTION_REVIEW_SCHEMA_DESCRIPTION,
+        schema: questionReviewJsonSchema(),
+        validate: validateQuestionReview,
+        maxOutputTokens: maxOutputTokensFor(
+          "QUESTION_REVIEW",
+          QUESTION_REVIEW_ITEM_COUNT,
+        ),
+      });
+      const review = produced.value;
+      const completed: GenerationRun = {
+        ...pending,
+        successfulItemCount: QUESTION_REVIEW_ITEM_COUNT,
+        failedItemCount: 0,
+        usageMetadata: produced.usage,
+        proposedPayload: serializeQuestionReview(review),
+        completedAt: this.deps.clock.now(),
+        status: "COMPLETED",
+      };
+
+      // The review records findings and nothing else. Even a clean verdict does
+      // not move the quality state by itself — the owner accepts it with an
+      // explicit click (`acceptQuestionReview`), by their decision (2026-08-15):
+      // every state change on a question is theirs to make.
+      await this.deps.unitOfWork.transaction(async ({ runs }) => {
+        await runs.complete(completed);
+      });
+
+      return {
+        run: completed,
+        review,
+        qualityStatusChanged: false,
+      };
+    } catch (error) {
+      if (error instanceof ProviderFailure) {
+        return {
+          run: await this.failRun(
+            pending,
+            error.category,
+            QUESTION_REVIEW_ITEM_COUNT,
+          ),
+          review: null,
+          // A failed review changes nothing about the question, including its quality
+          // state. Malformed output is one of these paths, so a model that answers
+          // gibberish cannot promote anything.
+          qualityStatusChanged: false,
+        };
+      }
+
+      throw error;
+    }
+  }
+
+  /**
+   * The owner accepts a clean review: `UNREVIEWED` becomes `AI_REVIEWED`.
+   *
+   * On demand only — a review records findings and never moves the state itself
+   * (owner decision, 2026-08-15). This is the explicit click. It re-reads the
+   * stored review and applies `qualityStatusAfterReview`, so it can only perform
+   * the one promotion that function allows: a `SOUND`, answer-correct review of a
+   * currently `UNREVIEWED` question whose revision has not changed since.
+   */
+  async acceptQuestionReview(
+    slug: CertificationSlug,
+    questionId: string,
+  ): Promise<void> {
+    const view = await this.findQuestionReview(questionId);
+    const current =
+      await this.deps.questions.findWithCurrentRevision(questionId);
+    const certification = await this.deps.certifications.findBySlug(slug);
+
+    if (
+      certification === null ||
+      current === null ||
+      current.question.certificationId !== certification.id
+    ) {
+      throw new QuestionNotReviewableError(
+        "That question no longer exists in this track.",
+      );
+    }
+
+    if (view === null || view.review === null || view.staleRevision) {
+      throw new QuestionNotReviewableError(
+        "There is no current review to accept. Review the question first.",
+      );
+    }
+
+    const promoted = qualityStatusAfterReview(
+      view.review,
+      current.question.qualityStatus,
+    );
+
+    if (promoted === null) {
+      throw new QuestionNotReviewableError(
+        "This review does not support marking the question AI-reviewed. Only a clean review of an unreviewed question can be accepted.",
+      );
+    }
+
+    await this.deps.questions.setQualityStatus(
+      questionId,
+      promoted,
+      current.question.disputeReason,
+      this.deps.clock.now(),
+    );
   }
 
   /**
@@ -650,6 +1052,10 @@ export class GenerationFacade {
       // generation run's items are written by the run itself.
       proposedPayload: null,
       appliedAt: null,
+      // Only a review is about one existing question. Enrichment touches many cards, and
+      // which ones is recorded on the revisions it wrote.
+      subjectQuestionId: null,
+      subjectRevisionId: null,
       startedAt: this.deps.clock.now(),
       completedAt: null,
       status: "PENDING",
@@ -828,6 +1234,9 @@ export class GenerationFacade {
       // See `requestVocabularyEnrichment`: nothing here is proposed for confirmation.
       proposedPayload: null,
       appliedAt: null,
+      // A generation run creates its items rather than being about one that exists.
+      subjectQuestionId: null,
+      subjectRevisionId: null,
       startedAt,
       completedAt: null,
       status: "PENDING",
@@ -1357,6 +1766,30 @@ function toEnrichmentTarget(
   return content.type === "VOCABULARY"
     ? [{ flashcardId: card.flashcard.id, content }]
     : [];
+}
+
+/**
+ * Which questions are worth spending a review call on.
+ *
+ * Draft and active, and nothing else. A draft is the case the feature exists for — freshly
+ * generated content nobody has checked — and an active question is the other real one,
+ * because the owner may want a second opinion on something already in study. Retired and
+ * archived questions are excluded: they are out of study by the owner's own decision, so a
+ * review of one would be a model call bought to learn something about material they have
+ * already set aside.
+ *
+ * Exhaustive over the lifecycle union, so a new status has to decide rather than
+ * defaulting into either answer.
+ */
+function isReviewableLifecycle(status: QuestionLifecycleStatus): boolean {
+  switch (status) {
+    case "DRAFT":
+    case "ACTIVE":
+      return true;
+    case "RETIRED":
+    case "ARCHIVED":
+      return false;
+  }
 }
 
 /**

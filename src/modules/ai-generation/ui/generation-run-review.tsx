@@ -45,20 +45,35 @@ export function GenerationRunReview({ view }: GenerationRunReviewProps) {
   const { certification, run, counts, items, persona } = view;
   const slug = certification.slug;
   const revises = revisesExistingItems(run.itemKind);
+  // A review produced no items at all, so the accept/reject half of this screen has
+  // nothing to show. What it did produce — the findings — belongs on the question, which
+  // is where they are read and where the actions they argue for live. This screen keeps
+  // the provenance block, which is the part that is the same for every model call.
+  const isReview = run.itemKind === "QUESTION_REVIEW";
 
   return (
     <>
       <header className="page-header">
         <p className="eyebrow">{certification.name}</p>
         <div className="card-heading">
-          <h1>{describeItemKind(run.itemKind)} from AI</h1>
+          <h1>
+            {isReview
+              ? describeItemKind(run.itemKind)
+              : `${describeItemKind(run.itemKind)} from AI`}
+          </h1>
           <RunStatusBadge status={run.status} />
-          <span className="badge">AI generated — model knowledge</span>
+          <span className="badge">
+            {isReview
+              ? "Judged from model knowledge"
+              : "AI generated — model knowledge"}
+          </span>
         </div>
         <p className="lede">
-          {revises
-            ? "Written from the model's own knowledge, with no source consulted and nothing verified. Each card below kept everything it already said and gained a new revision with the extra detail, so its previous text is still on its page."
-            : "Written from the model's own knowledge, with no source consulted and nothing verified. Read each one before you activate it — none of it is official exam material."}
+          {isReview
+            ? "Judged from the model's own knowledge, with no source consulted and nothing verified. The review changed nothing about the question except, where it found nothing wrong, recording that it has been AI-reviewed."
+            : revises
+              ? "Written from the model's own knowledge, with no source consulted and nothing verified. Each card below kept everything it already said and gained a new revision with the extra detail, so its previous text is still on its page."
+              : "Written from the model's own knowledge, with no source consulted and nothing verified. Read each one before you activate it — none of it is official exam material."}
         </p>
 
         {run.failureReason === null ? null : (
@@ -73,27 +88,49 @@ export function GenerationRunReview({ view }: GenerationRunReviewProps) {
         <FakeProviderNotice provider={run.modelProvider} subject="past" />
 
         <dl className="meta">
-          <div className="meta-item">
-            <dt>Requested</dt>
-            <dd>
-              {run.requestedItemCount} {describeItemKindSingular(run.itemKind)}
-              {run.requestedItemCount === 1 ? "" : "s"}
-            </dd>
-          </div>
-          <div className="meta-item">
-            <dt>{revises ? "Enriched" : "Written"}</dt>
-            <dd>{run.successfulItemCount}</dd>
-          </div>
-          <div className="meta-item">
-            <dt>{revises ? "Left unchanged" : "Rejected by checks"}</dt>
-            <dd>{run.failedItemCount}</dd>
-          </div>
-          <div className="meta-item">
-            <dt>Still in the bank</dt>
-            <dd>
-              {counts.total} ({counts.draft} draft, {counts.active} active)
-            </dd>
-          </div>
+          {isReview ? (
+            <div className="meta-item">
+              <dt>Reviewed</dt>
+              <dd>
+                {run.subjectQuestionId === null ? (
+                  // `ON DELETE SET NULL`: the question is gone, and the run stays because
+                  // it records a model call that really happened.
+                  "A question that has since been deleted"
+                ) : (
+                  <Link
+                    href={`/study-tracks/${slug}/questions/${run.subjectQuestionId}`}
+                  >
+                    One question — read the findings on it
+                  </Link>
+                )}
+              </dd>
+            </div>
+          ) : (
+            <>
+              <div className="meta-item">
+                <dt>Requested</dt>
+                <dd>
+                  {run.requestedItemCount}{" "}
+                  {describeItemKindSingular(run.itemKind)}
+                  {run.requestedItemCount === 1 ? "" : "s"}
+                </dd>
+              </div>
+              <div className="meta-item">
+                <dt>{revises ? "Enriched" : "Written"}</dt>
+                <dd>{run.successfulItemCount}</dd>
+              </div>
+              <div className="meta-item">
+                <dt>{revises ? "Left unchanged" : "Rejected by checks"}</dt>
+                <dd>{run.failedItemCount}</dd>
+              </div>
+              <div className="meta-item">
+                <dt>Still in the bank</dt>
+                <dd>
+                  {counts.total} ({counts.draft} draft, {counts.active} active)
+                </dd>
+              </div>
+            </>
+          )}
           <div className="meta-item">
             <dt>Model</dt>
             <dd>
@@ -142,54 +179,69 @@ export function GenerationRunReview({ view }: GenerationRunReviewProps) {
           >
             All runs
           </Link>
-          <Link
-            className="button-quiet"
-            href={
-              revises
-                ? `/study-tracks/${slug}/enrich`
-                : `/study-tracks/${slug}/generate`
-            }
-          >
-            {revises ? "Enrich more" : "Generate again"}
-          </Link>
+          {isReview ? null : (
+            <Link
+              className="button-quiet"
+              href={
+                revises
+                  ? `/study-tracks/${slug}/enrich`
+                  : `/study-tracks/${slug}/generate`
+              }
+            >
+              {revises ? "Enrich more" : "Generate again"}
+            </Link>
+          )}
         </div>
       </header>
 
-      <section aria-labelledby="items-heading" className="section">
-        <div className="section-heading">
-          <h2 id="items-heading">
-            {revises ? "The cards it enriched" : "What the model wrote"}
-          </h2>
-          <p className="section-note">
-            {revises
-              ? "These cards were already yours, so they keep the lifecycle they had and there is nothing here to accept or reject. Open one to read the new detail, compare it with the revision before it, or edit it."
-              : "Each one is saved as a draft, so nothing here can appear in a study session until you activate it. Open an item to edit or activate it; reject it to delete it."}
-          </p>
-        </div>
+      {isReview ? (
+        <section aria-labelledby="items-heading" className="section">
+          <div className="section-heading">
+            <h2 id="items-heading">What it judged</h2>
+            <p className="section-note">
+              A review writes nothing into the bank, so there is nothing here to
+              accept or reject. Its verdict and findings are on the question it
+              was about.
+            </p>
+          </div>
+        </section>
+      ) : (
+        <section aria-labelledby="items-heading" className="section">
+          <div className="section-heading">
+            <h2 id="items-heading">
+              {revises ? "The cards it enriched" : "What the model wrote"}
+            </h2>
+            <p className="section-note">
+              {revises
+                ? "These cards were already yours, so they keep the lifecycle they had and there is nothing here to accept or reject. Open one to read the new detail, compare it with the revision before it, or edit it."
+                : "Each one is saved as a draft, so nothing here can appear in a study session until you activate it. Open an item to edit or activate it; reject it to delete it."}
+            </p>
+          </div>
 
-        {items.length === 0 ? (
-          <p className="empty-state">
-            {run.successfulItemCount === 0
-              ? revises
-                ? "This run enriched nothing."
-                : "This run saved nothing."
-              : revises
-                ? "Every card this run enriched has since been deleted."
-                : "Everything this run produced has since been deleted."}
-          </p>
-        ) : (
-          <ul className="card-list">
-            {items.map((item) => (
-              <ReviewRow
-                item={item}
-                key={itemId(item)}
-                runId={run.id}
-                slug={slug}
-              />
-            ))}
-          </ul>
-        )}
-      </section>
+          {items.length === 0 ? (
+            <p className="empty-state">
+              {run.successfulItemCount === 0
+                ? revises
+                  ? "This run enriched nothing."
+                  : "This run saved nothing."
+                : revises
+                  ? "Every card this run enriched has since been deleted."
+                  : "Everything this run produced has since been deleted."}
+            </p>
+          ) : (
+            <ul className="card-list">
+              {items.map((item) => (
+                <ReviewRow
+                  item={item}
+                  key={itemId(item)}
+                  runId={run.id}
+                  slug={slug}
+                />
+              ))}
+            </ul>
+          )}
+        </section>
+      )}
     </>
   );
 }

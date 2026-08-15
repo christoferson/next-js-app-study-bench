@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { Breadcrumbs, TRACKS_CRUMB, trackCrumb } from "@/shared/ui/breadcrumbs";
 import { getGenerationFacade } from "@/modules/ai-generation/composition";
 import {
   describeItemKind,
@@ -48,9 +49,10 @@ export default async function GeneratePage({
 
   return (
     <main className="page">
-      <nav aria-label="Breadcrumb" className="breadcrumb">
-        <Link href={trackPath}>Back to {view.certification.name}</Link>
-      </nav>
+      <Breadcrumbs
+        trail={[TRACKS_CRUMB, trackCrumb(view.certification)]}
+        current="Generate with AI"
+      />
 
       <header className="page-header">
         <p className="eyebrow">Generate with AI</p>

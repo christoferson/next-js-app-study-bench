@@ -84,8 +84,15 @@ describe("Audio settings page", () => {
 
     render(await AudioSettingsPage());
 
-    expect(
-      screen.getByRole("link", { name: /back to the study tracks/i }),
-    ).toHaveAttribute("href", "/");
+    // Reached through the breadcrumb trail now, which also exposes the Settings index above
+    // this page.
+    expect(screen.getByRole("link", { name: "Tracks" })).toHaveAttribute(
+      "href",
+      "/",
+    );
+    expect(screen.getByRole("link", { name: "Settings" })).toHaveAttribute(
+      "href",
+      "/settings",
+    );
   });
 });

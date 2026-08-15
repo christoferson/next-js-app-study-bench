@@ -1,5 +1,10 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { Breadcrumbs, TRACKS_CRUMB, trackCrumb } from "@/shared/ui/breadcrumbs";
+import {
+  CollapsibleSection,
+  openWhenShort,
+} from "@/shared/ui/collapsible-section";
 import { describeCardPrompting } from "@/modules/flashcards/domain/flashcard";
 import { getFlashcardFacade } from "@/modules/flashcards/composition";
 import {
@@ -65,9 +70,14 @@ export default async function FlashcardDetailPage({
 
   return (
     <main className="page">
-      <nav aria-label="Breadcrumb" className="breadcrumb">
-        <Link href={bankPath}>Back to the flashcards</Link>
-      </nav>
+      <Breadcrumbs
+        trail={[
+          TRACKS_CRUMB,
+          trackCrumb(certification),
+          { label: "Flashcards", href: bankPath },
+        ]}
+        current="Flashcard"
+      />
 
       <header className="page-header">
         <p className="eyebrow">{certification.name}</p>
@@ -245,37 +255,44 @@ export default async function FlashcardDetailPage({
         <FlashcardOwnerPanel slug={certification.slug} flashcard={flashcard} />
       </section>
 
-      <section aria-labelledby="review-heading" className="section">
-        <div className="section-heading">
-          <h2 id="review-heading">Review history</h2>
-          <p className="section-note">
-            Every rating is kept, together with the interval it produced and the
-            revision that was on screen.
-          </p>
-        </div>
+      {/* A well-reviewed card accumulates far more history than a question does, so folding
+          this is what keeps the card itself at the top of the page. */}
+      <CollapsibleSection
+        id="review"
+        title="Review history"
+        open={openWhenShort(view.reviews.length)}
+        count={
+          view.reviews.length === 1
+            ? "1 review"
+            : `${view.reviews.length} reviews`
+        }
+        note="Every rating is kept, together with the interval it produced and the revision that was on screen."
+      >
         <ReviewHistory
           reviews={view.reviews}
           schedule={view.schedule}
           revisions={view.revisions}
         />
-      </section>
+      </CollapsibleSection>
 
-      <section aria-labelledby="history-heading" className="section">
-        <div className="section-heading">
-          <h2 id="history-heading">Revision history</h2>
-          <p className="section-note">
-            Editing a card adds a revision. Earlier revisions are kept exactly
-            as they were written, so a recorded review still names the text it
-            was answered against.
-          </p>
-        </div>
+      <CollapsibleSection
+        id="history"
+        title="Revision history"
+        open={openWhenShort(view.revisions.length)}
+        count={
+          view.revisions.length === 1
+            ? "1 revision"
+            : `${view.revisions.length} revisions`
+        }
+        note="Editing a card adds a revision. Earlier revisions are kept exactly as they were written, so a recorded review still names the text it was answered against."
+      >
         <FlashcardRevisionHistory
           slug={certification.slug}
           flashcardId={flashcard.id}
           revisions={view.revisions}
           currentRevisionId={flashcard.currentRevisionId}
         />
-      </section>
+      </CollapsibleSection>
 
       {view.sourceQuestionId === null ? null : (
         <section aria-labelledby="source-heading" className="section">

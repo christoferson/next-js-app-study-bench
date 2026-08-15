@@ -63,19 +63,10 @@ export default async function HomePage({ searchParams }: HomePageProps) {
               </Link>
             </>
           )}
-          <Link className="button-quiet" href="/progress">
-            Progress
-          </Link>
-          {/* Audio is generated from a card and listened to there; this is the one
-              place that lists what is stored, so it needs a way in. */}
-          <Link className="button-quiet" href="/settings/audio">
-            Audio
-          </Link>
-          {/* Personas are edited rarely and from nowhere else, so the way in is here
-              beside the other settings screen rather than on a track. */}
-          <Link className="button-quiet" href="/settings/personas">
-            Personas
-          </Link>
+          {/* Progress, Audio, Personas and Appearance used to hang off this row because the
+              dashboard was the only page that could reach them. The header nav reaches all
+              four from everywhere now, and Settings collects the last three, so repeating
+              them here would only make the primary action harder to find. */}
         </div>
       </section>
 

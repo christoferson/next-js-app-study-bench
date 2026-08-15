@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { Breadcrumbs, TRACKS_CRUMB, trackCrumb } from "@/shared/ui/breadcrumbs";
 import {
   CARD_TYPES,
   describeCardShape,
@@ -52,9 +53,14 @@ export default async function EditFlashcardPage({
 
   return (
     <main className="page">
-      <nav aria-label="Breadcrumb" className="breadcrumb">
-        <Link href={cardPath}>Back to this card</Link>
-      </nav>
+      <Breadcrumbs
+        trail={[
+          TRACKS_CRUMB,
+          trackCrumb(view.certification),
+          { label: "Flashcard", href: cardPath },
+        ]}
+        current="Edit"
+      />
 
       <header className="page-header">
         <p className="eyebrow">Edit flashcard</p>

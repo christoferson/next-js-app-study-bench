@@ -1,5 +1,9 @@
-import Link from "next/link";
 import { notFound } from "next/navigation";
+import {
+  Breadcrumbs,
+  SETTINGS_CRUMB,
+  TRACKS_CRUMB,
+} from "@/shared/ui/breadcrumbs";
 import { findPersonaTemplate } from "@/modules/ai-generation/domain/persona-templates";
 import { createPersonaAction } from "@/modules/ai-generation/ui/persona-actions";
 import { PersonaForm } from "@/modules/ai-generation/ui/persona-form";
@@ -29,9 +33,14 @@ export default async function NewPersonaPage({
 
   return (
     <main className="page">
-      <nav aria-label="Breadcrumb" className="breadcrumb">
-        <Link href="/settings/personas">Back to personas</Link>
-      </nav>
+      <Breadcrumbs
+        trail={[
+          TRACKS_CRUMB,
+          SETTINGS_CRUMB,
+          { label: "Personas", href: "/settings/personas" },
+        ]}
+        current="New persona"
+      />
 
       <header className="page-header">
         <p className="eyebrow">New persona</p>

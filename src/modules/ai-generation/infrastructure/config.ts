@@ -7,9 +7,24 @@
  *
  * - `LANGUAGE_MODEL_PROVIDER` — `fake` or `bedrock`. Defaults to `fake`, so a fresh
  *   clone runs the whole generation flow with no AWS account and no spend.
- * - `BEDROCK_MODEL_ID` — the model the Bedrock adapter calls.
+ * - `BEDROCK_MODEL_ID` — the model the Bedrock adapter calls, for every purpose that
+ *   has no more specific variable set.
+ * - `BEDROCK_GENERATION_MODEL_ID` — optional. The model that *writes* content:
+ *   questions, flashcards, vocabulary enrichment, objective import.
+ * - `BEDROCK_REVIEW_MODEL_ID` — optional. The model that *judges* content: the
+ *   question review, and the tutor and grading paths when they arrive.
  * - `AWS_REGION` — passed to the SDK when set; otherwise the SDK's own default
  *   chain resolves it, which is what already reads the owner's profile.
+ *
+ * **Precedence, per purpose:** the purpose-specific variable, then
+ * `BEDROCK_MODEL_ID`, then `DEFAULT_BEDROCK_MODEL_ID`. So an owner who sets nothing
+ * gets one sensible model everywhere, an owner who sets `BEDROCK_MODEL_ID` moves
+ * every purpose at once, and an owner who sets a purpose-specific variable moves only
+ * that purpose. Writing and judging are genuinely different jobs: reviewing a
+ * question is one short call whose whole value is scrutiny, so it may be worth a
+ * stronger model than the one that writes batches — or a cheaper one, when the point
+ * is to sweep a large bank. Splitting them is a configuration change rather than a
+ * code change.
  *
  * **Credentials are never configured here.** The Bedrock client resolves them
  * through the AWS default provider chain — environment, shared profile, or task
@@ -64,7 +79,23 @@ export type EnvironmentReader = Readonly<Record<string, string | undefined>>;
 
 export interface LanguageModelConfig {
   readonly provider: LanguageModelProviderName;
+  /**
+   * The model that writes content: questions, flashcards, enrichment, objective
+   * import.
+   *
+   * Named `modelId` rather than `generationModelId` because it is the one every
+   * existing caller means, and renaming it would churn the form views, the live smoke
+   * test, and the run provenance for no behavioural gain.
+   */
   readonly modelId: string;
+  /**
+   * The model that judges content: the question review, and later the tutor and
+   * grading paths.
+   *
+   * Always populated — it falls back to `modelId` — so no caller has to decide what a
+   * missing review model means, and a run recording it can never record `null`.
+   */
+  readonly reviewModelId: string;
   /** `null` means "let the AWS SDK resolve the region itself". */
   readonly region: string | null;
 }
@@ -97,9 +128,14 @@ export function resolveLanguageModelConfig(
     );
   }
 
+  // One shared fallback resolved once, so the two purposes cannot disagree about what
+  // "not configured" means.
+  const shared = read(environment.BEDROCK_MODEL_ID) ?? DEFAULT_BEDROCK_MODEL_ID;
+
   return {
     provider,
-    modelId: read(environment.BEDROCK_MODEL_ID) ?? DEFAULT_BEDROCK_MODEL_ID,
+    modelId: read(environment.BEDROCK_GENERATION_MODEL_ID) ?? shared,
+    reviewModelId: read(environment.BEDROCK_REVIEW_MODEL_ID) ?? shared,
     region: read(environment.AWS_REGION),
   };
 }

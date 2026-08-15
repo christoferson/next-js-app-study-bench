@@ -188,10 +188,10 @@ describe("Home page", () => {
       expect(
         screen.getByRole("link", { name: /start 10-minute session/i }),
       ).toHaveAttribute("href", "/study/new");
-      expect(screen.getByRole("link", { name: "Progress" })).toHaveAttribute(
-        "href",
-        "/progress",
-      );
+      // Progress, Audio, Personas and Appearance used to be quiet links in this same row.
+      // They are in the header nav now, reachable from every page rather than only this one,
+      // so the dashboard no longer repeats them.
+      expect(screen.queryByRole("link", { name: "Progress" })).toBeNull();
     });
 
     it("offers to resume the session already running", async () => {

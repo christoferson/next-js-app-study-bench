@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { Breadcrumbs, TRACKS_CRUMB } from "@/shared/ui/breadcrumbs";
 import { getAudioFacade, isAudioEnabled } from "@/modules/audio/composition";
 import { AudioClipList } from "@/modules/audio/ui/audio-clip-list";
 import { getStudyFacade } from "@/modules/study-sessions/composition";
@@ -106,7 +107,14 @@ export default async function StudySessionPage({
 
   return (
     <main className="page">
-      <nav aria-label="Breadcrumb" className="breadcrumb">
+      <Breadcrumbs trail={[TRACKS_CRUMB]} current="Session" />
+
+      {/* The one "Back to X" link that survived the sweep, and it survives because it is
+          not a way back: it is the promise that leaving costs nothing. A trail says where
+          "Tracks" is; it does not say that an unfinished session keeps every answer
+          already given, which is the thing an owner mid-session needs to read before they
+          feel able to stop. */}
+      <nav aria-label="Leave session" className="breadcrumb">
         <Link href="/">Leave and come back later</Link>
       </nav>
 

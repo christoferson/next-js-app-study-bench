@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { Breadcrumbs, TRACKS_CRUMB, trackCrumb } from "@/shared/ui/breadcrumbs";
 import {
   CARD_TYPES,
   describeCardPrompting,
@@ -41,9 +42,14 @@ export default async function NewFlashcardPage({
 
   return (
     <main className="page">
-      <nav aria-label="Breadcrumb" className="breadcrumb">
-        <Link href={bankPath}>Back to the flashcards</Link>
-      </nav>
+      <Breadcrumbs
+        trail={[
+          TRACKS_CRUMB,
+          trackCrumb(certification),
+          { label: "Flashcards", href: bankPath },
+        ]}
+        current="New flashcard"
+      />
 
       <header className="page-header">
         <p className="eyebrow">New flashcard</p>

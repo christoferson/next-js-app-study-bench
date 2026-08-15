@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { Breadcrumbs, TRACKS_CRUMB, trackCrumb } from "@/shared/ui/breadcrumbs";
 import { getGenerationFacade } from "@/modules/ai-generation/composition";
 import { describeRunStatus } from "@/modules/ai-generation/domain/generation-run";
 import { requestEnrichmentAction } from "@/modules/ai-generation/ui/actions";
@@ -47,9 +48,10 @@ export default async function EnrichPage({
 
   return (
     <main className="page">
-      <nav aria-label="Breadcrumb" className="breadcrumb">
-        <Link href={trackPath}>Back to {view.certification.name}</Link>
-      </nav>
+      <Breadcrumbs
+        trail={[TRACKS_CRUMB, trackCrumb(view.certification)]}
+        current="Enrich with AI"
+      />
 
       <header className="page-header">
         <p className="eyebrow">Enrich with AI</p>

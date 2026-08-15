@@ -1,4 +1,8 @@
-import Link from "next/link";
+import {
+  Breadcrumbs,
+  SETTINGS_CRUMB,
+  TRACKS_CRUMB,
+} from "@/shared/ui/breadcrumbs";
 import { getAudioFacade } from "@/modules/audio/composition";
 import { AudioLibrary } from "@/modules/audio/ui/audio-library";
 
@@ -26,18 +30,9 @@ export default async function AudioSettingsPage() {
 
   return (
     <main className="page">
-      <nav aria-label="Breadcrumb" className="breadcrumb">
-        <Link href="/">Back to the study tracks</Link>
-      </nav>
-
-      {/* There is no settings landing page: two screens do not need an index, and one
-          more page between the home nav and the thing being configured is a click that
-          explains nothing. They cross-link instead. */}
-      <nav aria-label="Settings" className="section-actions">
-        <Link className="button-quiet" href="/settings/personas">
-          Personas
-        </Link>
-      </nav>
+      {/* The cross-links to the other two settings screens are gone: there is a settings
+          index now, and the trail is the way to it. */}
+      <Breadcrumbs trail={[TRACKS_CRUMB, SETTINGS_CRUMB]} current="Audio" />
 
       <header className="page-header">
         <p className="eyebrow">Settings</p>

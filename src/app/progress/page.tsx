@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Breadcrumbs, TRACKS_CRUMB } from "@/shared/ui/breadcrumbs";
 import { getProgressFacade } from "@/modules/study-sessions/composition";
 import { ProgressDashboard } from "@/modules/study-sessions/ui/progress-dashboard";
 
@@ -25,9 +26,7 @@ export default async function ProgressPage() {
 
   return (
     <main className="page">
-      <nav aria-label="Breadcrumb" className="breadcrumb">
-        <Link href="/">Back to the study tracks</Link>
-      </nav>
+      <Breadcrumbs trail={[TRACKS_CRUMB]} current="Progress" />
 
       <header className="page-header">
         <p className="eyebrow">Progress</p>

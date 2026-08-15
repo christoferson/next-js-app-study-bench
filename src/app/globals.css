@@ -2,22 +2,64 @@
    Design tokens live as custom properties on :root. Light mode only for D1. */
 
 :root {
-  --color-surface: #f6f7f9;
+  /* The palette, as the owner named it.
+
+     Two navies and two golds. The navies carry structure — header, links, primary
+     buttons, focus — and the golds carry emphasis. That division is not a style choice,
+     it is a contrast constraint: #F0CB46 on white is 1.8:1, which fails every text
+     threshold there is, so gold can never be text on a light background. It works the
+     other way round, as a *background* under the darkest navy: #001D3D on #F0CB46 is
+     11.4:1. So gold fills things, and navy writes on it.
+
+     Measured against white (#ffffff):
+       --color-yale   #003566  12.0:1  — body-safe, links, buttons, focus
+       --color-oxford #001D3D  16.6:1  — headings, text on gold
+       --color-gold   #F0CB46   1.8:1  — background fills only, never text
+       --color-satin  #CCA000   2.6:1  — borders and hover on gold fills, never text */
+  --color-yale: #003566;
+  --color-oxford: #001d3d;
+  --color-gold: #f0cb46;
+  --color-satin: #cca000;
+
+  /* Neutrals, warmed very slightly towards the gold rather than the blue: a flat grey
+     beside these navies reads as cold, and a warm one reads as paper. */
+  --color-surface: #f7f6f2;
   --color-panel: #ffffff;
-  --color-border: #d9dde3;
-  --color-text: #17202a;
-  --color-text-muted: #4d5a68;
-  --color-accent: #17506b;
-  --color-badge-bg: #eceff3;
-  --color-badge-text: #33414f;
-  --color-focus: #0b6ea8;
+  --color-border: #dcd8cd;
+  --color-text: var(--color-oxford);
+  /* 7.0:1 on the panel. Muted enough to recede, dark enough to still be body text —
+     hints and metadata are read, not decoration. */
+  --color-text-muted: #55606e;
+  --color-accent: var(--color-yale);
+  --color-badge-bg: #f0eee7;
+  --color-badge-text: #3c4553;
+  /* The focus ring is the darker navy, not the link blue: it has to be visible against a
+     gold active nav item and a white panel with the same one ring. */
+  --color-focus: var(--color-oxford);
   --color-error: #a4131a;
 
   /* Answer verdicts. Both are dark enough for body text on the panel background,
      because they tint text rather than fill a box, and each is always paired with a
-     glyph and a word so the colour is never the only signal. */
+     glyph and a word so the colour is never the only signal.
+
+     Untouched by the palette change on purpose: these two carry *meaning* — right and
+     wrong — and repainting them navy and gold would delete the only distinction on a
+     feedback screen that matters. Green and red are what a learner already reads. */
   --color-correct: #1d6b3c;
   --color-incorrect: #a4131a;
+
+  /* The header gradient, as one token so the header and anything that has to sit flush
+     against it cannot drift apart. */
+  --gradient-header: linear-gradient(
+    100deg,
+    var(--color-oxford),
+    var(--color-yale)
+  );
+  --gradient-primary: linear-gradient(
+    180deg,
+    var(--color-yale),
+    var(--color-oxford)
+  );
 
   --space-1: 0.25rem;
   --space-2: 0.5rem;
@@ -46,6 +88,18 @@
 html {
   -webkit-text-size-adjust: 100%;
 }
+
+/* Text size is set as an inline `font-size` on this element by the root layout, from the
+   owner's cookie — any whole number of pixels from 12 to 24. There is no rule for it
+   here, deliberately: thirteen selectors expressing "use this number" would be a lookup
+   table standing in for the number, and the earlier three-preset version of this setting
+   is what that looked like.
+
+   The root font size is the only thing that changes, because it is the only thing that
+   needs to: every size, space, and measure in this stylesheet is in rem, em, or ch, so
+   all of them scale from here together. --measure stays 62ch deliberately — ch is the
+   width of a "0" in the current font, so the line length stays the same number of
+   characters at every size rather than growing into an unreadably long line. */
 
 body {
   margin: 0;
@@ -87,13 +141,208 @@ a {
 }
 
 a:hover {
-  color: var(--color-focus);
+  color: var(--color-oxford);
 }
 
 :focus-visible {
   outline: 3px solid var(--color-focus);
   outline-offset: 2px;
   border-radius: var(--radius-sm);
+}
+
+/* Site header
+   ------------------------------------------------------------------
+   The bar the root layout renders above every page. Dark, so the reading surface below
+   it is unambiguously the content and this is unambiguously chrome — a light header
+   separated by one border line reads as the first section of the page.
+
+   The gradient runs Oxford to Yale across the width rather than down: at 3rem tall a
+   vertical gradient is invisible, and the horizontal one puts the darkest end under the
+   wordmark. */
+
+.site-header {
+  background-image: var(--gradient-header);
+  /* Not a shadow: the page below is a warm off-white and a shadow on it reads as smudge.
+     A gold hairline is the same separation and belongs to the palette. */
+  border-bottom: 2px solid var(--color-satin);
+  color: #ffffff;
+}
+
+.site-header-inner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3) var(--space-5);
+  max-width: var(--layout-max);
+  margin: 0 auto;
+  padding: var(--space-2) var(--space-4);
+}
+
+/* Every focusable thing in the header sits on navy, where the navy focus ring would be
+   invisible. Gold is the only colour in the palette that reads on both ends of the
+   gradient, and at 1.8:1 against white it is wrong for text and right for exactly this.
+   The offset is negative-free: the ring sits outside the target so it never overlaps the
+   glyph it is marking. */
+.site-header :focus-visible {
+  outline: 3px solid var(--color-gold);
+  outline-offset: 2px;
+}
+
+.site-wordmark {
+  color: #ffffff;
+  font-size: 1.0625rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  text-decoration: none;
+  /* Meets the touch minimum without making the header 2.75rem taller than it looks: the
+     padding is the target, the text is the mark. */
+  display: inline-flex;
+  align-items: center;
+  min-height: 2.75rem;
+  padding: 0 var(--space-1);
+}
+
+.site-wordmark:hover {
+  color: var(--color-gold);
+}
+
+/* Primary nav */
+
+.site-nav {
+  /* Takes the space between the wordmark and the text-size control, so the stepper is
+     pinned to the far end at every width above the wrap point. */
+  flex: 1 1 auto;
+}
+
+.site-nav-list {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.site-nav-link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 2.75rem;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-sm);
+  /* Near-white rather than white: full white on navy for a row of four labels is louder
+     than the wordmark, and the wordmark should be the brightest thing here. 13.1:1 on
+     Oxford, still far above the 4.5:1 threshold. */
+  color: #e8edf4;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.site-nav-link:hover {
+  background-color: rgba(240, 203, 70, 0.16);
+  color: var(--color-gold);
+}
+
+/* The current section: a gold fill with the darkest navy on it — 11.4:1, the strongest
+   pairing in the palette. `aria-current` is the selector rather than a class, so the
+   visual state and the announced state cannot disagree, and the underline means the
+   marker survives a greyscale print and colour-blind vision alike. */
+.site-nav-link[aria-current="page"] {
+  background-color: var(--color-gold);
+  color: var(--color-oxford);
+  box-shadow: inset 0 -3px 0 var(--color-satin);
+}
+
+.site-nav-link[aria-current="page"]:hover {
+  background-color: var(--color-satin);
+  color: var(--color-oxford);
+}
+
+.site-nav-icon {
+  /* Sized in em so it tracks the label rather than the root: the icon belongs to the word
+     beside it. `currentColor` is lucide's default stroke, so nothing sets a colour here
+     and the icon follows the link through hover and active. */
+  width: 1.125em;
+  height: 1.125em;
+  flex: none;
+}
+
+/* Text-size stepper */
+
+.text-size-stepper {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex: none;
+  padding: 0 var(--space-1);
+}
+
+/* "Aa" — the mark every reading application uses for this control. Gold, because it is
+   the one label in the header that is not a destination, and 4.7:1 on Oxford is
+   comfortably readable for a two-letter mark. */
+.text-size-stepper-mark {
+  color: var(--color-gold);
+  font-size: 0.9375rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.text-size-stepper-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 2.25rem;
+  min-height: 2.75rem;
+  padding: 0;
+  background: none;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: #e8edf4;
+  cursor: pointer;
+}
+
+.text-size-stepper-button:hover:not(:disabled) {
+  background-color: rgba(240, 203, 70, 0.16);
+  color: var(--color-gold);
+}
+
+/* At a bound. Dimmed *and* actually disabled, so the state is not conveyed by colour
+   alone — a pointer gets `not-allowed`, a keyboard skips it, and a screen reader is told. */
+.text-size-stepper-button:disabled {
+  color: #7d8ea3;
+  cursor: not-allowed;
+}
+
+.text-size-stepper-icon {
+  width: 1rem;
+  height: 1rem;
+}
+
+/* The size, in a fixed-width slot: tabular numerals and a min-width so stepping from 9px
+   to 10px does not shift the two buttons sideways under the owner's finger. */
+.text-size-stepper-value {
+  min-width: 3.25rem;
+  color: #e8edf4;
+  font-size: 0.8125rem;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+/* The stepper on /settings/appearance: the same decision, in a form that saves
+   explicitly. Buttons flank the field so the relationship is positional. */
+.text-size-field {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.text-size-field-button {
+  min-width: 2.75rem;
+  padding: var(--space-2);
 }
 
 /* Layout */
@@ -150,10 +399,52 @@ a:hover {
   color: var(--color-text-muted);
 }
 
+/* Breadcrumb trail
+   ------------------------------------------------------------------
+   An ordered list, wrapping. The separator is a pseudo-element rather than a text node so
+   a screen reader reads "Tracks, HSK 4, Question bank" instead of spelling a slash between
+   each pair, and so it can be dimmed independently of the links it sits between. */
+
+.breadcrumb-list {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.875rem;
+}
+
+.breadcrumb-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  /* A long track name is allowed to wrap inside its own crumb rather than forcing the
+     whole trail wider than a 360px screen. */
+  min-width: 0;
+}
+
+.breadcrumb-item + .breadcrumb-item::before {
+  content: "/";
+  color: var(--color-border);
+  /* Not read out: the list order already says this is a path. */
+  speak: never;
+}
+
 .breadcrumb a {
   display: inline-block;
+  /* Vertical padding only, so the touch target is 2.75rem tall without the links drifting
+     apart horizontally and losing the trail's read as one line. */
   padding: var(--space-2) 0;
-  font-size: 0.9375rem;
+}
+
+/* Where the owner is. Not a link, and heavier than the crumbs behind it: the trail should
+   end somewhere rather than trailing off in the same weight it started. */
+.breadcrumb-current {
+  padding: var(--space-2) 0;
+  color: var(--color-text-muted);
+  font-weight: 600;
 }
 
 /* Track cards */
@@ -211,6 +502,19 @@ a:hover {
   white-space: nowrap;
 }
 
+/* A badge that means "look at this": the demo tracks, a count of cards due. Gold fill with
+   Oxford text — 11.4:1, and the only place in the application where gold is a surface under
+   words rather than a line beside them.
+
+   It is a highlight, never the sole carrier of meaning: each of these badges says a word
+   ("Demo", "12 due"), so the gold adds emphasis to text that already reads correctly in
+   monochrome. */
+.badge-highlight {
+  background-color: var(--color-gold);
+  border-color: var(--color-satin);
+  color: var(--color-oxford);
+}
+
 /* Metadata pairs */
 
 .meta {
@@ -240,6 +544,13 @@ a:hover {
 }
 
 /* Objective tree */
+
+/* The root groups, spaced further apart than the nodes inside them: the gap is what says
+   these are separate domains rather than four more siblings. */
+.objective-groups {
+  display: grid;
+  gap: var(--space-5);
+}
 
 .objective-tree {
   display: grid;
@@ -341,33 +652,120 @@ a:hover {
   cursor: pointer;
 }
 
+/* The primary action keeps its presence: a Yale-to-Oxford gradient with white text, which
+   is 12.0:1 at the light end and 16.6:1 at the dark one. The gradient is subtle on
+   purpose — it gives the button a light source without turning it into a bevel. */
 .button {
-  background-color: var(--color-accent);
-  border: 1px solid var(--color-accent);
+  background-image: var(--gradient-primary);
+  background-color: var(--color-yale);
+  border: 1px solid var(--color-oxford);
   color: #ffffff;
 }
 
 .button:hover:not(:disabled) {
-  background-color: var(--color-focus);
-  border-color: var(--color-focus);
+  /* Flat and darker on hover: removing the gradient is a state change that survives forced
+     colours, where a background-image is dropped. */
+  background-image: none;
+  background-color: var(--color-oxford);
+  border-color: var(--color-oxford);
   color: #ffffff;
 }
 
+/* The secondary action, tightened. It appears four and five to a row on a bank card and an
+   objective node, and at full button size those rows read as a toolbar competing with the
+   content. Smaller type and less horizontal padding lets it blend into the row.
+
+   The height does not shrink with it. `min-height` stays 2.75rem from the shared rule
+   above, so the target is still tappable while the visual weight comes down — the same
+   trade the audio play button makes (`spec/UI-GUIDELINES.md`). */
 .button-quiet {
-  background-color: var(--color-panel);
+  padding: var(--space-1) var(--space-3);
+  background-color: transparent;
   border: 1px solid var(--color-border);
   color: var(--color-accent);
+  font-size: 0.875rem;
 }
 
 .button-quiet:hover:not(:disabled) {
-  border-color: var(--color-focus);
-  color: var(--color-focus);
+  background-color: var(--color-badge-bg);
+  border-color: var(--color-accent);
+  color: var(--color-oxford);
 }
 
 .button:disabled,
 .button-quiet:disabled {
   cursor: not-allowed;
   opacity: 0.55;
+}
+
+/* Icons
+   ------------------------------------------------------------------
+   Every icon in the application is a lucide SVG with `stroke: currentColor`, so an icon
+   inherits the colour of the text it sits in and there is no icon palette to keep in step
+   with the type palette. Sized in em rather than rem for the same reason: an icon belongs
+   to its label, and scales with it. */
+
+.icon {
+  width: 1.125em;
+  height: 1.125em;
+  flex: none;
+}
+
+/* A row action reduced to its glyph.
+   Used where a row carries five or six controls and the words are what makes it unreadable
+   — the objective tree, mainly. The glyph is the visual size; the padding is the 2.75rem
+   touch target, so shrinking the button does not shrink the thing being aimed at.
+
+   The accessible name is mandatory and lives on the element as `aria-label`, and `title`
+   repeats it as a pointer tooltip. An icon button with no name is an unlabelled control,
+   which is the failure mode this pattern invites, so it is stated here as well as in the
+   components: no `.icon-button` without a name. */
+.icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 2.75rem;
+  min-height: 2.75rem;
+  padding: 0;
+  background-color: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--color-accent);
+  font-family: inherit;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.icon-button:hover:not(:disabled) {
+  background-color: var(--color-badge-bg);
+  border-color: var(--color-border);
+  color: var(--color-oxford);
+}
+
+.icon-button:disabled {
+  color: var(--color-text-muted);
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+/* The destructive one in a glyph row. Outlined on hover rather than filled: it sits beside
+   five neutral controls and a red fill on hover is enough of a warning without the row
+   flashing every time the pointer crosses it. */
+.icon-button-danger {
+  color: var(--color-incorrect);
+}
+
+.icon-button-danger:hover:not(:disabled) {
+  background-color: var(--color-panel);
+  border-color: var(--color-incorrect);
+  color: var(--color-incorrect);
+}
+
+/* A group of glyph buttons sitting flush, as one control cluster. */
+.icon-button-group {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
 }
 
 /* Drop target wrapping the syllabus file input: a visible box so "drag it here"
@@ -378,9 +776,12 @@ a:hover {
   border-radius: var(--radius-sm);
 }
 
+/* Highlighted while a file is over it: a gold border and a gold wash, which is the one
+   "something is happening here" signal in the palette. The `aria-live` announcement beside
+   it carries the same news for anyone who cannot see the colour change. */
 .file-drop-zone-active {
-  border-color: var(--color-accent);
-  background-color: var(--color-panel);
+  border-color: var(--color-satin);
+  background-color: #fdf8e8;
 }
 
 .file-drop-hint {
@@ -564,27 +965,39 @@ a:hover {
   color: var(--color-text-muted);
 }
 
+/* Question content uses the full section width (owner request, 2026-08-15):
+   the reading-measure cap stays on general prose, not on the material under
+   review.
+
+   Full width is not the same as flush to the edge. With the cap removed the stem and the
+   choices ran into the panel border, and on a phone into the screen edge, which is harder
+   to read than a measure would have been. A single space of horizontal padding is the whole
+   fix: the text still uses the width, and it no longer touches the sides. */
 .question-stem {
-  max-width: var(--measure);
+  padding-inline: var(--space-4);
   white-space: pre-wrap;
 }
 
 /* The choices carry their own a/b/c letters, so the list marker is switched off:
-   two numbering schemes on one row read as a mistake. */
+   two numbering schemes on one row read as a mistake.
+
+   The horizontal padding matches the stem's, so a choice and the question it answers share
+   a left edge. `padding-inline` rather than resetting `padding-left` to 0 — the browser's
+   own list indent is what is being replaced, not removed. */
 .question-choices {
   display: grid;
   gap: var(--space-2);
   margin: 0;
-  padding-left: 0;
+  padding-inline: var(--space-4);
   list-style: none;
 }
 
+/* No wrapping between the letter and the text: "a." and its choice always share a
+   line, and a long choice wraps under its own first line, never below the letter. */
 .question-choice {
   display: flex;
-  flex-wrap: wrap;
   align-items: baseline;
   gap: var(--space-1) var(--space-2);
-  max-width: var(--measure);
 }
 
 .choice-letter {
@@ -594,6 +1007,7 @@ a:hover {
 }
 
 .choice-text {
+  flex: 1;
   min-width: 0;
 }
 
@@ -641,7 +1055,6 @@ a:hover {
   gap: var(--space-2);
   padding-top: var(--space-3);
   border-top: 1px solid var(--color-border);
-  max-width: var(--measure);
 }
 
 .question-concepts {
@@ -731,7 +1144,9 @@ a:hover {
   background-color: var(--color-panel);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
-  max-width: 40rem;
+  /* Full section width, matching the unboxed preview section above it. The text
+     inside keeps its own reading measure; the box does not add a second, narrower
+     cap on top of it (owner request, 2026-08-15). */
 }
 
 .disclosure summary {
@@ -742,6 +1157,103 @@ a:hover {
 
 .disclosure > *:not(summary) {
   margin-top: var(--space-3);
+}
+
+/* Collapsible section
+   ------------------------------------------------------------------
+   A `details` standing in for a whole page section, where the section already has an `h2`.
+
+   **The heading goes inside the summary**, not above it or instead of it. `summary` has an
+   implicit button role, and a heading inside it stays a heading in the accessibility tree —
+   so the page keeps its outline for anyone navigating by heading, and the whole line is
+   still the control that opens it. The alternative, styling the summary to look like a
+   heading, produces a page whose outline has holes in it.
+
+   No custom marker: the browser's disclosure triangle already says "this opens", it rotates
+   on toggle, and it is drawn in the platform's own high-contrast colours. Replacing it with
+   a glyph would be work spent making the affordance worse. */
+
+.collapsible {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background-color: var(--color-panel);
+}
+
+.collapsible > summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 2.75rem;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+
+.collapsible > summary:hover {
+  background-color: var(--color-badge-bg);
+}
+
+/* The heading loses its own margins and takes the summary's typography: it is a row in a
+   control now, not a block on the page. */
+.collapsible > summary > h2,
+.collapsible > summary > h3 {
+  font-size: 1.0625rem;
+}
+
+/* How many are inside, so the owner can decide whether to open it without opening it. */
+.collapsible-count {
+  margin-left: auto;
+  color: var(--color-text-muted);
+  font-size: 0.875rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.collapsible-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: 0 var(--space-4) var(--space-4);
+}
+
+/* An open section's summary keeps a rule under it, so the boundary between the control and
+   what it revealed is visible. */
+.collapsible[open] > summary {
+  border-bottom: 1px solid var(--color-border);
+  border-end-start-radius: 0;
+  border-end-end-radius: 0;
+  margin-bottom: var(--space-4);
+}
+
+/* A root objective (a domain) as a collapsible block. Flush with the tree rather than boxed
+   inside it: the objective row below it is already a panel, and a panel in a panel is what
+   the nesting rule exists to avoid. */
+.objective-group {
+  border: 0;
+  background: none;
+}
+
+/* Not uppercased, unlike the reference line inside the row: the summary carries a title as
+   well as a code, and a shouted sentence is harder to read than a quiet one. */
+.objective-group > summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  min-height: 2.75rem;
+  padding: var(--space-1) 0;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+}
+
+.objective-group > summary:hover {
+  color: var(--color-accent);
+}
+
+.objective-group[open] > summary {
+  margin-bottom: var(--space-2);
 }
 
 .revision-list {
@@ -972,10 +1484,8 @@ a:hover {
 
 .feedback-choice {
   display: flex;
-  flex-wrap: wrap;
   align-items: baseline;
   gap: var(--space-1) var(--space-2);
-  max-width: var(--measure);
 }
 
 .feedback-choice.verdict-correct .choice-text,
@@ -1088,7 +1598,7 @@ a:hover {
 }
 
 .audio-play-button:hover:not(:disabled) {
-  color: var(--color-focus);
+  color: var(--color-oxford);
 }
 
 .audio-play-button:disabled {
@@ -1163,6 +1673,43 @@ code {
   background-color: var(--color-badge-bg);
   border-radius: var(--radius-sm);
   font-size: 0.9375em;
+}
+
+/* Below 40rem the header wraps rather than collapsing into a menu.
+
+   A `details` disclosure was the alternative and it loses: four labels with icons fit two to
+   a row at 360px, so the menu would hide four things behind one tap to save a row of height
+   the page can spare. Wrapping also keeps every destination one tap away and needs no
+   JavaScript at all, which is the standard the rest of this application is held to.
+
+   The order changes, though: the wordmark and the stepper share the first line, and the nav
+   takes the full width below them. Left as source order at wider widths, where all three fit
+   on one line. */
+@media (max-width: 39.999rem) {
+  .site-wordmark {
+    /* Pushes the stepper to the far end of the first line. */
+    flex: 1 1 auto;
+  }
+
+  .site-nav {
+    flex-basis: 100%;
+  }
+
+  .site-nav-list {
+    /* Each label keeps its own width rather than being stretched to a grid: "Progress" and
+       "Study" are different lengths and forcing them equal wastes the row. */
+    justify-content: flex-start;
+  }
+
+  .site-nav-link {
+    padding: 0 var(--space-2);
+  }
+
+  /* The header is a third of a small screen's first impression, so it gives back the
+     vertical space the wrapped nav costs. */
+  .site-header-inner {
+    padding: var(--space-1) var(--space-3) var(--space-2);
+  }
 }
 
 @media (min-width: 40rem) {

@@ -360,16 +360,18 @@ track that is already there.
 
 ## AI generation
 
-Generation is configured with three environment variables. **None of them is a
+Generation is configured with environment variables. **None of them is a
 secret**, and StudyBench never reads, stores, logs, or renders an AWS credential:
 the Bedrock client resolves credentials through the AWS default provider chain
 (your shared profile, environment variables, or a task role).
 
-| Variable                  | Default                                        | Purpose                                        |
-| ------------------------- | ---------------------------------------------- | ---------------------------------------------- |
-| `LANGUAGE_MODEL_PROVIDER` | `fake`                                         | `fake` or `bedrock`                            |
-| `BEDROCK_MODEL_ID`        | `us.anthropic.claude-sonnet-4-5-20250929-v1:0` | The Bedrock model or inference profile to call |
-| `AWS_REGION`              | resolved by the AWS SDK                        | Passed to the Bedrock client when set          |
+| Variable                      | Default                                        | Purpose                                         |
+| ----------------------------- | ---------------------------------------------- | ----------------------------------------------- |
+| `LANGUAGE_MODEL_PROVIDER`     | `fake`                                         | `fake` or `bedrock`                             |
+| `BEDROCK_MODEL_ID`            | `us.anthropic.claude-sonnet-4-5-20250929-v1:0` | The model every purpose calls unless overridden |
+| `BEDROCK_GENERATION_MODEL_ID` | `BEDROCK_MODEL_ID`                             | The model that **writes** content               |
+| `BEDROCK_REVIEW_MODEL_ID`     | `BEDROCK_MODEL_ID`                             | The model that **judges** content               |
+| `AWS_REGION`                  | resolved by the AWS SDK                        | Passed to the Bedrock client when set           |
 
 **Fake by default, on purpose.** A fresh clone runs the entire generation flow —
 the form, the run record, the drafts, the review screen, the failure paths — with
@@ -383,17 +385,53 @@ To use a real model:
 LANGUAGE_MODEL_PROVIDER=bedrock AWS_PROFILE=your-profile npm run dev
 ```
 
-Your account needs `bedrock:Converse` access to the configured model in the
+Your account needs `bedrock:Converse` access to every configured model in the
 configured region. **This spends money** — a batch of a few items is a few
 thousand tokens, and the form shows which model it will call before you submit.
 
 `APP_ENV=production` with anything other than `LANGUAGE_MODEL_PROVIDER=bedrock`
 **fails loudly** at composition, naming the variable to fix: a production
 deployment quietly filling your bank with placeholder items would be worse than
-refusing to serve.
+refusing to serve. The guard is on the **provider**, not on any model id: an
+unconfigured model id falls back, and no combination of these variables can leave a
+purpose with no model.
 
 Environment files are ignored by git (`.env`, `.env*.local`), so local settings
 are never committed.
+
+### One model, or one per purpose
+
+The two purpose-specific variables are optional, and the precedence is the same for
+each: **the purpose-specific variable, then `BEDROCK_MODEL_ID`, then the built-in
+default.** So setting nothing gives you one sensible model everywhere, setting
+`BEDROCK_MODEL_ID` moves everything at once, and setting a purpose-specific variable
+moves only that purpose.
+
+- `BEDROCK_GENERATION_MODEL_ID` — writing questions and flashcards, enriching
+  vocabulary, importing an objective outline from a syllabus.
+- `BEDROCK_REVIEW_MODEL_ID` — reviewing one question
+  (`/study-tracks/[slug]/questions/[id]`).
+
+Splitting them is worth it when writing and judging want different trade-offs. A
+review is one short call whose entire value is scrutiny, so it can be worth a
+stronger — more expensive — model than the one that writes batches of ten. The
+opposite is just as reasonable: if you want to sweep a large bank for obviously
+broken items, point the review at a cheaper, faster model and keep the good one for
+the content you will actually study.
+
+Each generation run records the model it actually called, so a run history with both
+variables set shows which model produced or judged each item. Splitting the models
+is a configuration change only — nothing in the bank, the prompts, or the run schema
+changes with it.
+
+```bash
+LANGUAGE_MODEL_PROVIDER=bedrock \
+BEDROCK_MODEL_ID=us.anthropic.claude-sonnet-4-5-20250929-v1:0 \
+BEDROCK_REVIEW_MODEL_ID=us.anthropic.claude-opus-4-1-20250805-v1:0 \
+AWS_PROFILE=your-profile npm run dev
+```
+
+An unavailable review model fails the review call, not the whole application.
 
 ### Enriching vocabulary
 
@@ -453,6 +491,44 @@ extracts badly. Both cases end in a run that proposed nothing, and the answer to
 both is to paste the outline as text instead. Like every other AI flow, this one
 runs end to end on the default fake provider at no cost; a real extraction of a
 full exam guide is roughly 15–20k tokens.
+
+### Reviewing a question with AI
+
+"Review with AI" on any **draft or active** question page asks the configured model
+to judge the question the owner already has. It costs roughly 1–2k tokens per
+review, runs on the fake provider for free like every other AI flow, and each
+request is its own run in the history at `/study-tracks/[slug]/generation-runs`.
+
+What it checks:
+
+- **Whether the marked answer is actually correct**, judged against the model's own
+  knowledge of the subject.
+- **Whether more than one answer is defensible** — the ambiguity case, which is
+  still a problem when the marked answer is right.
+- **Whether the distractors are plausible**, whether the stem is clear, and whether
+  the explanation supports the answer it gives.
+
+What it never does:
+
+- **It never rewrites the question.** There is nowhere in the review's shape to put
+  replacement text, so a correction can only ever arrive as a finding to read. The
+  stem, the choices, the answer key, and the explanation are untouched by a review.
+- **It never changes the lifecycle.** A review cannot retire, activate, dispute, or
+  delete anything. Where it recommends a dispute, the findings panel offers a button
+  that prefills the review's own summary as the reason — and disputing is still your
+  click, recorded through the same action as a dispute you typed yourself.
+- **It never cites a source**, because it consulted none. The panel says so on every
+  review: `AI review used model knowledge only — no sources were consulted.`
+
+The one thing it changes is the **quality state**, and only in one direction: a
+question that was `UNREVIEWED` and comes back **Sound** with its answer confirmed
+becomes `AI_REVIEWED`. Any other verdict leaves the state exactly as it was, and a
+state you reached yourself — approved, disputed, or verified against a source — is
+never overwritten by a model. Nothing is ever demoted.
+
+The panel keeps the latest review of a question and marks it as judging an earlier
+revision if the question has since been edited. Reviewing is one question at a
+time; batch review of a whole bank is future work.
 
 ## Spoken audio
 
@@ -616,6 +692,158 @@ readable.
 The list starts empty on a fresh installation: no persona is copied into the database,
 and every track begins on automatic.
 
+## Getting around
+
+Every page carries the same header, rendered from the root layout:
+
+| Entry    | Goes to      | Lit up on                                    |
+| -------- | ------------ | -------------------------------------------- |
+| Tracks   | `/`          | the dashboard and any `/study-tracks/*` page |
+| Study    | `/study/new` | any `/study/*` page                          |
+| Progress | `/progress`  | `/progress`                                  |
+| Settings | `/settings`  | any `/settings/*` page                       |
+
+The current section is marked with `aria-current="page"` as well as a gold underline, so it
+is announced and not signalled by colour alone. Below 40rem the nav wraps onto a second row
+rather than folding into a menu — four short labels fit two-per-row at 360px, and a menu
+would trade a visible destination for a press and some JavaScript.
+
+Nested pages carry a **breadcrumb trail** under the header (`Tracks / HSK 4 / Question
+bank`). This replaced about thirty hand-written "Back to X" links, which between them had
+three different labels for the dashboard and no way to reach a grandparent in one press. The
+current page is named in the trail but is not a link to itself.
+
+`/settings` is an index over the three settings screens — Appearance, Audio, Personas. It
+exists because the header needs one Settings destination and because those screens used to
+be reachable only from a row of quiet links on the dashboard.
+
+**Collapsible sections.** Long sections are `<details>`, with the `<h2>` inside the
+`<summary>` so the heading stays in the document outline while the whole line becomes the
+control. No JavaScript is involved and no state is stored, so every visit starts from the
+section's default:
+
+| Section                                | Starts                                          |
+| -------------------------------------- | ----------------------------------------------- |
+| Each root objective (domain) in a tree | open                                            |
+| Bank filters                           | open                                            |
+| Attempt / review / revision history    | open at 3 entries or fewer, otherwise collapsed |
+
+A collapsed history shows its size in the summary ("12 attempts"), which answers what most
+opens were asking.
+
+## Colours
+
+Four colours, defined as tokens at the top of `src/app/globals.css`:
+
+| Token            | Hex       | Used for                                             |
+| ---------------- | --------- | ---------------------------------------------------- |
+| `--color-yale`   | `#003566` | links, primary buttons, focus rings, header gradient |
+| `--color-oxford` | `#001d3d` | body text, header gradient end, text on gold         |
+| `--color-gold`   | `#f0cb46` | active nav, highlight badges — **fills only**        |
+| `--color-satin`  | `#cca000` | borders and hover states on gold elements            |
+
+The rule that shapes all of it: **gold is never text on a light background.** `#f0cb46` on
+white is about 1.8:1, which fails WCAG AA for any text at any size. Gold is a fill with dark
+text on it, and `#001d3d` on `#f0cb46` is about 11.4:1. Satin sheen gold is about 2.6:1 on
+white, which clears the 3:1 line for non-text elements like borders but not for text either.
+
+Contrast for the pairs that matter:
+
+| Pair                               | Ratio   | AA                            |
+| ---------------------------------- | ------- | ----------------------------- |
+| `--color-oxford` on white          | ~16.6:1 | passes (AAA)                  |
+| `--color-yale` on white            | ~12.0:1 | passes (AAA)                  |
+| `--color-text-muted` on white      | ~7.0:1  | passes (AAA)                  |
+| white on `--color-yale`            | ~12.0:1 | passes                        |
+| `--color-oxford` on `--color-gold` | ~11.4:1 | passes                        |
+| `--color-gold` on white (text)     | ~1.8:1  | **fails — not used for text** |
+
+`--color-correct` and `--color-incorrect` stay green and red, and `--color-error` stays red.
+Those carry meaning rather than brand, and repainting them in the palette would say a wrong
+answer was a decorative event. Every state that uses them also states itself in words.
+
+Focus rings are Yale blue everywhere except inside the header, where navy on navy would be
+invisible; there they are gold.
+
+## Text size
+
+StudyBench renders at a root font size you choose, anywhere from **12px to 24px**, default
+**16px**. There are two ways to set it:
+
+- The **Aa stepper in the header**, on every page. Minus and plus move one pixel at a time
+  and show the current value. Use this one — you can watch the text you are actually
+  reading resize under the control.
+- **`/settings/appearance`**, which offers the same range as a number field with the same
+  steppers, for typing a value directly.
+
+One pixel per press rather than three named presets, because the right size depends on your
+screen, your distance from it, and your eyes, and none of those come in three varieties. The
+stepper applies the change optimistically — the page resizes on the press, and the cookie is
+written behind it — so holding down plus is a smooth ramp rather than a series of round
+trips.
+
+Only the root font size changes, because nothing else needs to: every size, space, and
+measure in the stylesheet is expressed in `rem`, `em`, or `ch`, so they all scale from
+there together. The line-length limit stays `62ch` at every size — `ch` is the width of a
+character in the current font, so a line stays the same number of characters rather than
+growing into an unreadably wide one.
+
+The size is applied as an inline `style` on `<html>`, which is the one place a value from a
+cookie is written straight into markup. That is safe because of where it comes from:
+`toTextSize` is a total function that returns an integer in 12–24 and nothing else, so there
+is no input — absent, empty, `"999"`, or `"16px; background: url(...)"` — that reaches the
+attribute as anything but a number. The alternative, a `data-` attribute with thirteen CSS
+rules behind it, buys nothing over one validated integer.
+
+**Why this is not browser zoom.** Zoom scales the viewport, so as text grows the layout
+crosses the mobile breakpoints in the wrong direction — the phone layout appears on a
+desktop. Scaling the root font size leaves the viewport alone, so the layout you get is
+the layout that was designed for the device you are on.
+
+### Upgrading from the three presets
+
+An earlier version stored one of three words. Those are migrated on read, so an existing
+cookie keeps rendering at the size it always did:
+
+| Old value     | Now  |
+| ------------- | ---- |
+| `compact`     | 16px |
+| `comfortable` | 18px |
+| `large`       | 20px |
+
+Anything else — absent, empty, out of range, or hand-edited — renders at the 16px default.
+
+### Where it is stored
+
+In a cookie, `studybench_text_size` — not in the database, and no migration ships with
+it:
+
+- The root layout needs the value on **every** request, before any markup is produced. A
+  database read on the critical path of every page to fetch one word would cost
+  something and show nothing; the request already carries the value.
+- Applying it on the server is what avoids a **flash of the wrong size**. A preference
+  read in the browser is applied after the document has painted, so every navigation
+  would visibly jump from one size to another.
+- `SPEC.md`'s logical model has an `app_settings` table. It does not exist yet, and this
+  feature deliberately does not create it: a browser-sized display preference is not the
+  preference that justifies a schema change. It stays uncreated until something arrives
+  that genuinely belongs to your study data.
+
+The cookie is `SameSite=Lax`, path `/`, and lasts a year. It is **not** `httpOnly`,
+which is a deliberate non-decision rather than an oversight: the value is a number
+between 12 and 24 and is visible in the rendered `style` attribute anyway, so there is no
+secret for `httpOnly` to protect. `Secure` is set only in production, because a `Secure`
+cookie is dropped over plain HTTP and the setting would appear not to save on
+`http://localhost`.
+
+Whatever the cookie holds is validated on every read. Out-of-range values are **refused**
+rather than clamped — `"999"` becomes the 16px default, not 24px — because the application
+never wrote it, so it is corruption rather than an intention to be honoured. Clamping is
+only for the steppers, where 24 and plus means "stay at 24".
+
+Because the preference lives in the browser, another browser or another device keeps its
+own choice. That is the trade for having it available before the first byte of HTML.
+
 ## Live provider tests
 
 `npm test` never calls AWS. The tests that do are excluded twice over: they live
@@ -647,6 +875,26 @@ With `npm run seed` followed by `npm run dev`:
 - `http://localhost:3000` — dashboard listing the seeded `Demo` tracks; both
   tracks already have questions and cards, and "Start 10-minute session" has
   content to offer
+- The header is on every page: press each of Tracks, Study, Progress and Settings, and
+  each time exactly one entry is underlined in gold — opening a track underlines Tracks,
+  not Study
+- Tab into the header — the focus ring is gold and visible against the navy, and the nav
+  links are reachable in order
+- Press the header's `Aa` plus button a few times — the page grows a pixel per press and
+  the value beside it keeps up; reload and the size is still there; go to another page and
+  it is still there
+- Press minus down to 12 and plus up to 24 — the buttons disable at each end rather than
+  accepting a press that does nothing
+- `/settings/appearance` shows the same size the header does; type `19`, save, and the
+  header agrees
+- Open a question you have answered several times — Attempt history is collapsed with a
+  count in its summary; a question answered once has it open
+- Press Tab to the "Revision history" summary and press Enter — it opens; the heading is
+  still a heading either way
+- Collapse a root objective on a track's tree — its children fold away and the summary
+  reports how many were nested
+- Narrow the window to 360px — the nav wraps to two rows, every header control is still
+  reachable, and question text does not touch the screen edges
 - Run `npm run seed` a second time — every bank reports "already present, left
   unchanged" and nothing is duplicated
 - Create a track, add objectives, then restart the server — the data is still
@@ -743,7 +991,7 @@ With your own material imported (`npm run import:real`, then
   still test language, and every draft is marked `AI generated — model knowledge`
   Personas (no AWS account, no spend — managing a persona calls no model):
 
-- Open `/settings/personas` from the home page — the list is empty, it says where a
+- Open `/settings/personas` from Settings in the header — the list is empty, it says where a
   persona is assigned and what automatic means, and six starting points are offered
 - Choose "JLPT Japanese proficiency" — the form is prefilled with kana, kanji, and
   JLPT-level guidance, one guideline per line, and mentions no pinyin anywhere

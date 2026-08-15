@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { Breadcrumbs, TRACKS_CRUMB, trackCrumb } from "@/shared/ui/breadcrumbs";
 import { getObjectiveImportFacade } from "@/modules/ai-generation/composition";
 import {
   describeFailureCategory,
@@ -54,9 +55,18 @@ export default async function ConfirmImportPage({
 
   return (
     <main className="page">
-      <nav aria-label="Breadcrumb" className="breadcrumb">
-        <Link href={importPath}>Import another document</Link>
-      </nav>
+      {/* "Import another document" is gone rather than kept beside the trail: the
+          "Import objectives" crumb goes to the same place, and every state that wants
+          the owner to start over — a failed extraction, an outline already applied, a
+          document with nothing in it — already says so in its own words. */}
+      <Breadcrumbs
+        trail={[
+          TRACKS_CRUMB,
+          trackCrumb(view.certification),
+          { label: "Import objectives", href: importPath },
+        ]}
+        current="Proposed outline"
+      />
 
       <header className="page-header">
         <p className="eyebrow">Proposed outline</p>

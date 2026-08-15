@@ -1,4 +1,8 @@
-import Link from "next/link";
+import {
+  Breadcrumbs,
+  SETTINGS_CRUMB,
+  TRACKS_CRUMB,
+} from "@/shared/ui/breadcrumbs";
 import { getPersonaFacade } from "@/modules/ai-generation/composition";
 import { PersonaList } from "@/modules/ai-generation/ui/persona-list";
 import { PersonaTemplatePicker } from "@/modules/ai-generation/ui/persona-template-picker";
@@ -33,9 +37,9 @@ export default async function PersonasSettingsPage() {
 
   return (
     <main className="page">
-      <nav aria-label="Breadcrumb" className="breadcrumb">
-        <Link href="/">Back to the study tracks</Link>
-      </nav>
+      {/* The cross-links to the other two settings screens are gone: there is a settings
+          index now, and the trail is the way to it. */}
+      <Breadcrumbs trail={[TRACKS_CRUMB, SETTINGS_CRUMB]} current="Personas" />
 
       <header className="page-header">
         <p className="eyebrow">Settings</p>

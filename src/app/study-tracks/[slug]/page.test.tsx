@@ -180,9 +180,12 @@ describe("Study-track detail page", () => {
 
     await renderTrackPage("demo-cloud-practitioner");
 
-    expect(
-      screen.getByRole("link", { name: "Back to study tracks" }),
-    ).toHaveAttribute("href", "/");
+    // The ad-hoc "Back to study tracks" link is now the first breadcrumb. Same destination,
+    // shorter label, because a trail reads as a path rather than as an instruction.
+    expect(screen.getByRole("link", { name: "Tracks" })).toHaveAttribute(
+      "href",
+      "/",
+    );
   });
 
   it("links to the question bank for this track", async () => {

@@ -48,6 +48,8 @@ export interface GenerationRunRow {
   readonly failure_reason: string | null;
   readonly proposed_payload: string | null;
   readonly applied_at: string | null;
+  readonly subject_question_id: string | null;
+  readonly subject_revision_id: string | null;
   readonly started_at: string;
   readonly completed_at: string | null;
   readonly status: string;
@@ -103,6 +105,11 @@ export function toGenerationRun(row: GenerationRunRow): GenerationRun {
     // that never propose anything.
     proposedPayload: row.proposed_payload,
     appliedAt: row.applied_at,
+    // Nullable in the row and nullable in the domain: the columns are `ON DELETE SET
+    // NULL`, so a review of a question the owner has since deleted keeps its findings
+    // and loses only the link. Reads must not assume a review still has its subject.
+    subjectQuestionId: row.subject_question_id,
+    subjectRevisionId: row.subject_revision_id,
     startedAt: row.started_at,
     completedAt: row.completed_at,
     status,

@@ -57,7 +57,23 @@ export function createGenerationFacade(
    * gateway regardless of the environment. Production callers omit it.
    */
   gateway?: LanguageModelGateway,
+  /**
+   * Overrides the configured *review* gateway.
+   *
+   * Omitted by every caller that does not care, including the seed script: when a
+   * caller passes only `gateway`, that one gateway is used for reviewing too, so an
+   * explicit fake stays a single fake.
+   */
+  reviewGateway?: LanguageModelGateway,
 ): GenerationFacade {
+  // Read the environment at most once, and only when something is actually missing: a
+  // caller that supplies both gateways — the seed script, an integration test — must
+  // not be made to configure an environment it never talks to.
+  const configured =
+    gateway === undefined || reviewGateway === undefined
+      ? createLanguageModelGateways()
+      : { generation: gateway, review: reviewGateway };
+
   return new GenerationFacade({
     runs: new SqliteGenerationRunRepository(database),
     questions: new SqliteQuestionRepository(database),
@@ -66,25 +82,66 @@ export function createGenerationFacade(
     objectives: new SqliteObjectiveRepository(database),
     personas: new SqlitePersonaRepository(database),
     unitOfWork: new SqliteGenerationUnitOfWork(database, runner),
-    gateway: gateway ?? createLanguageModelGateway(),
+    gateway: gateway ?? configured.generation,
+    // A caller that overrode only the writing gateway gets that same gateway for
+    // reviewing: passing one fake must not leave a real provider wired to the review
+    // path, which would spend money in a test that asked for none.
+    reviewGateway: reviewGateway ?? gateway ?? configured.review,
     clock: systemClock,
     ids: cryptoIdGenerator,
   });
 }
 
 /**
- * The gateway the environment asks for.
+ * Both configured gateways, from one read of the environment.
+ *
+ * Two instances for Bedrock, one shared instance for the fake provider: the fake calls
+ * nothing and spends nothing, so a second copy would only give the two purposes
+ * separate scripted-turn counters for no gain.
+ */
+export function createLanguageModelGateways(
+  config: LanguageModelConfig = resolveLanguageModelConfig(),
+): {
+  readonly generation: LanguageModelGateway;
+  readonly review: LanguageModelGateway;
+} {
+  const generation = createLanguageModelGateway(config, "generation");
+
+  return {
+    generation,
+    review:
+      config.provider === "fake"
+        ? generation
+        : createLanguageModelGateway(config, "review"),
+  };
+}
+
+/**
+ * The gateway the environment asks for, for one purpose.
  *
  * Exhaustive over the provider names, so adding a provider must decide here rather
  * than falling through to a default that would silently be the fake one.
+ *
+ * `purpose` picks which configured model id the Bedrock adapter is built with:
+ * `"generation"` writes content, `"review"` judges it (`config.ts` states the
+ * precedence). Two gateway instances rather than one gateway taking a per-call model
+ * override, because the gateway already takes its model id once in its constructor and
+ * reports it as `modelId` — which is what the run records and what the generate form
+ * shows the owner. Threading an override through every call site would make that
+ * property a per-request argument the run would then have to re-derive; building a
+ * second instance changes nothing else and keeps "one gateway, one model" true.
+ *
+ * The fake gateway is not split: it calls nothing and spends nothing, so both purposes
+ * share one instance and the substituted-provider tests are unaffected.
  */
 export function createLanguageModelGateway(
   config: LanguageModelConfig = resolveLanguageModelConfig(),
+  purpose: "generation" | "review" = "generation",
 ): LanguageModelGateway {
   switch (config.provider) {
     case "bedrock":
       return new BedrockLanguageModelGateway({
-        modelId: config.modelId,
+        modelId: purpose === "review" ? config.reviewModelId : config.modelId,
         region: config.region,
       });
     case "fake":

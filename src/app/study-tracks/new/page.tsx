@@ -1,4 +1,4 @@
-import Link from "next/link";
+import { Breadcrumbs, TRACKS_CRUMB } from "@/shared/ui/breadcrumbs";
 import { getPersonaFacade } from "@/modules/ai-generation/composition";
 import { CertificationForm } from "@/modules/certifications/ui/certification-form";
 import { createStudyTrackAction } from "../track-actions";
@@ -16,9 +16,7 @@ export default async function NewStudyTrackPage() {
 
   return (
     <main className="page">
-      <nav aria-label="Breadcrumb" className="breadcrumb">
-        <Link href="/">Back to study tracks</Link>
-      </nav>
+      <Breadcrumbs trail={[TRACKS_CRUMB]} current="New study track" />
 
       <header className="page-header">
         <p className="eyebrow">New study track</p>

@@ -20,6 +20,7 @@ import {
   QUESTION_SCHEMA_NAME,
 } from "@/modules/ai-generation/application/output-schemas";
 import { OBJECTIVE_IMPORT_SCHEMA_NAME } from "@/modules/ai-generation/application/objective-import-schema";
+import { QUESTION_REVIEW_SCHEMA_NAME } from "@/modules/ai-generation/application/question-review-schema";
 import { MAX_IMPORT_NODES } from "@/modules/ai-generation/domain/objective-import";
 import type {
   LanguageModelGateway,
@@ -80,6 +81,21 @@ export interface FakeLanguageModelGatewayOptions {
    * repair fail, which is the case the owner sees as `MALFORMED_OUTPUT`.
    */
   readonly objectiveImportMode?: "OUTLINE" | "MALFORMED";
+  /**
+   * What a synthesised question review returns.
+   *
+   * `"SOUND"` approves the question, which is the path that promotes an unreviewed
+   * question to `AI_REVIEWED`. `"MAJOR_ISSUES"` finds the answer wrong and recommends a
+   * dispute, which is the path that must leave the quality state alone and offer the
+   * prefilled dispute button. `"MALFORMED"` returns an answer that cannot be valid
+   * whatever the question said, on every turn, so the repair attempt and the resulting
+   * failed run are exercised without scripting a payload by hand.
+   *
+   * Three named modes rather than a scripted payload because these are the three
+   * behaviours the review flow branches on, and a test that says which one it wants reads
+   * better than one carrying a literal verdict object.
+   */
+  readonly questionReviewMode?: "SOUND" | "MAJOR_ISSUES" | "MALFORMED";
 }
 
 /** One prompt as the gateway received it, for tests that inspect what was sent. */
@@ -106,6 +122,8 @@ export class FakeLanguageModelGateway implements LanguageModelGateway {
 
   private readonly objectiveImportMode: "OUTLINE" | "MALFORMED";
 
+  private readonly questionReviewMode: "SOUND" | "MAJOR_ISSUES" | "MALFORMED";
+
   private turn = 0;
 
   private readonly prompts: SentPrompt[] = [];
@@ -116,6 +134,7 @@ export class FakeLanguageModelGateway implements LanguageModelGateway {
     this.responses = options.responses ?? null;
     this.usage = options.usage === undefined ? DEFAULT_USAGE : options.usage;
     this.objectiveImportMode = options.objectiveImportMode ?? "OUTLINE";
+    this.questionReviewMode = options.questionReviewMode ?? "SOUND";
   }
 
   /** How many provider turns have been taken, for tests that assert repair. */
@@ -173,7 +192,10 @@ export class FakeLanguageModelGateway implements LanguageModelGateway {
     this.turn += 1;
 
     if (this.responses === null) {
-      return synthesizePayload(request, this.objectiveImportMode);
+      return synthesizePayload(request, {
+        objectiveImportMode: this.objectiveImportMode,
+        questionReviewMode: this.questionReviewMode,
+      });
     }
 
     const scripted = this.responses[this.turn - 1];
@@ -201,11 +223,16 @@ interface PromptFacts {
   readonly enrichmentTerms: readonly string[];
   /** The uploaded document an import prompt carried, as extracted text. */
   readonly uploadedDocument: string;
+  /** The stem of the question a review prompt carried, or empty. */
+  readonly reviewedStem: string;
 }
 
 function synthesizePayload<Value>(
   request: StructuredGenerationRequest<Value>,
-  objectiveImportMode: "OUTLINE" | "MALFORMED",
+  modes: {
+    readonly objectiveImportMode: "OUTLINE" | "MALFORMED";
+    readonly questionReviewMode: "SOUND" | "MAJOR_ISSUES" | "MALFORMED";
+  },
 ): unknown {
   const facts = readPrompt(request.user);
 
@@ -217,9 +244,11 @@ function synthesizePayload<Value>(
     case ENRICHMENT_SCHEMA_NAME:
       return { words: synthesizeEnrichments(facts) };
     case OBJECTIVE_IMPORT_SCHEMA_NAME:
-      return objectiveImportMode === "MALFORMED"
+      return modes.objectiveImportMode === "MALFORMED"
         ? malformedOutline()
         : { objectives: extractOutline(facts.uploadedDocument) };
+    case QUESTION_REVIEW_SCHEMA_NAME:
+      return synthesizeReview(facts, modes.questionReviewMode);
     default:
       // A schema this gateway has no fixture for is a wiring mistake, not a
       // provider problem, so it is loud.
@@ -521,6 +550,77 @@ function malformedOutline(): unknown {
   };
 }
 
+/**
+ * A review of the question the prompt carried.
+ *
+ * Extractive in the one way that matters: the summary quotes the beginning of the stem the
+ * prompt actually contained, read out of the `<owner_question_under_review>` block. A fixed
+ * demo verdict would pass whether or not the facade ever sent the revision, which is the
+ * one thing the review tests exist to check — so a facade that forgot `reviewedRevision`
+ * produces a summary with no stem in it and a failing test.
+ *
+ * The three modes are shaped to satisfy `checkReviewConsistency` (or, for `MALFORMED`, to
+ * violate it in a way no repair can rescue), because a fixture the validator rejects would
+ * make every test look like a malformed-output test.
+ */
+function synthesizeReview(
+  facts: PromptFacts,
+  mode: "SOUND" | "MAJOR_ISSUES" | "MALFORMED",
+): unknown {
+  const excerpt = facts.reviewedStem.slice(0, 60);
+
+  switch (mode) {
+    case "SOUND":
+      return {
+        verdict: "SOUND",
+        answerCorrect: true,
+        findings: [
+          {
+            severity: "INFO",
+            category: "OTHER",
+            detail:
+              "Demo note from the fake gateway: nothing is wrong with this question. No model was called.",
+          },
+        ],
+        suggestedAction: "APPROVE",
+        summary: `Demo review by the fake gateway: the marked answer is correct for "${excerpt}".`,
+      };
+    case "MAJOR_ISSUES":
+      return {
+        verdict: "MAJOR_ISSUES",
+        answerCorrect: false,
+        findings: [
+          {
+            severity: "MAJOR",
+            category: "WRONG_ANSWER",
+            detail:
+              "Demo finding from the fake gateway: the marked answer is treated as wrong so the failing path can be exercised. No model was called.",
+          },
+          {
+            severity: "MINOR",
+            category: "WEAK_DISTRACTOR",
+            detail:
+              "Demo finding from the fake gateway: one distractor is implausible.",
+          },
+        ],
+        suggestedAction: "DISPUTE",
+        summary: `Demo review by the fake gateway: the marked answer looks wrong for "${excerpt}".`,
+      };
+    case "MALFORMED":
+      // Wrong in two independent ways — a verdict of SOUND with a MAJOR finding, and an
+      // empty summary — so it stays invalid if either rule is ever relaxed.
+      return {
+        verdict: "SOUND",
+        answerCorrect: true,
+        findings: [
+          { severity: "MAJOR", category: "WRONG_ANSWER", detail: "Malformed." },
+        ],
+        suggestedAction: "APPROVE",
+        summary: "",
+      };
+  }
+}
+
 /** Objectives for one item: at most one, rotating through what was offered. */
 function pickObjective(
   objectiveIds: readonly string[],
@@ -563,7 +663,22 @@ function readPrompt(user: string): PromptFacts {
     cardTypes,
     enrichmentTerms: readEnrichmentTerms(user),
     uploadedDocument: readDelimitedBlock(user, "owner_uploaded_document"),
+    reviewedStem: readReviewedStem(user),
   };
+}
+
+/**
+ * The stem of the reviewed question, read from inside its own delimiters.
+ *
+ * The line after `Stem:` within `<owner_question_under_review>`, so a stem is found where
+ * the template puts one and text elsewhere in the message cannot be mistaken for it.
+ */
+function readReviewedStem(user: string): string {
+  const block = readDelimitedBlock(user, "owner_question_under_review");
+  const lines = block.split("\n");
+  const index = lines.findIndex((line) => line === "Stem:");
+
+  return index === -1 ? "" : (lines[index + 1] ?? "").trim();
 }
 
 function readCount(user: string): number {

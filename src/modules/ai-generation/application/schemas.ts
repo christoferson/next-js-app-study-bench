@@ -244,6 +244,23 @@ export const rejectDraftSchema = z.object({
 export type RejectDraftInput = z.output<typeof rejectDraftSchema>;
 
 /**
+ * Reviewing one question, from the question's own page.
+ *
+ * Only an identifier: the review takes no options at all. There is nothing to choose
+ * because the reviewer is shown the question's current revision and asked one question
+ * about it, and every knob a form could offer — the persona, the template, the token
+ * ceiling — is resolved from the track so two reviews of the same revision are comparable.
+ */
+export const reviewQuestionSchema = z.object({
+  questionId: z
+    .string()
+    .max(ID_LIMIT)
+    .transform((value) => value.trim()),
+});
+
+export type ReviewQuestionInput = z.output<typeof reviewQuestionSchema>;
+
+/**
  * Run-history paging, parsed from the query string.
  *
  * Only a page number: the history is one bounded list per track, and the run

@@ -71,17 +71,36 @@ describe("ObjectiveTree", () => {
   it("links each node to its edit form and an add-child form", () => {
     renderTree();
 
-    const editLinks = screen.getAllByRole("link", { name: "Edit" });
-    const addChildLinks = screen.getAllByRole("link", { name: "Add child" });
+    // The controls are glyphs now, so the accessible name is the whole name: it says the
+    // action *and* which objective it acts on, because six unlabelled repeats of "Edit"
+    // on a 117-row tree name nothing.
+    expect(
+      screen.getByRole("link", { name: "Edit Root objective" }),
+    ).toHaveAttribute("href", "/study-tracks/demo/objectives/root/edit");
+    expect(
+      screen.getByRole("link", {
+        name: "Add a child objective under Root objective",
+      }),
+    ).toHaveAttribute("href", "/study-tracks/demo/objectives/new?parent=root");
+  });
 
-    expect(editLinks[0]).toHaveAttribute(
-      "href",
-      "/study-tracks/demo/objectives/root/edit",
-    );
-    expect(addChildLinks[0]).toHaveAttribute(
-      "href",
-      "/study-tracks/demo/objectives/new?parent=root",
-    );
+  it("gives every glyph control an accessible name and a pointer tooltip", () => {
+    // The property that makes an icon-only row usable at all. A glyph button with no name
+    // is an unlabelled control, and this is the row where that regression would land — so
+    // it is asserted over *every* control rather than the ones that happen to be checked
+    // by the tests above.
+    renderTree();
+
+    for (const control of [
+      ...screen.getAllByRole("button"),
+      ...screen.getAllByRole("link"),
+    ]) {
+      const name = control.getAttribute("aria-label");
+
+      expect(name).toBeTruthy();
+      // `title` repeats the name for a sighted pointer user who cannot place the glyph.
+      expect(control).toHaveAttribute("title", name as string);
+    }
   });
 
   it("disables move up on the first sibling and move down on the last", () => {
@@ -147,7 +166,47 @@ describe("ObjectiveTree", () => {
       }),
     ]);
 
-    expect(screen.queryByRole("link", { name: "Add child" })).toBeNull();
+    expect(
+      screen.queryByRole("link", {
+        name: "Add a child objective under Archived",
+      }),
+    ).toBeNull();
+  });
+
+  it("folds each root objective into a group that starts open", () => {
+    // Open by default: a tree that starts collapsed hides the content the page exists to
+    // show. The fold is there for the 117-objective case, where the owner acts to *hide*.
+    renderTree();
+
+    const groups = screen.getAllByRole("group");
+
+    expect(groups).toHaveLength(2);
+    for (const group of groups) {
+      expect(group).toHaveAttribute("open");
+    }
+  });
+
+  it("names each group by its reference and title, so a shut group is still readable", () => {
+    renderTree();
+
+    // Everything else about the objective is hidden when the group is shut, so the summary
+    // has to carry both. The second root has no code, so its title stands alone rather than
+    // the summary reading as an unlabelled disclosure.
+    expect(screen.getByText("Domain 1 — Root objective")).toBeVisible();
+    expect(screen.getAllByText("Second root").length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("counts what is inside a group, so it can be judged unopened", () => {
+    renderTree();
+
+    expect(screen.getByText("1 nested objective")).toBeVisible();
+  });
+
+  it("shows no count on a root with nothing under it", () => {
+    // "0 nested objectives" is a fact about a leaf that reads as a problem.
+    renderTree([objectiveFixture({ id: "only", title: "Only root" })]);
+
+    expect(screen.queryByText(/nested objective/)).toBeNull();
   });
 
   it("labels an official objective map as official", () => {

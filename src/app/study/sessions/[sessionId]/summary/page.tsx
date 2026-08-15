@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { Breadcrumbs, TRACKS_CRUMB } from "@/shared/ui/breadcrumbs";
 import { getStudyFacade } from "@/modules/study-sessions/composition";
 import { SessionSummary } from "@/modules/study-sessions/ui/session-summary";
 
@@ -26,9 +27,7 @@ export default async function SessionSummaryPage({
 
   return (
     <main className="page">
-      <nav aria-label="Breadcrumb" className="breadcrumb">
-        <Link href="/">Back to the study tracks</Link>
-      </nav>
+      <Breadcrumbs trail={[TRACKS_CRUMB]} current="Session summary" />
 
       <header className="page-header">
         <p className="eyebrow">Session</p>

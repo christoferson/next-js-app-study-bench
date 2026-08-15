@@ -1,4 +1,5 @@
 import type { GeneratedItemKind } from "./generation-run";
+import { QUESTION_REVIEW_ITEM_COUNT } from "./question-review";
 
 /**
  * Cost limits for one generation request (`SPEC.md` section 11.6).
@@ -56,6 +57,11 @@ export function maxItemsFor(kind: GeneratedItemKind): number {
       return MAX_ENRICHMENT_ITEMS;
     case "OBJECTIVE_IMPORT":
       return OBJECTIVE_IMPORT_ITEM_COUNT;
+    // A review is one question by construction: the owner presses the button on a
+    // question's own page, so there is no batch to cap. Batch review would be a new
+    // request shape rather than a bigger number here.
+    case "QUESTION_REVIEW":
+      return QUESTION_REVIEW_ITEM_COUNT;
   }
 }
 
@@ -113,5 +119,11 @@ function tokensPerItem(kind: GeneratedItemKind): number {
       // Unreachable: `maxOutputTokensFor` answers for this kind before it asks. Stated
       // so the switch stays exhaustive and a fifth kind must still decide.
       return OBJECTIVE_IMPORT_OUTPUT_TOKENS;
+    // A review is prose about one question: a verdict, a summary, and up to a dozen
+    // findings of a sentence or two each. Generous enough that a reviewer with a lot to
+    // say is not cut off mid-finding, which would fail validation and spend the repair
+    // attempt on truncation rather than on substance.
+    case "QUESTION_REVIEW":
+      return 2_500;
   }
 }

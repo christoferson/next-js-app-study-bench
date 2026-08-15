@@ -12,13 +12,19 @@ import {
   createMigratedDatabase,
   objectiveFixture,
 } from "@/modules/certifications/infrastructure/test-support";
+import type { Question } from "@/modules/question-bank/domain/question";
 import { SqliteQuestionRepository } from "@/modules/question-bank/infrastructure/sqlite-question-repository";
+import {
+  questionFixture,
+  revisionFixture,
+} from "@/modules/question-bank/infrastructure/test-support";
 import type { Flashcard } from "@/modules/flashcards/domain/flashcard";
 import { SqliteFlashcardRepository } from "@/modules/flashcards/infrastructure/sqlite-flashcard-repository";
 import { FlashcardQuestionDependencyChecker } from "@/modules/flashcards/infrastructure/flashcard-question-dependency-checker";
 import {
   GeneratedDraftNotRejectableError,
   GenerationBatchTooLargeError,
+  QuestionNotReviewableError,
 } from "@/modules/ai-generation/domain/errors";
 import {
   MAX_BATCH_ITEMS,
@@ -1872,6 +1878,488 @@ describe("GenerationFacade", () => {
       );
 
       expect(isNothingToEnrichNotice(result)).toBe(true);
+    });
+  });
+
+  /**
+   * Reviewing a question.
+   *
+   * The properties under test are the ones the acceptance criteria name
+   * (`SPEC.md` section 25.3): the reviewer receives the exact revision, the review cannot
+   * rewrite the question, a structured finding is produced and readable back, and the one
+   * quality promotion it may make is the only thing it writes to the question.
+   *
+   * The gateway is the deterministic fake in one of its three review modes, and its
+   * `promptsSent` is how a test proves the facade passed the revision rather than
+   * remembering to — the fake reads the stem back out of the prompt, so a facade that
+   * forgot the context could not produce a passing summary.
+   */
+  describe("reviewing a question", () => {
+    /** One draft question of the AWS track, with a revision worth judging. */
+    async function seedQuestion(
+      overrides: Partial<Question> = {},
+    ): Promise<string> {
+      const question = questionFixture({
+        id: "question-under-review",
+        certificationId: AWS_TRACK.id,
+        currentRevisionId: "revision-under-review",
+        ...overrides,
+      });
+
+      await questions.create(
+        question,
+        revisionFixture({
+          // Whatever the question says its current revision is, so a test that seeds a
+          // second question does not collide on the revision identifier.
+          id: question.currentRevisionId,
+          questionId: question.id,
+          stem: "Which demo service stores objects?",
+          explanation: "Because objects live in buckets.",
+        }),
+      );
+
+      return question.id;
+    }
+
+    function reviewFacade(mode: "SOUND" | "MAJOR_ISSUES" | "MALFORMED"): {
+      facade: GenerationFacade;
+      gateway: FakeLanguageModelGateway;
+    } {
+      const gateway = new FakeLanguageModelGateway({
+        questionReviewMode: mode,
+      });
+
+      return { facade: facadeForGateway(gateway), gateway };
+    }
+
+    it("records a review run with its provenance and its subject", async () => {
+      const questionId = await seedQuestion();
+      const { facade } = reviewFacade("SOUND");
+      const { run } = await facade.reviewQuestion(AWS_TRACK.slug, questionId);
+
+      expect(run.status).toBe("COMPLETED");
+      expect(run.itemKind).toBe("QUESTION_REVIEW");
+      expect(run.certificationId).toBe(AWS_TRACK.id);
+      // The reviewer consulted nothing, and the run says so rather than claiming a
+      // grounded mode it did not have.
+      expect(run.generationMode).toBe("MODEL_KNOWLEDGE");
+      expect(run.promptTemplateId).toBe("question-review");
+      expect(run.promptTemplateVersion).toBe(1);
+      expect(run.personaId).toBe("technical-certification");
+      expect(run.personaVersion).toBe(1);
+      expect(run.inputHash).toMatch(/^[0-9a-f]{64}$/);
+      expect(run.requestedItemCount).toBe(1);
+      expect(run.successfulItemCount).toBe(1);
+      expect(run.usageMetadata).not.toBeNull();
+      // The exact question and revision judged, so an edit later makes the review
+      // visibly stale rather than silently misattributed.
+      expect(run.subjectQuestionId).toBe(questionId);
+      expect(run.subjectRevisionId).toBe("revision-under-review");
+    });
+
+    it("records the review model, not the writing one, when the two differ", async () => {
+      // `BEDROCK_REVIEW_MODEL_ID` lets the owner judge with a different model than they
+      // write with, so provenance has to name the model that was actually asked. Two
+      // gateways reporting different identifiers is the only way to observe it.
+      const questionId = await seedQuestion();
+      const writer = new FakeLanguageModelGateway({
+        provider: "writer-provider",
+        modelId: "demo.writer:0",
+      });
+      const judge = new FakeLanguageModelGateway({
+        provider: "judge-provider",
+        modelId: "demo.judge:0",
+        questionReviewMode: "SOUND",
+      });
+      const facade = new GenerationFacade({
+        runs,
+        questions,
+        flashcards,
+        certifications: new SqliteCertificationRepository(database),
+        objectives: new SqliteObjectiveRepository(database),
+        personas: new SqlitePersonaRepository(database),
+        unitOfWork: new SqliteGenerationUnitOfWork(database),
+        gateway: writer,
+        reviewGateway: judge,
+        clock,
+        ids,
+      });
+      const { run } = await facade.reviewQuestion(AWS_TRACK.slug, questionId);
+
+      expect(run.modelId).toBe("demo.judge:0");
+      expect(run.modelProvider).toBe("judge-provider");
+      // And the call itself went to the review gateway: the writing one was never
+      // asked, so nothing was spent on the model that does not do this job.
+      expect(judge.turnsTaken).toBe(1);
+      expect(writer.turnsTaken).toBe(0);
+      // Read back from the database, so it is the stored provenance rather than the
+      // returned object that is asserted.
+      expect((await runs.findById(run.id))?.modelId).toBe("demo.judge:0");
+    });
+
+    it("reviews with the writing gateway when no review gateway is configured", async () => {
+      // The ordinary case: one model configured, both purposes use it, and every
+      // existing caller that composes a single gateway keeps working.
+      const questionId = await seedQuestion();
+      const { facade, gateway } = reviewFacade("SOUND");
+      const { run } = await facade.reviewQuestion(AWS_TRACK.slug, questionId);
+
+      expect(run.modelId).toBe(gateway.modelId);
+      expect(gateway.turnsTaken).toBe(1);
+    });
+
+    it("sends the exact revision to the model, as data", async () => {
+      const questionId = await seedQuestion();
+      const { facade, gateway } = reviewFacade("SOUND");
+
+      await facade.reviewQuestion(AWS_TRACK.slug, questionId);
+
+      const prompt = gateway.promptsSent[0];
+
+      expect(prompt?.user).toContain("<owner_question_under_review>");
+      expect(prompt?.user).toContain("Which demo service stores objects?");
+      expect(prompt?.user).toContain("Marked as correct: choice-1");
+      // And none of it in the system message.
+      expect(prompt?.system).not.toContain(
+        "Which demo service stores objects?",
+      );
+    });
+
+    it("gives the reviewer the objectives the question is mapped to", async () => {
+      const questionId = await seedQuestion();
+
+      await questions.replaceObjectiveLinks(questionId, ["objective-2"], START);
+
+      const { facade, gateway } = reviewFacade("SOUND");
+
+      await facade.reviewQuestion(AWS_TRACK.slug, questionId);
+
+      const prompt = gateway.promptsSent[0];
+
+      expect(prompt?.user).toContain("Demo second objective");
+      // Only the mapped one: the whole syllabus would be pages of context for a
+      // judgement about one item.
+      expect(prompt?.user).not.toContain("Demo objective");
+    });
+
+    it("stores the findings so they can be read back through the same schema", async () => {
+      const questionId = await seedQuestion();
+      const { facade } = reviewFacade("MAJOR_ISSUES");
+      const { run } = await facade.reviewQuestion(AWS_TRACK.slug, questionId);
+      const view = await facade.findQuestionReview(questionId);
+
+      expect(view?.run.id).toBe(run.id);
+      expect(view?.review?.verdict).toBe("MAJOR_ISSUES");
+      expect(view?.review?.answerCorrect).toBe(false);
+      expect(view?.review?.findings.length).toBeGreaterThan(0);
+      expect(view?.review?.findings[0]?.category).toBe("WRONG_ANSWER");
+      expect(view?.staleRevision).toBe(false);
+    });
+
+    it("never changes the quality state by itself, even on a clean verdict", async () => {
+      // Owner decision (2026-08-15): a review records findings only. Marking the
+      // question AI-reviewed is the owner's explicit accept, tested below.
+      const questionId = await seedQuestion();
+      const { facade } = reviewFacade("SOUND");
+      const outcome = await facade.reviewQuestion(AWS_TRACK.slug, questionId);
+
+      expect(outcome.qualityStatusChanged).toBe(false);
+      expect((await questions.findById(questionId))?.qualityStatus).toBe(
+        "UNREVIEWED",
+      );
+    });
+
+    it("offers the accept only for a clean, current review of an unreviewed question", async () => {
+      const questionId = await seedQuestion();
+      const { facade } = reviewFacade("SOUND");
+      await facade.reviewQuestion(AWS_TRACK.slug, questionId);
+
+      const view = await facade.findQuestionReview(questionId);
+
+      expect(view?.offersAccept).toBe(true);
+    });
+
+    it("accepts a clean review into AI_REVIEWED on the owner's explicit call", async () => {
+      const questionId = await seedQuestion();
+      const { facade } = reviewFacade("SOUND");
+      await facade.reviewQuestion(AWS_TRACK.slug, questionId);
+
+      await facade.acceptQuestionReview(AWS_TRACK.slug, questionId);
+
+      expect((await questions.findById(questionId))?.qualityStatus).toBe(
+        "AI_REVIEWED",
+      );
+      // Once accepted, the offer is gone: the promotion is no longer available.
+      const after = await facade.findQuestionReview(questionId);
+
+      expect(after?.offersAccept).toBe(false);
+    });
+
+    it("refuses to accept a review that found problems", async () => {
+      const questionId = await seedQuestion();
+      const { facade } = reviewFacade("MAJOR_ISSUES");
+      await facade.reviewQuestion(AWS_TRACK.slug, questionId);
+
+      const view = await facade.findQuestionReview(questionId);
+
+      expect(view?.offersAccept).toBe(false);
+      await expect(
+        facade.acceptQuestionReview(AWS_TRACK.slug, questionId),
+      ).rejects.toThrow(/does not support/i);
+      expect((await questions.findById(questionId))?.qualityStatus).toBe(
+        "UNREVIEWED",
+      );
+    });
+
+    it("refuses to accept when the question has never been reviewed", async () => {
+      const questionId = await seedQuestion();
+      const { facade } = reviewFacade("SOUND");
+
+      await expect(
+        facade.acceptQuestionReview(AWS_TRACK.slug, questionId),
+      ).rejects.toThrow(/no current review/i);
+    });
+
+    it("leaves the quality state alone when it found problems", async () => {
+      // The whole point of `qualityStatusAfterReview`: a bad verdict is a recommendation,
+      // and pulling a question out of study is the owner's decision.
+      const questionId = await seedQuestion();
+      const { facade } = reviewFacade("MAJOR_ISSUES");
+      const outcome = await facade.reviewQuestion(AWS_TRACK.slug, questionId);
+
+      expect(outcome.qualityStatusChanged).toBe(false);
+      expect((await questions.findById(questionId))?.qualityStatus).toBe(
+        "UNREVIEWED",
+      );
+    });
+
+    it("never overwrites a state the owner reached themselves", async () => {
+      const questionId = await seedQuestion({ qualityStatus: "USER_APPROVED" });
+      const { facade } = reviewFacade("SOUND");
+      const outcome = await facade.reviewQuestion(AWS_TRACK.slug, questionId);
+
+      expect(outcome.qualityStatusChanged).toBe(false);
+      expect((await questions.findById(questionId))?.qualityStatus).toBe(
+        "USER_APPROVED",
+      );
+    });
+
+    it("changes nothing about the question's content or lifecycle", async () => {
+      // The acceptance criterion in full: a review may not rewrite a question, and there
+      // is no path in the facade that could.
+      const questionId = await seedQuestion();
+      const before = await questions.findWithCurrentRevision(questionId);
+      const { facade } = reviewFacade("MAJOR_ISSUES");
+
+      await facade.reviewQuestion(AWS_TRACK.slug, questionId);
+
+      const after = await questions.findWithCurrentRevision(questionId);
+
+      expect(after?.revision).toEqual(before?.revision);
+      expect(await questions.listRevisions(questionId)).toHaveLength(1);
+      expect(after?.question.lifecycleStatus).toBe("DRAFT");
+      expect(after?.question.disputeReason).toBeNull();
+    });
+
+    it("offers the prefilled dispute when the reviewer recommends one", async () => {
+      const questionId = await seedQuestion();
+      const { facade } = reviewFacade("MAJOR_ISSUES");
+
+      await facade.reviewQuestion(AWS_TRACK.slug, questionId);
+
+      const view = await facade.findQuestionReview(questionId);
+
+      expect(view?.review?.suggestedAction).toBe("DISPUTE");
+      expect(view?.offersDispute).toBe(true);
+      // And the summary that would be prefilled is about this question, not a canned line.
+      expect(view?.review?.summary).toContain("Which demo service");
+    });
+
+    it("offers no dispute for a question that is already disputed", async () => {
+      // The button would set the state it is already in and overwrite the owner's own
+      // recorded reason with the model's summary.
+      const questionId = await seedQuestion({
+        qualityStatus: "DISPUTED",
+        disputeReason: "The owner's own reason.",
+      });
+      const { facade } = reviewFacade("MAJOR_ISSUES");
+
+      await facade.reviewQuestion(AWS_TRACK.slug, questionId);
+
+      expect((await facade.findQuestionReview(questionId))?.offersDispute).toBe(
+        false,
+      );
+    });
+
+    it("offers no dispute when the reviewer approved", async () => {
+      const questionId = await seedQuestion();
+      const { facade } = reviewFacade("SOUND");
+
+      await facade.reviewQuestion(AWS_TRACK.slug, questionId);
+
+      expect((await facade.findQuestionReview(questionId))?.offersDispute).toBe(
+        false,
+      );
+    });
+
+    it("marks a review stale once the question is edited", async () => {
+      const questionId = await seedQuestion();
+      const { facade } = reviewFacade("SOUND");
+
+      await facade.reviewQuestion(AWS_TRACK.slug, questionId);
+      await questions.appendRevision(
+        revisionFixture({
+          id: "revision-2",
+          questionId,
+          revisionNumber: 2,
+          stem: "Which demo service stores objects, exactly?",
+        }),
+        START,
+      );
+
+      const view = await facade.findQuestionReview(questionId);
+
+      expect(view?.staleRevision).toBe(true);
+      // Still shown, because the findings are real — just about wording the owner no
+      // longer has.
+      expect(view?.review?.verdict).toBe("SOUND");
+    });
+
+    it("records a failed run and changes nothing when the answer is unusable", async () => {
+      // Malformed on every turn, including the repair attempt. A model answering gibberish
+      // must not be able to promote anything.
+      const questionId = await seedQuestion();
+      const { facade } = reviewFacade("MALFORMED");
+      const outcome = await facade.reviewQuestion(AWS_TRACK.slug, questionId);
+
+      expect(outcome.run.status).toBe("FAILED");
+      expect(outcome.run.failureReason).toBe("MALFORMED_OUTPUT");
+      expect(outcome.review).toBeNull();
+      expect(outcome.qualityStatusChanged).toBe(false);
+      expect((await questions.findById(questionId))?.qualityStatus).toBe(
+        "UNREVIEWED",
+      );
+      // A failed run is not the latest *readable* review, so the panel shows nothing.
+      expect(await facade.findQuestionReview(questionId)).toBeNull();
+    });
+
+    it("keeps the failed run's subject, so the history says what it was looking at", async () => {
+      const questionId = await seedQuestion();
+      const { facade } = reviewFacade("MALFORMED");
+      const { run } = await facade.reviewQuestion(AWS_TRACK.slug, questionId);
+
+      expect(run.subjectQuestionId).toBe(questionId);
+      expect(run.subjectRevisionId).toBe("revision-under-review");
+    });
+
+    it("allows a re-review and shows the newest one", async () => {
+      const questionId = await seedQuestion();
+      const { facade } = reviewFacade("SOUND");
+      const first = await facade.reviewQuestion(AWS_TRACK.slug, questionId);
+
+      clock.set("2026-04-01T10:00:00.000Z");
+
+      const second = await facade.reviewQuestion(AWS_TRACK.slug, questionId);
+
+      expect(second.run.id).not.toBe(first.run.id);
+      // No duplicate-batch guard: a second opinion is a reasonable request.
+      expect((await facade.findQuestionReview(questionId))?.run.id).toBe(
+        second.run.id,
+      );
+      // And the second promotion is a no-op, because the state is already recorded.
+      expect(second.qualityStatusChanged).toBe(false);
+    });
+
+    it("shows the review in the track's run history, labelled as a review", async () => {
+      const questionId = await seedQuestion();
+      const { facade } = reviewFacade("SOUND");
+      const { run } = await facade.reviewQuestion(AWS_TRACK.slug, questionId);
+      const history = await facade.findRuns(AWS_TRACK.slug, { page: 1 });
+      const row = history?.runs.find((summary) => summary.run.id === run.id);
+
+      expect(row?.run.itemKind).toBe("QUESTION_REVIEW");
+      expect(row?.run.subjectQuestionId).toBe(questionId);
+    });
+
+    it("refuses to review a question of another track", async () => {
+      // Scoped to the slug as well as the identifier, so a cross-track address cannot
+      // spend a model call on somebody else's question.
+      const questionId = await seedQuestion();
+
+      await expect(
+        reviewFacade("SOUND").facade.reviewQuestion(HSK_TRACK.slug, questionId),
+      ).rejects.toBeInstanceOf(QuestionNotReviewableError);
+    });
+
+    it("refuses to review a question that no longer exists", async () => {
+      await expect(
+        reviewFacade("SOUND").facade.reviewQuestion(
+          AWS_TRACK.slug,
+          "no-such-question",
+        ),
+      ).rejects.toBeInstanceOf(QuestionNotReviewableError);
+    });
+
+    it("refuses an unknown track before anything else", async () => {
+      await expect(
+        reviewFacade("SOUND").facade.reviewQuestion(
+          "no-such-track",
+          "question-under-review",
+        ),
+      ).rejects.toBeInstanceOf(CertificationNotFoundError);
+    });
+
+    it("refuses to review a question taken out of study", async () => {
+      // Retired and archived questions are not studied, so a review would spend a call on
+      // something the owner is not using.
+      for (const status of ["RETIRED", "ARCHIVED"] as const) {
+        const questionId = await seedQuestion({
+          id: `question-${status}`,
+          currentRevisionId: `revision-${status}`,
+          lifecycleStatus: status,
+        });
+
+        await expect(
+          reviewFacade("SOUND").facade.reviewQuestion(
+            AWS_TRACK.slug,
+            questionId,
+          ),
+        ).rejects.toBeInstanceOf(QuestionNotReviewableError);
+      }
+    });
+
+    it("reviews an active question as readily as a draft", async () => {
+      const questionId = await seedQuestion({ lifecycleStatus: "ACTIVE" });
+      const { run } = await reviewFacade("SOUND").facade.reviewQuestion(
+        AWS_TRACK.slug,
+        questionId,
+      );
+
+      expect(run.status).toBe("COMPLETED");
+    });
+
+    it("has nothing to show for a question that was never reviewed", async () => {
+      const questionId = await seedQuestion();
+
+      expect(
+        await reviewFacade("SOUND").facade.findQuestionReview(questionId),
+      ).toBeNull();
+    });
+
+    it("does not mistake a generation run for a review of its question", async () => {
+      // `findLatestReviewForQuestion` filters on the item kind as well as the subject
+      // column, so no other run kind can leak into the findings panel.
+      const { run } = outcome(
+        await facadeWith().requestQuestionGeneration(
+          AWS_TRACK.slug,
+          request({ itemCount: 1 }),
+        ),
+      );
+      const generatedId = (await runs.listItemIds(run.id))[0] ?? "";
+
+      expect(
+        await reviewFacade("SOUND").facade.findQuestionReview(generatedId),
+      ).toBeNull();
     });
   });
 

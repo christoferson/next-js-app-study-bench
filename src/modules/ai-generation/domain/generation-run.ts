@@ -47,15 +47,26 @@ export function isFakeModelProvider(provider: string): boolean {
  * applies unchanged — a model was called, tokens were spent, output was validated,
  * per-item outcomes were counted, and the result needs a page the owner can read.
  * A parallel "enrichment run" table would duplicate all of that.
+ *
+ * `QUESTION_REVIEW` is the odd one out in the opposite direction: it produces no item
+ * and proposes no item, it produces a *judgement* about an item the owner already has.
+ * It is still a run because a model was called, tokens were spent, output was
+ * validated, and the result needs to be readable months later beside the question it
+ * was about (`spec/AI-GUIDELINES.md` section 1.10).
  */
 export type GeneratedItemKind =
-  "QUESTION" | "FLASHCARD" | "ENRICH_VOCABULARY" | "OBJECTIVE_IMPORT";
+  | "QUESTION"
+  | "FLASHCARD"
+  | "ENRICH_VOCABULARY"
+  | "OBJECTIVE_IMPORT"
+  | "QUESTION_REVIEW";
 
 export const GENERATED_ITEM_KINDS: readonly GeneratedItemKind[] = [
   "QUESTION",
   "FLASHCARD",
   "ENRICH_VOCABULARY",
   "OBJECTIVE_IMPORT",
+  "QUESTION_REVIEW",
 ];
 
 /**
@@ -72,6 +83,10 @@ export function proposesForConfirmation(kind: GeneratedItemKind): boolean {
     case "QUESTION":
     case "FLASHCARD":
     case "ENRICH_VOCABULARY":
+    // A review's payload is not a proposal awaiting an Apply. It is a finding the owner
+    // reads; acting on it means disputing or approving the *question*, which is the
+    // question's own action and leaves `applied_at` null forever.
+    case "QUESTION_REVIEW":
       return false;
     case "OBJECTIVE_IMPORT":
       return true;
@@ -92,6 +107,9 @@ export function revisesExistingItems(kind: GeneratedItemKind): boolean {
     // An import run touches no bank item at all: it proposes objectives, which are
     // the track's outline rather than its content.
     case "OBJECTIVE_IMPORT":
+    // A review reads one item and writes none. It may change the question's *quality
+    // status*, which is a judgement about the item rather than a revision of it.
+    case "QUESTION_REVIEW":
       return false;
     case "ENRICH_VOCABULARY":
       return true;
@@ -202,6 +220,24 @@ export interface GenerationRun {
    * is refused by reading this column rather than by trusting the page that posted.
    */
   readonly appliedAt: IsoTimestamp | null;
+  /**
+   * The question a `QUESTION_REVIEW` run judged.
+   *
+   * On the run row because a review is *about* one item, and without that the stored
+   * findings would be a paragraph about nothing. `null` for every other kind, and
+   * `null` once the question has been deleted — a run is historical and survives what
+   * it looked at, rather than keeping a deletable draft alive.
+   */
+  readonly subjectQuestionId: string | null;
+  /**
+   * The exact revision the review was shown.
+   *
+   * Recorded separately from the question because a revision is immutable and a
+   * question is not: the finding applies to *this wording*, and an edit afterwards
+   * makes the review stale rather than wrong (`SPEC.md` section 25.3, "the tutor
+   * receives the exact revision being discussed").
+   */
+  readonly subjectRevisionId: string | null;
   readonly startedAt: IsoTimestamp;
   readonly completedAt: IsoTimestamp | null;
   readonly status: GenerationRunStatus;
@@ -217,6 +253,8 @@ export function describeItemKind(kind: GeneratedItemKind): string {
       return "Enriched vocabulary";
     case "OBJECTIVE_IMPORT":
       return "Imported objectives";
+    case "QUESTION_REVIEW":
+      return "AI question review";
   }
 }
 
@@ -230,6 +268,8 @@ export function describeItemKindSingular(kind: GeneratedItemKind): string {
       return "enriched card";
     case "OBJECTIVE_IMPORT":
       return "proposed objective";
+    case "QUESTION_REVIEW":
+      return "reviewed question";
   }
 }
 

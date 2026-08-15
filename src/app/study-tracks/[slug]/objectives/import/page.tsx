@@ -1,5 +1,5 @@
-import Link from "next/link";
 import { notFound } from "next/navigation";
+import { Breadcrumbs, TRACKS_CRUMB, trackCrumb } from "@/shared/ui/breadcrumbs";
 import { getObjectiveImportFacade } from "@/modules/ai-generation/composition";
 import { MAX_IMPORT_NODES } from "@/modules/ai-generation/domain/objective-import";
 import { extractObjectivesAction } from "@/modules/ai-generation/ui/objective-import-actions";
@@ -28,13 +28,12 @@ export default async function ImportObjectivesPage({
     notFound();
   }
 
-  const trackPath = `/study-tracks/${view.certification.slug}`;
-
   return (
     <main className="page">
-      <nav aria-label="Breadcrumb" className="breadcrumb">
-        <Link href={trackPath}>Back to {view.certification.name}</Link>
-      </nav>
+      <Breadcrumbs
+        trail={[TRACKS_CRUMB, trackCrumb(view.certification)]}
+        current="Import objectives"
+      />
 
       <header className="page-header">
         <p className="eyebrow">Import objectives</p>

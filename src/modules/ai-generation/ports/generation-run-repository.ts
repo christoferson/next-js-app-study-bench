@@ -53,6 +53,20 @@ export interface GenerationRunRepository {
     inputHash: string,
     itemKind: GenerationRun["itemKind"],
   ): Promise<GenerationRun | null>;
+  /**
+   * The most recent completed AI review of one question, if it has been reviewed.
+   *
+   * Backs the findings panel on the question's own page. "Most recent" rather than "all",
+   * because re-reviewing is allowed and every run is kept: the panel shows the current
+   * judgement, and the older ones stay readable through the run history where they belong.
+   *
+   * Only `COMPLETED` runs qualify. A `FAILED` review has no findings to show, and a
+   * `PENDING` one has not answered yet — surfacing either would put an empty panel on the
+   * page and make it look as though the review had said nothing.
+   */
+  findLatestReviewForQuestion(
+    questionId: string,
+  ): Promise<GenerationRun | null>;
   /** Inserts a run row. Called with `PENDING` before the provider is used. */
   create(run: GenerationRun): Promise<void>;
   /**

@@ -1,10 +1,20 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getAudioFacade, isAudioEnabled } from "@/modules/audio/composition";
-import { AudioClipList } from "@/modules/audio/ui/audio-clip-list";
+import { Breadcrumbs, TRACKS_CRUMB, trackCrumb } from "@/shared/ui/breadcrumbs";
+import {
+  CollapsibleSection,
+  openWhenShort,
+} from "@/shared/ui/collapsible-section";
+import { getGenerationFacade } from "@/modules/ai-generation/composition";
+import {
+  acceptQuestionReviewAction,
+  reviewQuestionAction,
+} from "@/modules/ai-generation/ui/actions";
+import { QuestionReviewPanel } from "@/modules/ai-generation/ui/question-review-panel";
 import { describeDifficulty } from "@/modules/question-bank/domain/question";
 import { getQuestionBankFacade } from "@/modules/question-bank/composition";
 import {
+  disputeQuestionAction,
   linkObjectiveAction,
   unlinkObjectiveAction,
 } from "@/modules/question-bank/ui/actions";
@@ -50,25 +60,33 @@ export default async function QuestionDetailPage({
   const bankPath = `/study-tracks/${certification.slug}/questions`;
   // Bounded to the most recent attempts: the history is a record to inspect, not a
   // log to page through (`spec/ARCHITECTURE.md` section 8).
-  const [attempts, clips] = await Promise.all([
+  // Read-aloud was removed from question pages by owner decision (2026-08-15):
+  // question audio belongs to future listening-comprehension study, not the
+  // management view. Vocabulary card audio is unaffected.
+  const [attempts, aiReview] = await Promise.all([
     getStudyFacade().listAttemptsForQuestion(question.id),
-    // The stem only, and never the choices — see `questionClipRequests`. A cache read,
-    // so opening a question costs nothing. Offered only when a real voice is configured:
-    // the placeholder provider speaks silence, and a control that plays nothing is worse
-    // than none.
-    isAudioEnabled()
-      ? getAudioFacade().findQuestionClips({
-          revision: currentRevision,
-          studyType: certification.studyType,
-        })
-      : Promise.resolve([]),
+    // The latest completed review of this question, or `null` if it has never been
+    // reviewed. A cheap read that makes the findings panel part of the question
+    // rather than a screen the owner has to go and find.
+    getGenerationFacade().findQuestionReview(question.id),
   ]);
+  // Matches `isReviewableLifecycle` in the facade, which re-checks it: a retired or
+  // archived question is out of study, so reviewing it would spend a model call on
+  // something the owner is not using.
+  const reviewable =
+    question.lifecycleStatus === "DRAFT" ||
+    question.lifecycleStatus === "ACTIVE";
 
   return (
     <main className="page">
-      <nav aria-label="Breadcrumb" className="breadcrumb">
-        <Link href={bankPath}>Back to the question bank</Link>
-      </nav>
+      <Breadcrumbs
+        trail={[
+          TRACKS_CRUMB,
+          trackCrumb(certification),
+          { label: "Question bank", href: bankPath },
+        ]}
+        current="Question"
+      />
 
       <header className="page-header">
         <p className="eyebrow">{certification.name}</p>
@@ -134,14 +152,6 @@ export default async function QuestionDetailPage({
           </p>
         </div>
         <QuestionPreview revision={currentRevision} revealAnswer={false} />
-        {/* Inside the preview section rather than in one of its own: reading the stem
-            aloud is part of studying this question, and it reveals nothing the section
-            above does not already show. */}
-        <AudioClipList
-          clips={clips}
-          idPrefix="question-audio"
-          heading="Read aloud"
-        />
       </section>
 
       <section aria-labelledby="answer-heading" className="section">
@@ -249,16 +259,42 @@ export default async function QuestionDetailPage({
         )}
       </section>
 
-      <section aria-labelledby="attempts-heading" className="section">
+      {/* Collapsible, and folded once there is more than a screenful: this is the owner's
+          own record, read when they are deciding whether a question needs work, not on the
+          way past it. */}
+      <CollapsibleSection
+        id="attempts"
+        title="Attempt history"
+        open={openWhenShort(attempts.length)}
+        count={
+          attempts.length === 1 ? "1 attempt" : `${attempts.length} attempts`
+        }
+        note="Every answer you have recorded for this question, newest first. Each names the revision it was answered against, so editing the question does not rewrite what you answered."
+      >
+        <AttemptHistory attempts={attempts} revisions={view.revisions} />
+      </CollapsibleSection>
+
+      {/* Above Manage rather than inside it: a review is evidence the owner reads before
+          deciding, and the decisions it argues for — approve, dispute — are the controls
+          in the section below. */}
+      <section aria-labelledby="ai-review-heading" className="section">
         <div className="section-heading">
-          <h2 id="attempts-heading">Attempt history</h2>
+          <h2 id="ai-review-heading">AI review</h2>
           <p className="section-note">
-            Every answer you have recorded for this question, newest first. Each
-            names the revision it was answered against, so editing the question
-            does not rewrite what you answered.
+            A model&apos;s judgement of this question, from its own knowledge.
+            It reports what it finds and changes nothing; you decide what to do
+            about it.
           </p>
         </div>
-        <AttemptHistory attempts={attempts} revisions={view.revisions} />
+        <QuestionReviewPanel
+          slug={certification.slug}
+          questionId={question.id}
+          reviewable={reviewable}
+          view={aiReview}
+          reviewAction={reviewQuestionAction}
+          disputeAction={disputeQuestionAction}
+          acceptAction={acceptQuestionReviewAction}
+        />
       </section>
 
       <section aria-labelledby="manage-heading" className="section">
@@ -273,21 +309,24 @@ export default async function QuestionDetailPage({
         />
       </section>
 
-      <section aria-labelledby="history-heading" className="section">
-        <div className="section-heading">
-          <h2 id="history-heading">Revision history</h2>
-          <p className="section-note">
-            Editing a question adds a revision. Earlier revisions are kept
-            exactly as they were written.
-          </p>
-        </div>
+      <CollapsibleSection
+        id="history"
+        title="Revision history"
+        open={openWhenShort(view.revisions.length)}
+        count={
+          view.revisions.length === 1
+            ? "1 revision"
+            : `${view.revisions.length} revisions`
+        }
+        note="Editing a question adds a revision. Earlier revisions are kept exactly as they were written."
+      >
         <RevisionHistory
           slug={certification.slug}
           questionId={question.id}
           revisions={view.revisions}
           currentRevisionId={question.currentRevisionId}
         />
-      </section>
+      </CollapsibleSection>
     </main>
   );
 }

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { Breadcrumbs, TRACKS_CRUMB, trackCrumb } from "@/shared/ui/breadcrumbs";
 import {
   QUESTION_TYPES,
   describeQuestionType,
@@ -41,9 +42,14 @@ export default async function NewQuestionPage({
 
   return (
     <main className="page">
-      <nav aria-label="Breadcrumb" className="breadcrumb">
-        <Link href={bankPath}>Back to the question bank</Link>
-      </nav>
+      <Breadcrumbs
+        trail={[
+          TRACKS_CRUMB,
+          trackCrumb(certification),
+          { label: "Question bank", href: bankPath },
+        ]}
+        current="New question"
+      />
 
       <header className="page-header">
         <p className="eyebrow">New question</p>

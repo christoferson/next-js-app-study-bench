@@ -19,7 +19,8 @@ const RUN_COLUMNS = `id, certification_id, item_kind, generation_mode,
   model_provider, model_id, persona_id, persona_version, prompt_template_id,
   prompt_template_version, input_hash, selected_source_snapshot_ids,
   requested_item_count, successful_item_count, failed_item_count,
-  usage_metadata, failure_reason, proposed_payload, applied_at, started_at,
+  usage_metadata, failure_reason, proposed_payload, applied_at,
+  subject_question_id, subject_revision_id, started_at,
   completed_at, status`;
 
 /**
@@ -106,6 +107,31 @@ export class SqliteGenerationRunRepository implements GenerationRunRepository {
     return row === undefined ? null : toGenerationRun(row);
   }
 
+  /**
+   * The newest completed review of one question.
+   *
+   * Filtered on `item_kind` as well as on the subject column, even though only a review
+   * ever sets that column: the two conditions say different things, and a future run kind
+   * that also records a subject question must not start appearing in the findings panel
+   * by accident.
+   */
+  async findLatestReviewForQuestion(
+    questionId: string,
+  ): Promise<GenerationRun | null> {
+    const row = this.database
+      .prepare(
+        `SELECT ${RUN_COLUMNS} FROM generation_runs
+         WHERE subject_question_id = ?
+           AND item_kind = 'QUESTION_REVIEW'
+           AND status = 'COMPLETED'
+         ORDER BY started_at DESC, id DESC
+         LIMIT 1`,
+      )
+      .get(questionId) as GenerationRunRow | undefined;
+
+    return row === undefined ? null : toGenerationRun(row);
+  }
+
   async create(run: GenerationRun): Promise<void> {
     this.database
       .prepare(
@@ -114,14 +140,16 @@ export class SqliteGenerationRunRepository implements GenerationRunRepository {
            persona_version, prompt_template_id, prompt_template_version,
            input_hash, selected_source_snapshot_ids, requested_item_count,
            successful_item_count, failed_item_count, usage_metadata,
-           failure_reason, proposed_payload, applied_at, started_at,
+           failure_reason, proposed_payload, applied_at,
+           subject_question_id, subject_revision_id, started_at,
            completed_at, status)
          VALUES (@id, @certificationId, @itemKind, @generationMode,
            @modelProvider, @modelId, @personaId, @personaVersion,
            @promptTemplateId, @promptTemplateVersion, @inputHash,
            @selectedSourceSnapshotIds, @requestedItemCount,
            @successfulItemCount, @failedItemCount, @usageMetadata,
-           @failureReason, @proposedPayload, @appliedAt, @startedAt,
+           @failureReason, @proposedPayload, @appliedAt,
+           @subjectQuestionId, @subjectRevisionId, @startedAt,
            @completedAt, @status)`,
       )
       .run({
@@ -146,6 +174,11 @@ export class SqliteGenerationRunRepository implements GenerationRunRepository {
         failureReason: run.failureReason,
         proposedPayload: run.proposedPayload,
         appliedAt: run.appliedAt,
+        // Written at creation and never on completion: which question a review is about
+        // is part of the request, not of the outcome, so it is recorded before the model
+        // is called and a failed review still says what it was looking at.
+        subjectQuestionId: run.subjectQuestionId,
+        subjectRevisionId: run.subjectRevisionId,
         startedAt: run.startedAt,
         completedAt: run.completedAt,
         status: run.status,
@@ -301,6 +334,10 @@ function itemSourceFor(kind: GeneratedItemKind): {
 } | null {
   switch (kind) {
     case "OBJECTIVE_IMPORT":
+    // A review creates nothing either. It is *about* one question, which is recorded on
+    // the run's own `subject_question_id` rather than found by searching the bank —
+    // counting it as an item of the run would claim the run produced a question.
+    case "QUESTION_REVIEW":
       return null;
     case "QUESTION":
       return { table: "questions", condition: "generation_run_id = ?" };

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Breadcrumbs, TRACKS_CRUMB } from "@/shared/ui/breadcrumbs";
 import { getStudyFacade } from "@/modules/study-sessions/composition";
 import { startSessionAction } from "@/modules/study-sessions/ui/actions";
 import { StartSessionForm } from "@/modules/study-sessions/ui/start-session-form";
@@ -30,9 +31,7 @@ export default async function NewSessionPage({
 
   return (
     <main className="page">
-      <nav aria-label="Breadcrumb" className="breadcrumb">
-        <Link href="/">Back to the study tracks</Link>
-      </nav>
+      <Breadcrumbs trail={[TRACKS_CRUMB]} current="Start a session" />
 
       <header className="page-header">
         <p className="eyebrow">Study</p>

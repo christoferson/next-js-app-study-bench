@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { Breadcrumbs, TRACKS_CRUMB, trackCrumb } from "@/shared/ui/breadcrumbs";
 import { getAudioFacade, isAudioEnabled } from "@/modules/audio/composition";
 import { AudioClipList } from "@/modules/audio/ui/audio-clip-list";
 import { getFlashcardFacade } from "@/modules/flashcards/composition";
@@ -49,9 +50,14 @@ export default async function ReviewPage({ params }: ReviewPageProps) {
 
   return (
     <main className="page">
-      <nav aria-label="Breadcrumb" className="breadcrumb">
-        <Link href={bankPath}>Back to the flashcards</Link>
-      </nav>
+      <Breadcrumbs
+        trail={[
+          TRACKS_CRUMB,
+          trackCrumb(view.certification),
+          { label: "Flashcards", href: bankPath },
+        ]}
+        current="Review"
+      />
 
       <header className="page-header">
         <p className="eyebrow">Review</p>

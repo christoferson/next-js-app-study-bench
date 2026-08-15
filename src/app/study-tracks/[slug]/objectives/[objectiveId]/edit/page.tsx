@@ -1,5 +1,5 @@
-import Link from "next/link";
 import { notFound } from "next/navigation";
+import { Breadcrumbs, TRACKS_CRUMB, trackCrumb } from "@/shared/ui/breadcrumbs";
 import { getCertificationFacade } from "@/modules/certifications/composition";
 import { updateObjectiveAction } from "@/modules/certifications/ui/actions";
 import { ObjectiveForm } from "@/modules/certifications/ui/objective-form";
@@ -28,9 +28,10 @@ export default async function EditObjectivePage({
 
   return (
     <main className="page">
-      <nav aria-label="Breadcrumb" className="breadcrumb">
-        <Link href={trackPath}>Back to {view.certification.name}</Link>
-      </nav>
+      <Breadcrumbs
+        trail={[TRACKS_CRUMB, trackCrumb(view.certification)]}
+        current="Edit objective"
+      />
 
       <header className="page-header">
         <p className="eyebrow">Edit objective</p>

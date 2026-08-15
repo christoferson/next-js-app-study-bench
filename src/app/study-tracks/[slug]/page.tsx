@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { Breadcrumbs, TRACKS_CRUMB } from "@/shared/ui/breadcrumbs";
 import { getCertificationFacade } from "@/modules/certifications/composition";
 import type { Certification } from "@/modules/certifications/domain/certification";
 import { studyMaterialStyleFor } from "@/modules/certifications/domain/certification";
@@ -36,9 +37,7 @@ export default async function StudyTrackPage({ params }: StudyTrackPageProps) {
 
   return (
     <main className="page">
-      <nav aria-label="Breadcrumb" className="breadcrumb">
-        <Link href="/">Back to study tracks</Link>
-      </nav>
+      <Breadcrumbs trail={[TRACKS_CRUMB]} current={certification.name} />
 
       <header className="page-header">
         <div className="card-heading">

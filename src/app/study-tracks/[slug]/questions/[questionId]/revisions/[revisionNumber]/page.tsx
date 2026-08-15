@@ -1,5 +1,5 @@
-import Link from "next/link";
 import { notFound } from "next/navigation";
+import { Breadcrumbs, TRACKS_CRUMB, trackCrumb } from "@/shared/ui/breadcrumbs";
 import { describeQuestionType } from "@/modules/question-bank/domain/question";
 import { getQuestionBankFacade } from "@/modules/question-bank/composition";
 import { QuestionPreview } from "@/modules/question-bank/ui/question-preview";
@@ -43,9 +43,14 @@ export default async function QuestionRevisionPage({
 
   return (
     <main className="page">
-      <nav aria-label="Breadcrumb" className="breadcrumb">
-        <Link href={questionPath}>Back to this question</Link>
-      </nav>
+      <Breadcrumbs
+        trail={[
+          TRACKS_CRUMB,
+          trackCrumb(view.certification),
+          { label: "Question", href: questionPath },
+        ]}
+        current={`Revision ${view.revision.revisionNumber}`}
+      />
 
       <header className="page-header">
         <p className="eyebrow">{view.certification.name}</p>

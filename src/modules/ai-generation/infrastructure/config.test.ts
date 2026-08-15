@@ -19,6 +19,7 @@ describe("resolveLanguageModelConfig", () => {
 
     expect(config.provider).toBe("fake");
     expect(config.modelId).toBe(DEFAULT_BEDROCK_MODEL_ID);
+    expect(config.reviewModelId).toBe(DEFAULT_BEDROCK_MODEL_ID);
     expect(config.region).toBeNull();
   });
 
@@ -45,6 +46,7 @@ describe("resolveLanguageModelConfig", () => {
     ).toEqual({
       provider: "fake",
       modelId: DEFAULT_BEDROCK_MODEL_ID,
+      reviewModelId: DEFAULT_BEDROCK_MODEL_ID,
       region: null,
     });
   });
@@ -58,6 +60,68 @@ describe("resolveLanguageModelConfig", () => {
 
     expect(config.modelId).toBe("demo.model-id:0");
     expect(config.region).toBe("ap-northeast-1");
+  });
+
+  describe("the model each purpose calls", () => {
+    /**
+     * Writing and judging are configured separately, and the precedence is stated
+     * once: the purpose-specific variable, then `BEDROCK_MODEL_ID`, then the default.
+     *
+     * The property that matters is that no combination leaves a purpose unset. A
+     * review with no model would be a run that either cannot record what it asked or
+     * records `null`, and provenance must always name the model that was called.
+     */
+    it("uses one model for both purposes when only the shared variable is set", () => {
+      const config = resolveLanguageModelConfig({
+        BEDROCK_MODEL_ID: "demo.shared:0",
+      });
+
+      expect(config.modelId).toBe("demo.shared:0");
+      expect(config.reviewModelId).toBe("demo.shared:0");
+    });
+
+    it("gives each purpose its own model when both are set", () => {
+      const config = resolveLanguageModelConfig({
+        BEDROCK_MODEL_ID: "demo.shared:0",
+        BEDROCK_GENERATION_MODEL_ID: " demo.writer:0 ",
+        BEDROCK_REVIEW_MODEL_ID: " demo.judge:0 ",
+      });
+
+      expect(config.modelId).toBe("demo.writer:0");
+      expect(config.reviewModelId).toBe("demo.judge:0");
+    });
+
+    it("moves only the purpose that was configured", () => {
+      // The case the split exists for: a stronger model for scrutiny, the shared one
+      // for everything that writes.
+      const config = resolveLanguageModelConfig({
+        BEDROCK_MODEL_ID: "demo.shared:0",
+        BEDROCK_REVIEW_MODEL_ID: "demo.judge:0",
+      });
+
+      expect(config.modelId).toBe("demo.shared:0");
+      expect(config.reviewModelId).toBe("demo.judge:0");
+    });
+
+    it("falls back to the default for a purpose with nothing set anywhere", () => {
+      const config = resolveLanguageModelConfig({
+        BEDROCK_GENERATION_MODEL_ID: "demo.writer:0",
+      });
+
+      expect(config.modelId).toBe("demo.writer:0");
+      expect(config.reviewModelId).toBe(DEFAULT_BEDROCK_MODEL_ID);
+    });
+
+    it("treats a blank purpose variable as unset rather than as an empty model id", () => {
+      const config = resolveLanguageModelConfig({
+        BEDROCK_MODEL_ID: "demo.shared:0",
+        BEDROCK_GENERATION_MODEL_ID: "  ",
+        BEDROCK_REVIEW_MODEL_ID: "",
+      });
+
+      expect(config.modelId).toBe("demo.shared:0");
+      expect(config.reviewModelId).toBe("demo.shared:0");
+    });
   });
 
   it("leaves the region to the AWS default chain when it is not set", () => {

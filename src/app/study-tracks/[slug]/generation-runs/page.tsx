@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { Breadcrumbs, TRACKS_CRUMB, trackCrumb } from "@/shared/ui/breadcrumbs";
 import { parseInput } from "@/shared/parse-input";
 import { getGenerationFacade } from "@/modules/ai-generation/composition";
 import { generationRunFilterSchema } from "@/modules/ai-generation/application/schemas";
@@ -37,9 +38,10 @@ export default async function GenerationRunsPage({
 
   return (
     <main className="page">
-      <nav aria-label="Breadcrumb" className="breadcrumb">
-        <Link href={trackPath}>Back to {view.certification.name}</Link>
-      </nav>
+      <Breadcrumbs
+        trail={[TRACKS_CRUMB, trackCrumb(view.certification)]}
+        current="Generation runs"
+      />
 
       <header className="page-header">
         <p className="eyebrow">Generation runs</p>

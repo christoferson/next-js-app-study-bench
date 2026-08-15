@@ -277,6 +277,9 @@ export class ObjectiveImportFacade {
       failureReason: null,
       proposedPayload: null,
       appliedAt: null,
+      // An import is about a document, not about a question in the bank.
+      subjectQuestionId: null,
+      subjectRevisionId: null,
       startedAt: this.deps.clock.now(),
       completedAt: null,
       status: "PENDING",

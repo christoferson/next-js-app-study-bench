@@ -26,38 +26,69 @@ interface GenerationRunListProps {
 export function GenerationRunList({ slug, runs }: GenerationRunListProps) {
   return (
     <ul className="card-list">
-      {runs.map(({ run, counts }) => (
-        <li className="card" key={run.id}>
-          <div className="card-heading">
-            <RunStatusBadge status={run.status} />
-            <span className="badge">{describeItemKind(run.itemKind)}</span>
-            <span className="badge">AI generated — model knowledge</span>
-          </div>
+      {runs.map(({ run, counts }) => {
+        // A review wrote nothing into either bank, so the two facts every other row
+        // carries — a provenance badge for generated content, and how much of the batch
+        // survives — are both false for it. It gets what it does have instead: the
+        // question it judged.
+        const isReview = run.itemKind === "QUESTION_REVIEW";
 
-          <h3 className="card-title">
-            <Link href={`/study-tracks/${slug}/generation-runs/${run.id}`}>
-              {describeRunStatus(run.status)} · {run.successfulItemCount} of{" "}
-              {run.requestedItemCount} written
-            </Link>
-          </h3>
+        return (
+          <li className="card" key={run.id}>
+            <div className="card-heading">
+              <RunStatusBadge status={run.status} />
+              <span className="badge">{describeItemKind(run.itemKind)}</span>
+              <span className="badge">
+                {isReview
+                  ? "Judged from model knowledge"
+                  : "AI generated — model knowledge"}
+              </span>
+            </div>
 
-          {run.failureReason === null ? null : (
-            <p className="card-text">
-              {describeFailureCategory(run.failureReason)}
+            <h3 className="card-title">
+              <Link href={`/study-tracks/${slug}/generation-runs/${run.id}`}>
+                {isReview
+                  ? `${describeRunStatus(run.status)} · one question judged`
+                  : `${describeRunStatus(run.status)} · ${run.successfulItemCount} of ${run.requestedItemCount} written`}
+              </Link>
+            </h3>
+
+            {run.failureReason === null ? null : (
+              <p className="card-text">
+                {describeFailureCategory(run.failureReason)}
+              </p>
+            )}
+
+            {isReview ? (
+              run.subjectQuestionId === null ? (
+                // Set null by `ON DELETE SET NULL` when the question was deleted. The run
+                // stays, because it records a model call that really happened.
+                <p className="question-row-meta">
+                  The question this review was about has since been deleted.
+                </p>
+              ) : (
+                <p className="question-row-meta">
+                  <Link
+                    href={`/study-tracks/${slug}/questions/${run.subjectQuestionId}`}
+                  >
+                    Read the findings on the question
+                  </Link>
+                </p>
+              )
+            ) : (
+              <p className="question-row-meta">
+                {counts.total} kept · {counts.draft} still draft ·{" "}
+                {counts.active} active
+              </p>
+            )}
+
+            <p className="question-row-meta">
+              {run.modelId} via {run.modelProvider} · persona {run.personaId} v
+              {run.personaVersion} · started {run.startedAt.slice(0, 10)}
             </p>
-          )}
-
-          <p className="question-row-meta">
-            {counts.total} kept · {counts.draft} still draft · {counts.active}{" "}
-            active
-          </p>
-
-          <p className="question-row-meta">
-            {run.modelId} via {run.modelProvider} · persona {run.personaId} v
-            {run.personaVersion} · started {run.startedAt.slice(0, 10)}
-          </p>
-        </li>
-      ))}
+          </li>
+        );
+      })}
     </ul>
   );
 }

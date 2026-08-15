@@ -1,5 +1,5 @@
-import Link from "next/link";
 import { notFound } from "next/navigation";
+import { Breadcrumbs, TRACKS_CRUMB, trackCrumb } from "@/shared/ui/breadcrumbs";
 import { getCertificationFacade } from "@/modules/certifications/composition";
 import { CertificationForm } from "@/modules/certifications/ui/certification-form";
 import { getPersonaFacade } from "@/modules/ai-generation/composition";
@@ -34,9 +34,10 @@ export default async function EditStudyTrackPage({
 
   return (
     <main className="page">
-      <nav aria-label="Breadcrumb" className="breadcrumb">
-        <Link href={trackPath}>Back to {certification.name}</Link>
-      </nav>
+      <Breadcrumbs
+        trail={[TRACKS_CRUMB, trackCrumb(certification)]}
+        current="Edit"
+      />
 
       <header className="page-header">
         <p className="eyebrow">Edit study track</p>

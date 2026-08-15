@@ -16,6 +16,7 @@ import {
   enrichmentRequestSchema,
   generationRequestSchema,
   rejectDraftSchema,
+  reviewQuestionSchema,
 } from "@/modules/ai-generation/application/schemas";
 
 /**
@@ -182,6 +183,72 @@ export async function requestEnrichmentAction(
  * The facade re-checks that the item is still a draft of this run, so a stale review
  * page cannot delete something the owner has since activated.
  */
+/**
+ * Reviews one question and stays on its page.
+ *
+ * No redirect, unlike the generation actions: a review does not produce a run worth its own
+ * screen, it produces findings that belong beside the question they are about. So the
+ * question's path is revalidated and the findings panel renders the new run in place.
+ *
+ * A provider failure is not an error state here either. The facade records a failed run and
+ * returns it, and the panel keeps showing whatever the last successful review said — with
+ * the failure readable in the run history, which is where a spent call belongs. The one
+ * thing that does become a form error is a question that cannot be reviewed at all
+ * (`QuestionNotReviewableError`), because that is a fact about the request rather than
+ * about the provider.
+ */
+export async function reviewQuestionAction(
+  _state: FormState,
+  form: FormData,
+): Promise<FormState> {
+  const slug = readString(form, "slug");
+
+  try {
+    const input = parseInput(reviewQuestionSchema, {
+      questionId: readString(form, "questionId"),
+    });
+
+    await getGenerationFacade().reviewQuestion(slug, input.questionId);
+
+    revalidatePath(`${trackPath(slug)}/questions/${input.questionId}`);
+  } catch (error) {
+    if (isDomainError(error)) {
+      return toInvalidFormState(error, form);
+    }
+    throw error;
+  }
+
+  // The run history gains a row whatever the outcome was, including a failure.
+  revalidatePath(runsPath(slug));
+
+  return { status: "idle", fieldErrors: {}, values: {} };
+}
+
+/** The owner accepts a clean review: the explicit UNREVIEWED → AI_REVIEWED click. */
+export async function acceptQuestionReviewAction(
+  _state: FormState,
+  form: FormData,
+): Promise<FormState> {
+  const slug = readString(form, "slug");
+
+  try {
+    const input = parseInput(reviewQuestionSchema, {
+      questionId: readString(form, "questionId"),
+    });
+
+    await getGenerationFacade().acceptQuestionReview(slug, input.questionId);
+
+    revalidatePath(`${trackPath(slug)}/questions/${input.questionId}`);
+  } catch (error) {
+    if (isDomainError(error)) {
+      return toInvalidFormState(error, form);
+    }
+    throw error;
+  }
+
+  return { status: "idle", fieldErrors: {}, values: {} };
+}
+
 export async function rejectDraftAction(
   _state: FormState,
   form: FormData,

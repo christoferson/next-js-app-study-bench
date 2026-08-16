@@ -107,7 +107,15 @@ export function AnswerForm({
               <li className="choice-row" key={choice.id}>
                 {/* The letter is part of the label text rather than a sibling of
                     it, so it is inside the control's accessible name and clicking
-                    it selects the choice. */}
+                    it selects the choice.
+
+                    Letter and text are separate flex items of the label, matching
+                    the static preview's `.question-choice`: the letter never wraps
+                    away from the start of its choice, and a long choice wraps under
+                    its own first line rather than under the letter. The space
+                    between them is kept as a text node so the accessible name stays
+                    "a. Amazon S3" — a flex `gap` is not text and would not appear
+                    in it. */}
                 <label className="choice-label study-choice">
                   <input
                     type={isMultiple ? "checkbox" : "radio"}
@@ -115,12 +123,8 @@ export function AnswerForm({
                     value={choice.id}
                     aria-describedby="answer-errors"
                   />
-                  <span>
-                    <span className="choice-letter">
-                      {choiceLetter(index)}.
-                    </span>{" "}
-                    {choice.text}
-                  </span>
+                  <span className="choice-letter">{choiceLetter(index)}.</span>{" "}
+                  <span className="choice-text">{choice.text}</span>
                 </label>
               </li>
             ))}

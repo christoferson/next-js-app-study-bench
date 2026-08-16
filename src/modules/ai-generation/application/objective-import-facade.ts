@@ -48,8 +48,8 @@ import type { PromptObjective } from "@/modules/ai-generation/domain/prompt-temp
 import type {
   DocumentKind,
   DocumentTextExtractor,
-} from "@/modules/ai-generation/ports/document-text-extractor";
-import { DocumentUnreadableError } from "@/modules/ai-generation/ports/document-text-extractor";
+} from "@/platform/documents/document-text-extractor";
+import { DocumentUnreadableError } from "@/platform/documents/document-text-extractor";
 import type { LanguageModelGateway } from "@/modules/ai-generation/ports/language-model-gateway";
 import type { GenerationUnitOfWork } from "@/modules/ai-generation/ports/unit-of-work";
 import {

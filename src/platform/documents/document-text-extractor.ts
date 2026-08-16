@@ -5,7 +5,7 @@
  * gateway is one: the library is a `node:`-and-worker-shaped dependency that must not
  * be importable from the domain, the facade, or a component, and the facade's only
  * interest is "the syllabus, as text". The adapter that owns `unpdf` is
- * `infrastructure/unpdf-document-text-extractor.ts` and a boundary test pins it there.
+ * `unpdf-document-text-extractor.ts` (same directory) and a boundary test pins it there.
  *
  * Bytes cross this boundary, not a `File`, a stream, or a path. A `File` is a web API
  * the domain has no business knowing, and a path would mean the extractor could read

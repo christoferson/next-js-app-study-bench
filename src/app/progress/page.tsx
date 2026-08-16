@@ -32,8 +32,9 @@ export default async function ProgressPage() {
         <p className="eyebrow">Progress</p>
         <h1>What you have actually done</h1>
         <p className="lede">
-          Counted from your recorded answers. StudyBench does not predict
-          whether you will pass an exam, so nothing here pretends to.
+          Counted from your recorded answers. Open a track for its domains,
+          mistakes, and history. StudyBench does not predict whether you will
+          pass an exam, so nothing here pretends to.
         </p>
       </header>
 

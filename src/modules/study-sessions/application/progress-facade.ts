@@ -1,7 +1,6 @@
 import type { Clock } from "@/platform/clock";
 import type {
   Certification,
-  CertificationId,
   CertificationSlug,
 } from "@/modules/certifications/domain/certification";
 import type { Objective } from "@/modules/certifications/domain/objective";
@@ -98,28 +97,111 @@ export interface ObjectiveCoverageView {
   readonly percentage: number | null;
 }
 
-/** Everything the dashboard shows for one track. */
-export interface TrackProgressView {
+/**
+ * One root objective (a domain) with its subtree rolled up, and its children.
+ *
+ * Coverage here counts *questions*, not objectives: a domain the owner has answered
+ * two of forty questions in is barely studied, and the objective-level "covered or
+ * not" flag cannot say that. The counts include every active question mapped to the
+ * root or any descendant of it, each counted once per root
+ * (see `ProgressRepository.objectiveRollup`).
+ */
+export interface ObjectiveRollupView extends AccuracyView {
+  readonly objective: Objective;
+  readonly questionCount: number;
+  readonly attemptedQuestionCount: number;
+  /** Attempted share of the root's questions; `null` when it has none. */
+  readonly attemptedPercentage: number | null;
+  /** Child objectives one level down, shown when the root is expanded. */
+  readonly children: readonly ObjectiveAccuracyView[];
+}
+
+/**
+ * Which way recent answers are going (`SPEC.md` section 6.8, evidence only).
+ *
+ * A comparison of two counted figures, not a forecast: `IMPROVING` means the recent
+ * window scored materially better than the track's whole history, `DECLINING` worse,
+ * `STEADY` neither. `INSUFFICIENT` is its own case rather than `STEADY`, because "not
+ * enough answers to say" and "no change" are different statements.
+ */
+export type AccuracyTrend =
+  "IMPROVING" | "STEADY" | "DECLINING" | "INSUFFICIENT";
+
+/**
+ * How many recent attempts the trend compares.
+ *
+ * Thirty is roughly two or three sessions' worth: enough that one unlucky question
+ * cannot flip the label, few enough that it still describes the present.
+ */
+export const TREND_WINDOW = 30;
+
+/** Fewer recent answers than this and the trend says so instead of guessing. */
+export const TREND_MINIMUM_ATTEMPTS = 10;
+
+/**
+ * How many percentage points count as a real move.
+ *
+ * Below this the difference is inside the noise of a thirty-answer sample — at 30
+ * answers one question is 3.3 points — so anything smaller is reported as steady
+ * rather than dressed up as a trend.
+ */
+export const TREND_THRESHOLD_POINTS = 8;
+
+/** Recent accuracy against the track's whole history. */
+export interface AccuracyTrendView {
+  readonly trend: AccuracyTrend;
+  /** Accuracy over the recent window, `null` when the window is too small. */
+  readonly recentPercentage: number | null;
+  readonly windowSize: number;
+  /** Recent minus overall, in points; `null` when there is nothing to compare. */
+  readonly deltaPoints: number | null;
+}
+
+/** Time and dates studied, for one track or for everything. */
+export interface StudyActivityView {
+  readonly answeringSeconds: number;
+  readonly untimedAttempts: number;
+  readonly activeDays: number;
+  readonly activeDaysThisMonth: number;
+  readonly streakDays: number;
+  readonly lastStudiedAt: string | null;
+  readonly recentItems: number;
+}
+
+/** One compact card on the dashboard: enough to decide where to study next. */
+export interface TrackSummaryView {
   readonly track: Certification;
   readonly accuracy: AccuracyView;
   readonly coverage: ObjectiveCoverageView;
-  readonly objectives: readonly ObjectiveAccuracyView[];
-  readonly questionTypes: readonly QuestionTypeAccuracyView[];
-  readonly bank: BankItemCounts;
+  readonly activity: StudyActivityView;
   readonly dueFlashcardCount: number;
+  /** True when this track has no attempt and no card review at all. */
+  readonly unstudied: boolean;
 }
 
-/** The whole progress dashboard. */
+/** The dashboard: one thin summary line and one card per track. */
 export interface ProgressView {
   readonly overall: AccuracyView;
-  readonly tracks: readonly TrackProgressView[];
+  readonly activity: StudyActivityView;
+  readonly tracks: readonly TrackSummaryView[];
+  /** True when no attempt has ever been recorded, so the page can say so. */
+  readonly empty: boolean;
+}
+
+/** Everything the per-track detail page shows. */
+export interface TrackProgressView {
+  readonly track: Certification;
+  readonly accuracy: AccuracyView;
+  readonly trend: AccuracyTrendView;
+  readonly activity: StudyActivityView;
+  readonly coverage: ObjectiveCoverageView;
+  readonly roots: readonly ObjectiveRollupView[];
+  readonly questionTypes: readonly QuestionTypeAccuracyView[];
   readonly confidence: readonly ConfidenceAccuracyView[];
   readonly recentMistakes: readonly RecentMistake[];
   readonly sessions: readonly SessionHistoryEntry[];
-  /** Tracks by identifier, so the history and mistake lists can name them. */
-  readonly trackNames: ReadonlyMap<CertificationId, string>;
-  /** True when no attempt has ever been recorded, so the page can say so. */
-  readonly empty: boolean;
+  readonly bank: BankItemCounts;
+  readonly dueFlashcardCount: number;
 }
 
 export interface ProgressFacadeDependencies {
@@ -135,45 +217,45 @@ export class ProgressFacade {
   constructor(private readonly deps: ProgressFacadeDependencies) {}
 
   /**
-   * The dashboard for every active track.
+   * The dashboard: one summary line and one compact card per active track.
    *
-   * The per-track reads run concurrently but each is still one bounded aggregate,
-   * so the page cost grows with the number of tracks the owner keeps rather than
-   * with the size of the bank.
+   * Deliberately thin. The previous version of this page rendered every objective,
+   * every mistake, the calibration table, and the session history for every track at
+   * once, which answered "how is everything going" by making the owner read
+   * everything. The detail moved to `findTrackProgressBySlug`, and the dashboard now
+   * carries only what is needed to choose a track to open.
+   *
+   * The per-track reads run concurrently and each is still one bounded aggregate, so
+   * the cost grows with the number of tracks the owner keeps rather than with the size
+   * of the bank.
    */
   async findProgress(): Promise<ProgressView> {
     const now = this.deps.clock.now();
-    const [tracks, trackAccuracy, confidence, recentMistakes, sessions] =
-      await Promise.all([
-        this.deps.certifications.listActive(),
-        this.deps.progress.accuracyByTrack(),
-        this.deps.progress.calibration(),
-        this.deps.progress.recentMistakes(RECENT_MISTAKE_LIMIT),
-        this.deps.sessions.listHistory(PROGRESS_SESSION_LIMIT),
-      ]);
+    const [tracks, trackAccuracy, activity] = await Promise.all([
+      this.deps.certifications.listActive(),
+      this.deps.progress.accuracyByTrack(),
+      this.deps.progress.studyActivity(activityCriteria(now)),
+    ]);
 
-    const trackViews = await Promise.all(
-      tracks.map(async (track) => this.findTrackProgress(track, now)),
+    const summaries = await Promise.all(
+      tracks.map(async (track) => this.findTrackSummary(track, now)),
     );
 
     return {
       // Summed across every track that has attempts, including tracks the owner
       // has since archived: the answers were still given.
       overall: toAccuracy(sumTotals(trackAccuracy)),
-      tracks: trackViews,
-      confidence: toConfidenceViews(confidence),
-      recentMistakes,
-      sessions,
-      trackNames: new Map(tracks.map((track) => [track.id, track.name])),
+      activity,
+      tracks: summaries,
       empty: trackAccuracy.every((row) => row.attemptCount === 0),
     };
   }
 
   /**
-   * The dashboard section for one track, addressed by slug.
+   * Everything measured for one track, addressed by slug.
    *
    * Returns `null` for an unknown slug so the route renders a 404 rather than an
-   * empty dashboard that looks like a track with no progress.
+   * empty page that looks like a track with no progress.
    */
   async findTrackProgressBySlug(
     slug: CertificationSlug,
@@ -185,6 +267,33 @@ export class ProgressFacade {
       : this.findTrackProgress(track, this.deps.clock.now());
   }
 
+  /** The compact card for one track. */
+  private async findTrackSummary(
+    track: Certification,
+    now: string,
+  ): Promise<TrackSummaryView> {
+    const [questionTypes, objectives, unseen, activity, dueFlashcardCount] =
+      await Promise.all([
+        this.deps.progress.accuracyByQuestionType(track.id),
+        this.deps.objectives.listByCertification(track.id),
+        this.deps.progress.unseenObjectives(track.id),
+        this.deps.progress.studyActivity(activityCriteria(now), track.id),
+        this.deps.flashcards.countDueCards(track.id, now),
+      ]);
+    const accuracy = toAccuracy(sumTotals(questionTypes));
+
+    return {
+      track,
+      accuracy,
+      coverage: toCoverage(objectives, unseen),
+      activity,
+      dueFlashcardCount,
+      // Nothing recorded at all, rather than nothing answered: a track studied only
+      // through flashcards has been studied.
+      unstudied: activity.lastStudiedAt === null,
+    };
+  }
+
   /** Every measure for one track. */
   private async findTrackProgress(
     track: Certification,
@@ -193,15 +302,27 @@ export class ProgressFacade {
     const [
       objectives,
       objectiveAccuracy,
+      rollup,
       questionTypes,
       unseen,
+      confidence,
+      recentMistakes,
+      sessions,
+      activity,
+      recentAccuracy,
       bank,
       dueFlashcardCount,
     ] = await Promise.all([
       this.deps.objectives.listByCertification(track.id),
       this.deps.progress.accuracyByObjective(track.id),
+      this.deps.progress.objectiveRollup(track.id),
       this.deps.progress.accuracyByQuestionType(track.id),
       this.deps.progress.unseenObjectives(track.id),
+      this.deps.progress.calibration(track.id),
+      this.deps.progress.recentMistakes(RECENT_MISTAKE_LIMIT, track.id),
+      this.deps.sessions.listHistory(PROGRESS_SESSION_LIMIT, track.id),
+      this.deps.progress.studyActivity(activityCriteria(now), track.id),
+      this.deps.progress.recentAccuracy(track.id, TREND_WINDOW),
       this.deps.progress.bankCounts(track.id),
       this.deps.flashcards.countDueCards(track.id, now),
     ]);
@@ -214,43 +335,178 @@ export class ProgressFacade {
       objectiveAccuracy.map((row) => [row.objectiveId, row]),
     );
     const depths = objectiveDepths(objectives);
-
-    const objectiveViews = active.map((objective) => ({
+    const objectiveView = (objective: Objective): ObjectiveAccuracyView => ({
       objective,
       depth: depths.get(objective.id) ?? 0,
       unseen: unseenIds.has(objective.id),
       ...toAccuracy(
         accuracyById.get(objective.id) ?? { attemptCount: 0, correctCount: 0 },
       ),
-    }));
-    const coveredObjectives = active.filter(
-      (objective) => !unseenIds.has(objective.id),
-    ).length;
+    });
+    // Summed from the objective rows would double-count a question mapped to two
+    // objectives, so the track total comes from its own query.
+    const accuracy = toAccuracy(sumTotals(questionTypes));
 
     return {
       track,
-      // Summed from the objective rows would double-count a question mapped to two
-      // objectives, so the track total comes from its own query.
-      accuracy: toAccuracy(sumTotals(questionTypes)),
-      coverage: {
-        totalObjectives: active.length,
-        coveredObjectives,
-        unseenObjectives: active.length - coveredObjectives,
-        percentage:
-          active.length === 0
-            ? null
-            : Math.round((coveredObjectives / active.length) * 100),
-      },
-      objectives: objectiveViews,
+      accuracy,
+      trend: toTrend(accuracy, recentAccuracy),
+      activity,
+      coverage: toCoverage(objectives, unseen),
+      roots: rollup.map((row) => {
+        const objective = active.find(
+          (candidate) => candidate.id === row.objectiveId,
+        );
+
+        return {
+          objective: objective ?? MISSING_OBJECTIVE,
+          questionCount: row.questionCount,
+          attemptedQuestionCount: row.attemptedQuestionCount,
+          attemptedPercentage:
+            row.questionCount === 0
+              ? null
+              : Math.round(
+                  (row.attemptedQuestionCount / row.questionCount) * 100,
+                ),
+          // One level down only. The domain row already carries the whole subtree's
+          // counts, so a full tree here would repeat the same evidence at four
+          // indents; the child rows are the useful next question ("which part of
+          // this domain").
+          children: active
+            .filter(
+              (candidate) => candidate.parentObjectiveId === row.objectiveId,
+            )
+            .map(objectiveView),
+          ...toAccuracy(row),
+        };
+      }),
       questionTypes: questionTypes.map((row) => ({
         questionType: row.questionType,
         ...toAccuracy(row),
       })),
+      confidence: toConfidenceViews(confidence),
+      recentMistakes,
+      sessions,
       bank,
       dueFlashcardCount,
     };
   }
 }
+
+/**
+ * What the activity read needs to know about now.
+ *
+ * The recent window is a fixed number of days ending at the clock's now, so
+ * "items studied" on the dashboard means the same thing on every visit.
+ */
+function activityCriteria(now: string): {
+  readonly today: string;
+  readonly recentSince: string;
+} {
+  const since = new Date(now);
+
+  since.setUTCDate(since.getUTCDate() - RECENT_ACTIVITY_DAYS);
+
+  return { today: now.slice(0, 10), recentSince: since.toISOString() };
+}
+
+/** The trailing window "items studied" counts over. */
+export const RECENT_ACTIVITY_DAYS = 7;
+
+/**
+ * Objective coverage, counted over active objectives only.
+ *
+ * An archived objective is not part of the syllabus being studied, so including it
+ * would make coverage look worse for a reason the owner cannot act on.
+ */
+function toCoverage(
+  objectives: readonly Objective[],
+  unseen: readonly string[],
+): ObjectiveCoverageView {
+  const active = objectives.filter(
+    (objective) => objective.status === "ACTIVE",
+  );
+  const unseenIds = new Set(unseen);
+  const coveredObjectives = active.filter(
+    (objective) => !unseenIds.has(objective.id),
+  ).length;
+
+  return {
+    totalObjectives: active.length,
+    coveredObjectives,
+    unseenObjectives: active.length - coveredObjectives,
+    percentage:
+      active.length === 0
+        ? null
+        : Math.round((coveredObjectives / active.length) * 100),
+  };
+}
+
+/**
+ * Recent accuracy against the track's whole history.
+ *
+ * Compares two counted percentages and names the difference; it does not extrapolate.
+ * Under `TREND_MINIMUM_ATTEMPTS` recent answers the label is `INSUFFICIENT`, because a
+ * handful of answers can swing thirty points on luck alone. The window is also
+ * compared against the full history including itself, which drags the difference
+ * towards zero for a small bank — a conservative bias, and the safer one for a figure
+ * the owner might act on.
+ */
+function toTrend(
+  overall: AccuracyView,
+  recent: { readonly windowSize: number } & AccuracyTotals,
+): AccuracyTrendView {
+  const recentAccuracy = toAccuracy(recent);
+
+  if (
+    recent.windowSize < TREND_MINIMUM_ATTEMPTS ||
+    overall.percentage === null ||
+    recentAccuracy.percentage === null
+  ) {
+    return {
+      trend: "INSUFFICIENT",
+      recentPercentage: recentAccuracy.percentage,
+      windowSize: recent.windowSize,
+      deltaPoints: null,
+    };
+  }
+
+  const deltaPoints = recentAccuracy.percentage - overall.percentage;
+
+  return {
+    trend:
+      deltaPoints >= TREND_THRESHOLD_POINTS
+        ? "IMPROVING"
+        : deltaPoints <= -TREND_THRESHOLD_POINTS
+          ? "DECLINING"
+          : "STEADY",
+    recentPercentage: recentAccuracy.percentage,
+    windowSize: recent.windowSize,
+    deltaPoints,
+  };
+}
+
+/**
+ * Stands in for a root the rollup returned but the objective list did not.
+ *
+ * Only reachable if the two reads disagree, which one archiving between them could
+ * cause. Rendering a named placeholder is better than dropping the row's counts
+ * silently or throwing on a reporting page.
+ */
+const MISSING_OBJECTIVE: Objective = {
+  id: "",
+  certificationId: "",
+  parentObjectiveId: null,
+  code: null,
+  title: "Removed objective",
+  description: null,
+  weight: null,
+  sourceType: "USER_DEFINED",
+  displayOrder: 0,
+  status: "ACTIVE",
+  createdAt: "",
+  updatedAt: "",
+};
 
 /** Adds the percentage the view shows, leaving it `null` with no evidence. */
 function toAccuracy(totals: AccuracyTotals): AccuracyView {

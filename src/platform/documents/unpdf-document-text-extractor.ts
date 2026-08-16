@@ -3,8 +3,8 @@ import type {
   DocumentKind,
   DocumentTextExtraction,
   DocumentTextExtractor,
-} from "@/modules/ai-generation/ports/document-text-extractor";
-import { DocumentUnreadableError } from "@/modules/ai-generation/ports/document-text-extractor";
+} from "./document-text-extractor";
+import { DocumentUnreadableError } from "./document-text-extractor";
 
 /**
  * The one adapter that owns `unpdf`.

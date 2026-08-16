@@ -67,12 +67,25 @@ item. **Out of the box it uses a fake model and costs nothing** — see
   questions answered and how many were right, cards rated, anything left
   unreached, and what was missed with how sure you had been. A flashcards-only
   session reports no accuracy rather than 0%.
-- A progress dashboard at `/progress`: overall and per-track accuracy, objective
-  coverage with unseen objectives named as "not studied yet", accuracy by
-  question type and by objective, confidence calibration, recent mistakes,
-  flashcards due, what each bank holds, and recent sessions with a resume link.
-  Every figure is counted from recorded answers — there is deliberately **no pass
-  probability, readiness score, or predicted grade**.
+- Progress on two screens. `/progress` is a short dashboard: one summary line for
+  everything (time answering, days active this month, items studied in the last
+  seven days, overall accuracy) and then one compact card per track — last
+  studied, study streak, days active, objective coverage, accuracy, and cards due
+  — each linking to that track's own page. A track never studied says "not
+  studied yet" rather than showing zeroes.
+- `/progress/[slug]` is one track in detail: the same headline figures plus a
+  recent-answers trend, then progress **by domain** — each root objective as a
+  row with its rolled-up questions attempted and accuracy, expandable to the
+  objectives beneath it — and, folded away until wanted, accuracy by question
+  type, confidence calibration, recent mistakes, and this track's session history
+  with a resume link. An unknown slug is a 404; an archived track is still
+  readable.
+- Every figure is counted from recorded answers and card reviews — there is
+  deliberately **no pass probability, readiness score, or predicted grade**.
+  "Time answering" is the sum of the per-question timers only, and it says how
+  many answers were never timed rather than filling them in with an average.
+  A streak is consecutive days with any recorded activity, counted as live if the
+  last of them was today or yesterday.
 - A question page now shows its attempt history, each row naming the revision it
   was answered against. A question that has been answered or offered in a session
   can no longer be hard-deleted; retiring it is how it leaves study, and the
@@ -850,7 +863,7 @@ Every page carries the same header, rendered from the root layout:
 | -------- | ------------ | -------------------------------------------- |
 | Tracks   | `/`          | the dashboard and any `/study-tracks/*` page |
 | Study    | `/study/new` | any `/study/*` page                          |
-| Progress | `/progress`  | `/progress`                                  |
+| Progress | `/progress`  | `/progress` and any `/progress/*` page       |
 | Settings | `/settings`  | any `/settings/*` page                       |
 
 The current section is marked with `aria-current="page"` as well as a gold underline, so it
@@ -1073,9 +1086,11 @@ With `npm run seed` followed by `npm run dev`:
   still names the revision you answered
 - Try to delete that answered question: the deletion is refused and "Retire"
   is offered instead
-- Open `http://localhost:3000/progress` — counted accuracy, objective coverage,
-  confidence calibration, recent mistakes, and recent sessions, with no pass
-  probability anywhere
+- Open `http://localhost:3000/progress` — one summary line and one compact card
+  per track, with no pass probability anywhere
+- Click a track's name on that page: its own progress page opens with the domains
+  listed as rows; press a domain to reveal the objectives under it. Recent
+  mistakes, calibration, and session history start folded
 - After a wrong answer, "Mistake review" becomes available on `/study/new`
 - On the AWS demo track, choose "Generate with AI", ask for 3 questions, and wait:
   the run review screen opens naming the model, the persona and version, the

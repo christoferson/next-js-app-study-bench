@@ -97,12 +97,18 @@ describe("ai-generation internal boundaries", () => {
     ]);
   });
 
-  it("keeps the PDF library inside the one adapter that owns it", () => {
+  it("names the PDF library nowhere at all", () => {
     // Same rule as the AWS SDK, for the same reason: `unpdf` is an infrastructure
-    // detail behind `ports/document-text-extractor.ts`, and the facade takes bytes and
-    // a kind so it can be tested with a stub extractor. An application-layer import
-    // would put a PDF parser — and a second text-extraction path — inside the flow the
-    // unit tests exercise.
+    // detail behind `@/platform/documents/document-text-extractor`, and the facade
+    // takes bytes and a kind so it can be tested with a stub extractor. An
+    // application-layer import would put a PDF parser — and a second text-extraction
+    // path — inside the flow the unit tests exercise.
+    //
+    // The adapter itself moved to `platform/documents/` in D8, because the source
+    // library reads the same PDFs and a sources-module import of
+    // `ai-generation/infrastructure` would be the wrong direction
+    // (`sources ← ai-generation`). So this module now names the library in no file at
+    // all, not even one.
     const importers = generationFiles()
       .filter((file) =>
         importSpecifiers(file).some(
@@ -112,10 +118,7 @@ describe("ai-generation internal boundaries", () => {
       )
       .map((file) => file.split(sep).at(-1));
 
-    // Only the adapter, and not even its own test: the extractor test builds a PDF out
-    // of bytes and drives it through the adapter, so nothing else in the module has any
-    // reason to name the library.
-    expect([...importers].sort()).toEqual(["unpdf-document-text-extractor.ts"]);
+    expect([...importers].sort()).toEqual([]);
   });
 
   it("keeps the domain free of framework, database, and environment access", () => {

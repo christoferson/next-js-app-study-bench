@@ -114,7 +114,10 @@ export class SqliteStudySessionRepository implements StudySessionRepository {
    * Correlated subqueries rather than joins: joining items and attempts to the
    * same session row would multiply them together and inflate both counts.
    */
-  async listHistory(limit: number): Promise<SessionHistoryEntry[]> {
+  async listHistory(
+    limit: number,
+    certificationId?: CertificationId,
+  ): Promise<SessionHistoryEntry[]> {
     const rows = this.database
       .prepare(
         `SELECT ${SESSION_COLUMNS.split(",")
@@ -131,10 +134,17 @@ export class SqliteStudySessionRepository implements StudySessionRepository {
                   WHERE a.session_id = s.id AND a.is_correct = 1)
                   AS correct_count
          FROM study_sessions s
+         WHERE (@certificationId IS NULL OR EXISTS (
+                  SELECT 1 FROM session_certifications c
+                  WHERE c.session_id = s.id
+                    AND c.certification_id = @certificationId))
          ORDER BY s.created_at DESC, s.id DESC
          LIMIT @limit`,
       )
-      .all({ limit }) as (StudySessionRow & {
+      .all({
+        limit,
+        certificationId: certificationId ?? null,
+      }) as (StudySessionRow & {
       readonly item_count: number;
       readonly settled_count: number;
       readonly attempt_count: number;

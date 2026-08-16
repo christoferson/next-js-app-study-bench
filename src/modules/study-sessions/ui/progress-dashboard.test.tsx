@@ -1,29 +1,48 @@
 import { describe, expect, it } from "vitest";
-import { render, screen } from "@testing-library/react";
-import {
-  certificationFixture,
-  objectiveFixture,
-} from "@/modules/certifications/infrastructure/test-support";
+import { render, screen, within } from "@testing-library/react";
+import { certificationFixture } from "@/modules/certifications/infrastructure/test-support";
 import type {
   ProgressView,
-  TrackProgressView,
+  StudyActivityView,
+  TrackSummaryView,
 } from "@/modules/study-sessions/application/progress-facade";
-import { sessionFixture } from "@/modules/study-sessions/infrastructure/test-support";
 import { ProgressDashboard } from "./progress-dashboard";
 
 /**
  * The progress dashboard.
  *
- * The tests are about what the page is allowed to claim: counted figures where
- * evidence exists, "not attempted yet" where it does not, and no pass probability
- * anywhere (`SPEC.md` section 6.8).
+ * Two things are being tested: what the page is allowed to claim — counted figures
+ * where evidence exists, "not studied yet" where it does not, and no pass probability
+ * anywhere (`SPEC.md` section 6.8) — and that it stays short. The detail that used to
+ * live here now belongs to `/progress/[slug]`, so several of these tests assert the
+ * *absence* of a section rather than its contents.
  */
 
 const TRACK = certificationFixture();
+const SECOND_TRACK = certificationFixture({
+  id: "certification-2",
+  slug: "second-track",
+  name: "Second Track",
+});
 
-function trackView(
-  overrides: Partial<TrackProgressView> = {},
-): TrackProgressView {
+function activity(
+  overrides: Partial<StudyActivityView> = {},
+): StudyActivityView {
+  return {
+    answeringSeconds: 5_400,
+    untimedAttempts: 0,
+    activeDays: 6,
+    activeDaysThisMonth: 4,
+    streakDays: 3,
+    lastStudiedAt: "2026-03-12T08:00:00.000Z",
+    recentItems: 24,
+    ...overrides,
+  };
+}
+
+function trackSummary(
+  overrides: Partial<TrackSummaryView> = {},
+): TrackSummaryView {
   return {
     track: TRACK,
     accuracy: { attemptCount: 10, correctCount: 7, percentage: 70 },
@@ -33,10 +52,9 @@ function trackView(
       unseenObjectives: 1,
       percentage: 75,
     },
-    objectives: [],
-    questionTypes: [],
-    bank: { activeQuestions: 20, disputedQuestions: 0, activeFlashcards: 5 },
+    activity: activity(),
     dueFlashcardCount: 2,
+    unstudied: false,
     ...overrides,
   };
 }
@@ -44,11 +62,8 @@ function trackView(
 function progressView(overrides: Partial<ProgressView> = {}): ProgressView {
   return {
     overall: { attemptCount: 10, correctCount: 7, percentage: 70 },
-    tracks: [trackView()],
-    confidence: [],
-    recentMistakes: [],
-    sessions: [],
-    trackNames: new Map([[TRACK.id, TRACK.name]]),
+    activity: activity(),
+    tracks: [trackSummary()],
     empty: false,
     ...overrides,
   };
@@ -62,6 +77,14 @@ describe("ProgressDashboard", () => {
           view={progressView({
             empty: true,
             overall: { attemptCount: 0, correctCount: 0, percentage: null },
+            activity: activity({
+              answeringSeconds: 0,
+              activeDays: 0,
+              activeDaysThisMonth: 0,
+              streakDays: 0,
+              lastStudiedAt: null,
+              recentItems: 0,
+            }),
           })}
         />,
       );
@@ -69,31 +92,35 @@ describe("ProgressDashboard", () => {
       expect(
         screen.getByText(/have not answered any questions yet/i),
       ).toBeVisible();
-      expect(screen.queryByText("Questions answered")).toBeNull();
+      expect(screen.queryByText("Time answering")).toBeNull();
       expect(screen.getByText(/no estimates/i)).toBeVisible();
     });
 
-    it("says a track has not been attempted rather than 0% correct", () => {
+    it("says a track has not been studied rather than 0% correct", () => {
       render(
         <ProgressDashboard
           view={progressView({
             empty: true,
             overall: { attemptCount: 0, correctCount: 0, percentage: null },
             tracks: [
-              trackView({
+              trackSummary({
+                unstudied: true,
                 accuracy: {
                   attemptCount: 0,
                   correctCount: 0,
                   percentage: null,
                 },
+                activity: activity({ lastStudiedAt: null, streakDays: 0 }),
               }),
             ],
           })}
         />,
       );
 
-      expect(screen.getByText("Not attempted yet")).toBeVisible();
+      expect(screen.getByText("Not studied yet.")).toBeVisible();
       expect(screen.queryByText(/0% correct/)).toBeNull();
+      // Not a date either: there is no last-studied date to print.
+      expect(screen.queryByText("Last studied")).toBeNull();
     });
 
     it("reports a track with no objectives without inventing a coverage figure", () => {
@@ -101,7 +128,7 @@ describe("ProgressDashboard", () => {
         <ProgressDashboard
           view={progressView({
             tracks: [
-              trackView({
+              trackSummary({
                 coverage: {
                   totalObjectives: 0,
                   coveredObjectives: 0,
@@ -117,389 +144,131 @@ describe("ProgressDashboard", () => {
       expect(screen.getByText("No objectives yet")).toBeVisible();
     });
 
-    it("says no sessions are recorded yet", () => {
-      render(<ProgressDashboard view={progressView({ sessions: [] })} />);
+    it("says so when there are no tracks at all", () => {
+      render(<ProgressDashboard view={progressView({ tracks: [] })} />);
 
-      expect(screen.getByText("No sessions recorded yet.")).toBeVisible();
+      expect(screen.getByText(/no active study tracks yet/i)).toBeVisible();
     });
   });
 
-  describe("with recorded answers", () => {
+  describe("the all-tracks summary", () => {
+    it("labels recorded answering time as time answering, not study time", () => {
+      render(<ProgressDashboard view={progressView()} />);
+
+      expect(screen.getByText("Time answering")).toBeVisible();
+      // 5400 seconds, in hours and minutes.
+      expect(screen.getByText("1 h 30 min")).toBeVisible();
+      expect(screen.queryByText(/total study time/i)).toBeNull();
+    });
+
+    it("says how many answers were untimed rather than filling them in", () => {
+      render(
+        <ProgressDashboard
+          view={progressView({
+            activity: activity({ answeringSeconds: 600, untimedAttempts: 3 }),
+          })}
+        />,
+      );
+
+      expect(screen.getByText("10 min (3 answers untimed)")).toBeVisible();
+    });
+
+    it("reports days active this month and items studied recently", () => {
+      render(<ProgressDashboard view={progressView()} />);
+
+      expect(screen.getByText("Days active this month")).toBeVisible();
+      expect(screen.getByText("4")).toBeVisible();
+      expect(screen.getByText(/items in the last 7 days/i)).toBeVisible();
+      expect(screen.getByText("24")).toBeVisible();
+    });
+
     it("reports overall accuracy from counted answers", () => {
-      render(<ProgressDashboard view={progressView()} />);
-
-      expect(screen.getByText("Questions answered")).toBeVisible();
-      expect(screen.getByText("10")).toBeVisible();
-      expect(
-        screen.getByText(/7 \(70% correct of 10 answered\)/),
-      ).toBeVisible();
-    });
-
-    it("reports objective coverage and what the bank holds", () => {
-      render(<ProgressDashboard view={progressView()} />);
-
-      expect(screen.getByText("3 of 4 (75%)")).toBeVisible();
-      expect(screen.getByText("Cards due")).toBeVisible();
-      expect(screen.getByText("Active questions")).toBeVisible();
-      expect(screen.getByText("20")).toBeVisible();
-      expect(screen.getByText("Active flashcards")).toBeVisible();
-    });
-
-    it("names disputed questions as kept out of study, and only when there are some", () => {
-      render(<ProgressDashboard view={progressView()} />);
-
-      expect(screen.queryByText("Disputed questions")).toBeNull();
-
       render(
         <ProgressDashboard
           view={progressView({
-            tracks: [
-              trackView({
-                bank: {
-                  activeQuestions: 20,
-                  disputedQuestions: 2,
-                  activeFlashcards: 5,
-                },
-              }),
-            ],
+            overall: { attemptCount: 24, correctCount: 18, percentage: 75 },
           })}
         />,
       );
 
-      expect(screen.getByText("Disputed questions")).toBeVisible();
-      expect(
-        screen.getByText(/kept out of study until resolved/i),
-      ).toBeVisible();
+      // A different figure from the track card below it, so the assertion cannot
+      // pass by matching the card instead of the summary.
+      expect(screen.getByText("75% correct of 24 answered")).toBeVisible();
     });
+  });
 
-    it("reports accuracy by question type", () => {
+  describe("the per-track cards", () => {
+    it("links each track to its own progress page", () => {
       render(
         <ProgressDashboard
           view={progressView({
-            tracks: [
-              trackView({
-                questionTypes: [
-                  {
-                    questionType: "SINGLE_CHOICE",
-                    attemptCount: 8,
-                    correctCount: 6,
-                    percentage: 75,
-                  },
-                  {
-                    questionType: "SHORT_ANSWER",
-                    attemptCount: 2,
-                    correctCount: 1,
-                    percentage: 50,
-                  },
-                ],
-              }),
-            ],
+            tracks: [trackSummary(), trackSummary({ track: SECOND_TRACK })],
           })}
         />,
       );
 
-      expect(screen.getByText("Accuracy by question type")).toBeVisible();
-      expect(screen.getByText("Single choice")).toBeVisible();
-      expect(screen.getByText("75% correct of 8 answered")).toBeVisible();
-      expect(screen.getByText("Short answer")).toBeVisible();
-    });
-
-    it("marks an unstudied objective as not studied yet, not as zero", () => {
-      render(
-        <ProgressDashboard
-          view={progressView({
-            tracks: [
-              trackView({
-                objectives: [
-                  {
-                    objective: objectiveFixture({ title: "Studied objective" }),
-                    depth: 0,
-                    unseen: false,
-                    attemptCount: 4,
-                    correctCount: 3,
-                    percentage: 75,
-                  },
-                  {
-                    objective: objectiveFixture({
-                      id: "objective-2",
-                      title: "Untouched objective",
-                    }),
-                    depth: 1,
-                    unseen: true,
-                    attemptCount: 0,
-                    correctCount: 0,
-                    percentage: null,
-                  },
-                ],
-              }),
-            ],
-          })}
-        />,
-      );
-
-      expect(screen.getByText("Untouched objective")).toBeVisible();
-      // Skipping a question must not read as scoring zero on the objective
-      // (`spec/DOMAIN-RULES.md` section 2.5).
-      expect(screen.getByText("Not studied yet")).toBeVisible();
-      expect(screen.getByText("75% correct of 4 answered")).toBeVisible();
-      expect(
-        screen.getByText(/1 objective of this track has no answers yet/i),
-      ).toBeVisible();
-    });
-
-    it("expresses objective depth as a data attribute, not an inline style", () => {
-      render(
-        <ProgressDashboard
-          view={progressView({
-            tracks: [
-              trackView({
-                objectives: [
-                  {
-                    objective: objectiveFixture({ title: "Child objective" }),
-                    depth: 5,
-                    unseen: true,
-                    attemptCount: 0,
-                    correctCount: 0,
-                    percentage: null,
-                  },
-                ],
-              }),
-            ],
-          })}
-        />,
-      );
-
-      const row = screen.getByText("Child objective").closest("li");
-
-      // Capped at three levels, because deeper indentation costs more width than it
-      // explains at 360 pixels (`spec/UI-GUIDELINES.md` section 1.2).
-      expect(row).toHaveAttribute("data-depth", "3");
-      expect(row?.getAttribute("style")).toBeNull();
-    });
-
-    it("reports confidence calibration in words, with what each band means", () => {
-      render(
-        <ProgressDashboard
-          view={progressView({
-            confidence: [
-              {
-                confidence: "GUESS",
-                attemptCount: 3,
-                correctCount: 1,
-                percentage: 33,
-                correctBand: "CORRECT_UNCERTAIN",
-                incorrectBand: "INCORRECT_UNCERTAIN",
-              },
-              {
-                confidence: "CONFIDENT",
-                attemptCount: 7,
-                correctCount: 6,
-                percentage: 86,
-                correctBand: "CORRECT_CONFIDENT",
-                incorrectBand: "INCORRECT_CONFIDENT",
-              },
-            ],
-          })}
-        />,
-      );
-
-      expect(screen.getByText("Confidence calibration")).toBeVisible();
-      expect(screen.getByText("Guessed")).toBeVisible();
-      expect(screen.getByText("Confident")).toBeVisible();
-      expect(screen.getByText("3 answers")).toBeVisible();
-      expect(screen.getByText("86% correct of 7 answered")).toBeVisible();
-      expect(
-        screen.getByText(/confident and wrong is the pattern worth acting on/i),
-      ).toBeVisible();
-    });
-
-    it("counts one answer at a confidence level in the singular", () => {
-      render(
-        <ProgressDashboard
-          view={progressView({
-            confidence: [
-              {
-                confidence: "GUESS",
-                attemptCount: 1,
-                correctCount: 0,
-                percentage: 0,
-                correctBand: "CORRECT_UNCERTAIN",
-                incorrectBand: "INCORRECT_UNCERTAIN",
-              },
-            ],
-          })}
-        />,
-      );
-
-      expect(screen.getByText("1 answer")).toBeVisible();
-    });
-
-    it("lists recent mistakes with their track, date, and confidence", () => {
-      render(
-        <ProgressDashboard
-          view={progressView({
-            recentMistakes: [
-              {
-                attemptId: "attempt-1",
-                questionId: "question-1",
-                certificationId: TRACK.id,
-                stem: "Which service stores objects?",
-                confidence: "CONFIDENT",
-                attemptedAt: "2026-03-01T08:00:00.000Z",
-              },
-            ],
-          })}
-        />,
-      );
-
-      expect(screen.getByText("Recent mistakes")).toBeVisible();
-      expect(screen.getByText("Which service stores objects?")).toBeVisible();
-      expect(
-        screen.getByText(
-          /Demo Cloud Practitioner · 2026-03-01 · you were confident/,
-        ),
-      ).toBeVisible();
-      expect(
-        screen.getByRole("link", { name: /start a mistake-review session/i }),
-      ).toHaveAttribute("href", "/study/new");
-    });
-
-    it("names a mistake from a track that has since gone away", () => {
-      render(
-        <ProgressDashboard
-          view={progressView({
-            trackNames: new Map(),
-            recentMistakes: [
-              {
-                attemptId: "attempt-1",
-                questionId: "question-1",
-                certificationId: "certification-gone",
-                stem: "An orphaned question",
-                confidence: "GUESS",
-                attemptedAt: "2026-03-01T08:00:00.000Z",
-              },
-            ],
-          })}
-        />,
-      );
-
-      // A missing name must not blank the row: the answer was still given.
-      expect(screen.getByText(/Removed track/)).toBeVisible();
-    });
-
-    it("lists recent sessions with their counts and tracks", () => {
-      render(
-        <ProgressDashboard
-          view={progressView({
-            sessions: [
-              {
-                session: sessionFixture({
-                  status: "COMPLETED",
-                  createdAt: "2026-03-01T08:00:00.000Z",
-                }),
-                itemCount: 6,
-                settledCount: 5,
-                attemptCount: 4,
-                correctCount: 3,
-              },
-            ],
-          })}
-        />,
-      );
-
-      expect(screen.getByText("Recent sessions")).toBeVisible();
-      expect(screen.getByText("One study track")).toBeVisible();
-      expect(screen.getByText("2026-03-01")).toBeVisible();
-      expect(
-        screen.getByText(
-          /5 of 6 items · 3 of 4 correct · Demo Cloud Practitioner/,
-        ),
-      ).toBeVisible();
-    });
-
-    it("says a flashcards-only session answered no questions", () => {
-      render(
-        <ProgressDashboard
-          view={progressView({
-            sessions: [
-              {
-                session: sessionFixture({ status: "COMPLETED" }),
-                itemCount: 4,
-                settledCount: 4,
-                attemptCount: 0,
-                correctCount: 0,
-              },
-            ],
-          })}
-        />,
-      );
-
-      expect(screen.getByText(/no questions answered/i)).toBeVisible();
-      expect(screen.queryByText(/0 of 0 correct/)).toBeNull();
-    });
-
-    it("offers to resume a session that is still running", () => {
-      render(
-        <ProgressDashboard
-          view={progressView({
-            sessions: [
-              {
-                session: sessionFixture({ status: "IN_PROGRESS" }),
-                itemCount: 6,
-                settledCount: 2,
-                attemptCount: 2,
-                correctCount: 1,
-              },
-            ],
-          })}
-        />,
-      );
-
-      expect(screen.getByText("In progress")).toBeVisible();
-      expect(screen.getByRole("link", { name: /resume/i })).toHaveAttribute(
+      expect(screen.getByRole("link", { name: TRACK.name })).toHaveAttribute(
         "href",
-        "/study/sessions/session-1",
+        `/progress/${TRACK.slug}`,
       );
+      expect(
+        screen.getByRole("link", { name: SECOND_TRACK.name }),
+      ).toHaveAttribute("href", `/progress/${SECOND_TRACK.slug}`);
     });
 
-    it("offers no resume link for a finished session", () => {
+    it("shows last studied, streak, days active, coverage, accuracy, and cards due", () => {
+      render(<ProgressDashboard view={progressView()} />);
+
+      const card = within(screen.getByRole("listitem"));
+
+      expect(card.getByText("Last studied")).toBeVisible();
+      expect(card.getByText("2026-03-12")).toBeVisible();
+      expect(card.getByText("3 days")).toBeVisible();
+      expect(card.getByText("75%")).toBeVisible();
+      expect(card.getByText("70% correct of 10 answered")).toBeVisible();
+      expect(card.getByText("2 due")).toBeVisible();
+    });
+
+    it("says there is no current streak rather than printing a bare zero", () => {
       render(
         <ProgressDashboard
           view={progressView({
-            sessions: [
-              {
-                session: sessionFixture({ status: "COMPLETED" }),
-                itemCount: 6,
-                settledCount: 6,
-                attemptCount: 6,
-                correctCount: 4,
-              },
-            ],
+            tracks: [trackSummary({ activity: activity({ streakDays: 0 }) })],
           })}
         />,
       );
 
-      expect(screen.queryByRole("link", { name: /resume/i })).toBeNull();
+      expect(screen.getByText("No current streak")).toBeVisible();
     });
 
-    it("links straight into a session for the track being read about", () => {
+    it("offers a session for the track", () => {
       render(<ProgressDashboard view={progressView()} />);
 
       expect(
-        screen.getByRole("link", { name: /study demo cloud practitioner/i }),
+        screen.getByRole("link", { name: `Study ${TRACK.name}` }),
       ).toHaveAttribute("href", `/study/new?track=${TRACK.slug}`);
     });
+  });
 
-    it("shows no pass probability, readiness score, or predicted grade", () => {
+  describe("what the dashboard deliberately leaves out", () => {
+    it("carries no objective detail, mistakes, calibration, or session history", () => {
       render(<ProgressDashboard view={progressView()} />);
 
-      // `SPEC.md` section 6.8 forbids it, and this is the page that would be
-      // tempted to add one.
-      expect(
-        screen.queryByText(
-          /pass probability|readiness|predicted|likely to pass/i,
-        ),
-      ).toBeNull();
+      // All four moved to the per-track page: the owner said this screen was too
+      // busy, and a summary that renders everything is not a summary.
+      expect(screen.queryByText(/accuracy by objective/i)).toBeNull();
+      expect(screen.queryByText(/recent mistakes/i)).toBeNull();
+      expect(screen.queryByText(/confidence calibration/i)).toBeNull();
+      expect(screen.queryByText(/recent sessions/i)).toBeNull();
+    });
+
+    it("never reports a pass probability or a readiness score", () => {
+      render(<ProgressDashboard view={progressView()} />);
+
+      // `SPEC.md` section 6.8 forbids both, and the facade cannot produce them.
+      expect(screen.queryByText(/likely to pass/i)).toBeNull();
+      expect(screen.queryByText(/readiness/i)).toBeNull();
+      expect(screen.queryByText(/predict/i)).toBeNull();
     });
   });
 });

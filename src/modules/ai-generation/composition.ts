@@ -12,7 +12,7 @@ import { GenerationFacade } from "@/modules/ai-generation/application/generation
 import { ObjectiveImportFacade } from "@/modules/ai-generation/application/objective-import-facade";
 import { PersonaFacade } from "@/modules/ai-generation/application/persona-facade";
 import { SqlitePersonaRepository } from "@/modules/ai-generation/infrastructure/sqlite-persona-repository";
-import { UnpdfDocumentTextExtractor } from "@/modules/ai-generation/infrastructure/unpdf-document-text-extractor";
+import { UnpdfDocumentTextExtractor } from "@/platform/documents/unpdf-document-text-extractor";
 import type { LanguageModelGateway } from "@/modules/ai-generation/ports/language-model-gateway";
 import { BedrockLanguageModelGateway } from "@/modules/ai-generation/infrastructure/bedrock-language-model-gateway";
 import {

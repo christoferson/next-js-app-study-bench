@@ -32,6 +32,7 @@ import {
   questionItemFixture,
   sessionFixture,
 } from "@/modules/study-sessions/infrastructure/test-support";
+import type { TrackProgressView } from "./progress-facade";
 import { ProgressFacade } from "./progress-facade";
 import { StudyFacade } from "./study-facade";
 
@@ -117,6 +118,9 @@ describe("ProgressFacade", () => {
     isCorrect: boolean,
     confidence:
       "GUESS" | "UNCERTAIN" | "FAIRLY_SURE" | "CONFIDENT" = "CONFIDENT",
+    options: { readonly durationSeconds?: number | null } = {
+      durationSeconds: 12,
+    },
   ): Promise<void> {
     const found = await questions.findWithCurrentRevision(questionId);
 
@@ -164,9 +168,30 @@ describe("ProgressFacade", () => {
             : { type: "SINGLE_CHOICE", choiceId: "choice-1" },
         isCorrect,
         confidence,
+        // `null` is meaningful here (an attempt the browser did not time), so the
+        // default is on the parameter rather than a coalesce that would erase it.
+        durationSeconds: options.durationSeconds ?? null,
         attemptedAt: clock.now(),
       }),
     );
+  }
+
+  /**
+   * One track's detail view, failing the test rather than returning null.
+   *
+   * Most of these tests are about figures that now live on the per-track page, so a
+   * helper keeps each one to the assertion it is making.
+   */
+  async function trackProgress(
+    slug: string = TRACK.slug,
+  ): Promise<TrackProgressView> {
+    const view = await facade.findTrackProgressBySlug(slug);
+
+    if (view === null) {
+      throw new Error(`No progress for ${slug}.`);
+    }
+
+    return view;
   }
 
   beforeEach(async () => {
@@ -220,9 +245,19 @@ describe("ProgressFacade", () => {
         correctCount: 0,
         percentage: null,
       });
-      expect(view.recentMistakes).toEqual([]);
-      expect(view.sessions).toEqual([]);
-      expect(view.confidence).toEqual([]);
+      // No activity either, rather than a zero-length streak dressed up as one.
+      expect(view.activity).toMatchObject({
+        answeringSeconds: 0,
+        activeDays: 0,
+        streakDays: 0,
+        lastStudiedAt: null,
+      });
+
+      const track = await trackProgress();
+
+      expect(track.recentMistakes).toEqual([]);
+      expect(track.sessions).toEqual([]);
+      expect(track.confidence).toEqual([]);
     });
 
     it("still lists every active track so the owner can see what is unstudied", async () => {
@@ -234,12 +269,14 @@ describe("ProgressFacade", () => {
         TRACK.id,
         SECOND_TRACK.id,
       ]);
-      expect(view.trackNames.get(TRACK.id)).toBe(TRACK.name);
 
       const track = view.tracks[0];
 
       expect(track?.accuracy.percentage).toBeNull();
-      expect(track?.bank.activeQuestions).toBe(1);
+      expect(track?.unstudied).toBe(true);
+      await expect(
+        trackProgress().then((detail) => detail.bank.activeQuestions),
+      ).resolves.toBe(1);
       expect(track?.coverage).toEqual({
         totalObjectives: 1,
         coveredObjectives: 0,
@@ -314,8 +351,7 @@ describe("ProgressFacade", () => {
       await answer("q-single", true);
       await answer("q-multi", false);
 
-      const view = await facade.findProgress();
-      const types = view.tracks[0]?.questionTypes ?? [];
+      const types = (await trackProgress()).questionTypes;
 
       expect(types.map((row) => [row.questionType, row.percentage])).toEqual([
         ["MULTIPLE_RESPONSE", 0],
@@ -338,23 +374,23 @@ describe("ProgressFacade", () => {
       await answer("q-1", true);
       await answer("q-2", false);
 
-      const view = await facade.findProgress();
-      const track = view.tracks[0];
+      const track = await trackProgress();
 
       expect(
-        track?.objectives.map((row) => [
+        track.roots.map((row) => [
           row.objective.id,
           row.attemptCount,
           row.percentage,
-          row.unseen,
+          row.attemptedQuestionCount,
+          row.questionCount,
         ]),
       ).toEqual([
-        ["objective-1", 2, 50, false],
-        // Never attempted, so it is unseen rather than scored zero
+        ["objective-1", 2, 50, 2, 2],
+        // Never attempted, so it reports no percentage rather than a scored zero
         // (`spec/DOMAIN-RULES.md` section 2.5).
-        ["objective-2", 0, null, true],
+        ["objective-2", 0, null, 0, 1],
       ]);
-      expect(track?.coverage).toEqual({
+      expect(track.coverage).toEqual({
         totalObjectives: 2,
         coveredObjectives: 1,
         unseenObjectives: 1,
@@ -377,12 +413,12 @@ describe("ProgressFacade", () => {
       await answer("q-1", true);
 
       const view = await facade.findProgress();
-      const track = view.tracks[0];
+      const track = await trackProgress();
 
-      // One answer counts as evidence about both objectives...
-      expect(track?.objectives.map((row) => row.attemptCount)).toEqual([1, 1]);
+      // One answer counts as evidence about both roots...
+      expect(track.roots.map((row) => row.attemptCount)).toEqual([1, 1]);
       // ...but it is still only one answer.
-      expect(track?.accuracy.attemptCount).toBe(1);
+      expect(track.accuracy.attemptCount).toBe(1);
       expect(view.overall.attemptCount).toBe(1);
     });
 
@@ -396,17 +432,16 @@ describe("ProgressFacade", () => {
         }),
       );
 
-      const view = await facade.findProgress();
-      const track = view.tracks[0];
+      const track = await trackProgress();
 
       // Coverage the owner cannot act on would only make the figure misleading.
-      expect(track?.coverage.totalObjectives).toBe(1);
-      expect(track?.objectives.map((row) => row.objective.id)).toEqual([
+      expect(track.coverage.totalObjectives).toBe(1);
+      expect(track.roots.map((row) => row.objective.id)).toEqual([
         "objective-1",
       ]);
     });
 
-    it("reports the depth of each objective for the indented list", async () => {
+    it("nests a child objective under its root rather than listing it beside it", async () => {
       await objectives.save(
         objectiveFixture({
           id: "objective-child",
@@ -416,14 +451,53 @@ describe("ProgressFacade", () => {
         }),
       );
 
-      const view = await facade.findProgress();
+      const track = await trackProgress();
 
-      expect(
-        view.tracks[0]?.objectives.map((row) => [row.objective.id, row.depth]),
-      ).toEqual([
-        ["objective-1", 0],
-        ["objective-child", 1],
+      // One row per domain, with the tasks inside it behind a disclosure.
+      expect(track.roots.map((row) => row.objective.id)).toEqual([
+        "objective-1",
       ]);
+      expect(
+        track.roots[0]?.children.map((row) => [row.objective.id, row.depth]),
+      ).toEqual([["objective-child", 1]]);
+    });
+
+    it("rolls a child objective's questions up into its root domain", async () => {
+      await objectives.save(
+        objectiveFixture({
+          id: "objective-child",
+          parentObjectiveId: "objective-1",
+          title: "Child objective",
+          displayOrder: 2,
+        }),
+      );
+      await objectives.save(
+        objectiveFixture({
+          id: "objective-grandchild",
+          parentObjectiveId: "objective-child",
+          title: "Grandchild objective",
+          displayOrder: 3,
+        }),
+      );
+      // Mapped only to the deepest task, and to nothing on the domain itself.
+      await createQuestion("q-deep", {
+        objectiveIds: ["objective-grandchild"],
+      });
+      await createQuestion("q-child", { objectiveIds: ["objective-child"] });
+      // Mapped to two tasks of the same domain: one question in that domain, not two.
+      await createQuestion("q-both", {
+        objectiveIds: ["objective-child", "objective-grandchild"],
+      });
+
+      await answer("q-deep", true);
+
+      const root = (await trackProgress()).roots[0];
+
+      expect(root?.objective.id).toBe("objective-1");
+      expect(root?.questionCount).toBe(3);
+      expect(root?.attemptedQuestionCount).toBe(1);
+      expect(root?.attemptedPercentage).toBe(33);
+      expect(root?.percentage).toBe(100);
     });
 
     it("counts evidence against the revision that was answered, not the current one", async () => {
@@ -442,12 +516,12 @@ describe("ProgressFacade", () => {
         LATER,
       );
 
-      const view = await facade.findProgress();
+      const track = await trackProgress();
 
       // The owner answered a single-choice question; the edit does not rewrite that.
-      expect(
-        view.tracks[0]?.questionTypes.map((row) => row.questionType),
-      ).toEqual(["SINGLE_CHOICE"]);
+      expect(track.questionTypes.map((row) => row.questionType)).toEqual([
+        "SINGLE_CHOICE",
+      ]);
     });
   });
 
@@ -461,7 +535,7 @@ describe("ProgressFacade", () => {
       await answer("q-2", true, "CONFIDENT");
       await answer("q-3", true, "GUESS");
 
-      const view = await facade.findProgress();
+      const view = await trackProgress();
 
       // Least to most confident, so the table reads as a calibration curve.
       expect(
@@ -488,7 +562,7 @@ describe("ProgressFacade", () => {
       await createQuestion("q-1");
       await answer("q-1", true, "FAIRLY_SURE");
 
-      const view = await facade.findProgress();
+      const view = await trackProgress();
 
       expect(view.confidence.map((row) => row.confidence)).toEqual([
         "FAIRLY_SURE",
@@ -516,7 +590,7 @@ describe("ProgressFacade", () => {
         LATER,
       );
 
-      const view = await facade.findProgress();
+      const view = await trackProgress();
 
       expect(
         view.recentMistakes.map((mistake) => [
@@ -536,7 +610,7 @@ describe("ProgressFacade", () => {
       await createQuestion("q-1");
       await answer("q-1", true);
 
-      const view = await facade.findProgress();
+      const view = await trackProgress();
 
       expect(view.recentMistakes).toEqual([]);
     });
@@ -547,7 +621,7 @@ describe("ProgressFacade", () => {
         await answer(`q-${index}`, false);
       }
 
-      const view = await facade.findProgress();
+      const view = await trackProgress();
 
       expect(view.recentMistakes).toHaveLength(10);
     });
@@ -570,15 +644,14 @@ describe("ProgressFacade", () => {
         cardRevisionFixture({ content: basicContent() }),
       );
 
-      const view = await facade.findProgress();
-      const track = view.tracks[0];
+      const track = await trackProgress();
 
-      expect(track?.bank).toEqual({
+      expect(track.bank).toEqual({
         activeQuestions: 1,
         disputedQuestions: 1,
         activeFlashcards: 1,
       });
-      expect(track?.dueFlashcardCount).toBe(1);
+      expect(track.dueFlashcardCount).toBe(1);
     });
 
     it("stops counting a card as due once it is scheduled ahead", async () => {
@@ -605,11 +678,11 @@ describe("ProgressFacade", () => {
         rating: "GOOD",
       });
 
-      const progress = await facade.findProgress();
+      const progress = await trackProgress();
 
-      expect(progress.tracks[0]?.dueFlashcardCount).toBe(0);
+      expect(progress.dueFlashcardCount).toBe(0);
       // The card itself is still part of the bank.
-      expect(progress.tracks[0]?.bank.activeFlashcards).toBe(1);
+      expect(progress.bank.activeFlashcards).toBe(1);
     });
   });
 
@@ -648,7 +721,7 @@ describe("ProgressFacade", () => {
         targetMinutes: 10,
       });
 
-      const view = await facade.findProgress();
+      const view = await trackProgress();
 
       expect(view.sessions.map((entry) => entry.session.id)).toEqual([
         second.id,
@@ -660,10 +733,8 @@ describe("ProgressFacade", () => {
         attemptCount: 1,
         correctCount: 1,
       });
-      // The history rows name their tracks through the same map the mistake list
-      // uses, so the page needs no extra query to label them.
+      // The history is already scoped to this track, so the rows need no labelling.
       expect(view.sessions[0]?.session.certificationIds).toEqual([TRACK.id]);
-      expect(view.trackNames.get(TRACK.id)).toBe(TRACK.name);
     });
 
     it("bounds the history", async () => {
@@ -679,23 +750,228 @@ describe("ProgressFacade", () => {
         await study.finishSession(session.id);
       }
 
-      const view = await facade.findProgress();
+      const view = await trackProgress();
 
       expect(view.sessions).toHaveLength(10);
     });
   });
 
+  describe("study activity", () => {
+    it("sums recorded answering time and says how much was untimed", async () => {
+      await createQuestion("q-1");
+      await createQuestion("q-2");
+
+      await answer("q-1", true);
+      // The second answer carries no timing, as a page restored from history does.
+      await answer("q-2", true, "CONFIDENT", { durationSeconds: null });
+
+      const view = await facade.findProgress();
+
+      // 12 seconds from the timed attempt only: the untimed one contributes nothing
+      // rather than an averaged guess, and the count says so.
+      expect(view.activity.answeringSeconds).toBe(12);
+      expect(view.activity.untimedAttempts).toBe(1);
+    });
+
+    it("counts distinct days of activity, not answers", async () => {
+      await createQuestion("q-1");
+      await createQuestion("q-2");
+      await createQuestion("q-3");
+
+      await answer("q-1", true);
+      await answer("q-2", false);
+
+      clock.set("2026-03-04T08:00:00.000Z");
+
+      await answer("q-3", true);
+      clock.set("2026-03-04T20:00:00.000Z");
+
+      const view = await facade.findProgress();
+
+      expect(view.activity.activeDays).toBe(2);
+      expect(view.activity.activeDaysThisMonth).toBe(2);
+    });
+
+    it("takes the last studied date from card reviews as well as answers", async () => {
+      await flashcards.create(
+        flashcardFixture({ lifecycleStatus: "ACTIVE" }),
+        cardRevisionFixture({ content: basicContent() }),
+      );
+
+      clock.set("2026-03-05T09:00:00.000Z");
+
+      const session = await study.startSession({
+        mode: "FLASHCARDS_ONLY",
+        certificationIds: [TRACK.id],
+        targetMinutes: 10,
+      });
+      const itemId = (await study.findSession(session.id))?.current?.item.id;
+
+      if (itemId === undefined) {
+        throw new Error("Expected a card to review.");
+      }
+
+      await study.rateSessionCard({
+        sessionId: session.id,
+        itemId,
+        rating: "GOOD",
+      });
+
+      const view = await facade.findProgress();
+
+      // A day spent only on flashcards was still a day studied.
+      expect(view.activity.lastStudiedAt).toBe("2026-03-05T09:00:00.000Z");
+      expect(view.activity.activeDays).toBe(1);
+      expect(view.tracks[0]?.unstudied).toBe(false);
+    });
+
+    it("counts a streak of consecutive days up to today", async () => {
+      await createQuestion("q-1");
+      await createQuestion("q-2");
+      await createQuestion("q-3");
+
+      clock.set("2026-03-10T08:00:00.000Z");
+      await answer("q-1", true);
+      clock.set("2026-03-11T08:00:00.000Z");
+      await answer("q-2", true);
+      clock.set("2026-03-12T08:00:00.000Z");
+      await answer("q-3", true);
+
+      const view = await facade.findProgress();
+
+      expect(view.activity.streakDays).toBe(3);
+    });
+
+    it("counts a streak that ended yesterday, so the morning does not reset it", async () => {
+      await createQuestion("q-1");
+      await createQuestion("q-2");
+
+      clock.set("2026-03-10T08:00:00.000Z");
+      await answer("q-1", true);
+      clock.set("2026-03-11T08:00:00.000Z");
+      await answer("q-2", true);
+      clock.set("2026-03-12T06:00:00.000Z");
+
+      const view = await facade.findProgress();
+
+      expect(view.activity.streakDays).toBe(2);
+    });
+
+    it("stops the streak at a missed day and ignores what came before it", async () => {
+      await createQuestion("q-1");
+      await createQuestion("q-2");
+      await createQuestion("q-3");
+
+      clock.set("2026-03-01T08:00:00.000Z");
+      await answer("q-1", true);
+      clock.set("2026-03-02T08:00:00.000Z");
+      await answer("q-2", true);
+      // A two-day gap, then today.
+      clock.set("2026-03-05T08:00:00.000Z");
+      await answer("q-3", true);
+
+      const view = await facade.findProgress();
+
+      expect(view.activity.streakDays).toBe(1);
+      expect(view.activity.activeDays).toBe(3);
+    });
+
+    it("reports no streak when the last day studied is older than yesterday", async () => {
+      await createQuestion("q-1");
+
+      await answer("q-1", true);
+      clock.set("2026-03-20T08:00:00.000Z");
+
+      const view = await facade.findProgress();
+
+      expect(view.activity.streakDays).toBe(0);
+      expect(view.activity.lastStudiedAt).toBe(START);
+    });
+
+    it("scopes activity to one track on its own page", async () => {
+      await createQuestion("q-1");
+      await createQuestion("q-other", { certificationId: SECOND_TRACK.id });
+
+      await answer("q-1", true);
+      await answer("q-other", true);
+
+      const view = await trackProgress();
+
+      // One answer belongs to this track, however many the bank holds.
+      expect(view.activity.answeringSeconds).toBe(12);
+      expect(view.activity.recentItems).toBe(1);
+    });
+  });
+
+  describe("recent accuracy trend", () => {
+    /**
+     * Answers `count` questions in order, the ones from `correctFrom` correctly.
+     *
+     * The clock advances a minute per answer so the "most recent" window is ordered
+     * by when the answers were given rather than by identifier, which is what the
+     * repository orders on and what the owner means by recent.
+     */
+    async function answerMany(
+      count: number,
+      correctFrom: number,
+    ): Promise<void> {
+      for (let index = 0; index < count; index += 1) {
+        clock.set(new Date(Date.parse(START) + index * 60_000).toISOString());
+        await createQuestion(`q-trend-${index}`);
+        await answer(`q-trend-${index}`, index >= correctFrom);
+      }
+    }
+
+    it("says there is not enough evidence under the minimum window", async () => {
+      await answerMany(5, 0);
+
+      const view = await trackProgress();
+
+      // Five answers can swing thirty points on luck, so no trend is claimed.
+      expect(view.trend.trend).toBe("INSUFFICIENT");
+      expect(view.trend.windowSize).toBe(5);
+      expect(view.trend.deltaPoints).toBeNull();
+    });
+
+    it("reports improving when the recent window beats the whole history", async () => {
+      // 40 answers: the first 20 wrong, the last 20 right. The trailing 30 are
+      // therefore better than the overall 50%.
+      await answerMany(40, 20);
+
+      const view = await trackProgress();
+
+      expect(view.accuracy.percentage).toBe(50);
+      expect(view.trend.windowSize).toBe(30);
+      expect(view.trend.trend).toBe("IMPROVING");
+      expect(view.trend.deltaPoints).toBeGreaterThan(0);
+    });
+
+    it("reports steady when recent answers match the history", async () => {
+      await answerMany(40, 0);
+
+      const view = await trackProgress();
+
+      expect(view.trend.trend).toBe("STEADY");
+      expect(view.trend.deltaPoints).toBe(0);
+    });
+  });
+
   describe("one track's progress", () => {
-    it("reports the same figures the dashboard shows for that track", async () => {
+    it("agrees with the summary the dashboard card shows for that track", async () => {
       await createQuestion("q-1", { objectiveIds: ["objective-1"] });
       await answer("q-1", true);
 
       const dashboard = await facade.findProgress();
-      const single = await facade.findTrackProgressBySlug(TRACK.slug);
-
-      expect(single).toEqual(
-        dashboard.tracks.find((track) => track.track.id === TRACK.id),
+      const card = dashboard.tracks.find(
+        (track) => track.track.id === TRACK.id,
       );
+      const detail = await trackProgress();
+
+      // Two views, one set of figures: the card is the detail page's headline row.
+      expect(detail.accuracy).toEqual(card?.accuracy);
+      expect(detail.coverage).toEqual(card?.coverage);
+      expect(detail.activity).toEqual(card?.activity);
+      expect(detail.dueFlashcardCount).toBe(card?.dueFlashcardCount);
     });
 
     it("returns nothing for a slug that names no track", async () => {

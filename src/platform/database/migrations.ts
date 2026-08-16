@@ -1430,4 +1430,118 @@ UPDATE flashcard_revisions
 DROP TABLE generation_link_backup_0013;
 `,
   },
+  {
+    id: "0014",
+    description: "source library: sources, snapshots, chunks, objective links",
+    sql: `
+-- The source library (D8, \`SPEC.md\` sections 6.14 and 26). Four new tables and no
+-- rebuild of an existing one: nothing here widens a CHECK or adds a column to a table
+-- another milestone created, so the 0006-style copy-and-rename dance is not needed.
+--
+-- Three ideas, and the split between them is the whole design:
+--
+-- 1. A **source** is what the owner decided to trust: a title, where it came from, and
+--    how authoritative it is. It has no content. Nothing about a source changes when
+--    the web page behind it is edited.
+-- 2. A **snapshot** is content as it was at one moment. It is immutable and it is
+--    append-only: a refresh inserts a second snapshot rather than updating the first
+--    (\`SPEC.md\` section 10.2), which is what makes "this question was written from
+--    text that has since changed" a question the database can answer in slice 2.
+-- 3. A **chunk** is a passage of one snapshot, addressed by character offsets into it.
+--
+-- The extracted text itself is not in this schema. It lives in object storage under
+-- \`data/sources/\`, addressed by object_key, because a document is exactly the "large
+-- content that does not belong in a relational column" that \`SPEC.md\` section 12.1
+-- describes. Chunk text *is* stored here, and that is deliberate rather than
+-- inconsistent: grounded generation selects chunks by objective and joins them to
+-- their source, which is a query, and each chunk is a bounded one or two kilobytes.
+-- Reading a chunk must not mean fetching and re-splitting a whole exam guide.
+CREATE TABLE sources (
+  id TEXT PRIMARY KEY,
+  -- One track per source in this slice. \`SPEC.md\` section 6.14 says
+  -- certificationIds, plural; the join table that would allow it is deferred with the
+  -- rest of multi-track linking, because every screen that exists here is reached
+  -- from one track's page. Widening this to a link table later adds a table and
+  -- leaves these rows readable.
+  certification_id TEXT NOT NULL
+    REFERENCES certifications (id) ON DELETE CASCADE,
+  title TEXT NOT NULL,
+  source_type TEXT NOT NULL
+    CHECK (source_type IN ('PASTED_TEXT', 'MARKDOWN', 'TEXT_PDF', 'WEB_URL')),
+  -- How much weight the owner's own judgement gives this text. Not inferred from the
+  -- type: a PDF can be an official exam guide or a stranger's blog export, and only
+  -- the owner knows which.
+  authority TEXT NOT NULL
+    CHECK (authority IN ('OFFICIAL', 'TRUSTED_THIRD_PARTY', 'USER_AUTHORED',
+      'GENERAL_WEB', 'UNKNOWN')),
+  -- The URL for a web source, the filename for an upload, NULL for a paste. A paste
+  -- has no origin, which is also why a paste cannot be refreshed.
+  original_location TEXT,
+  status TEXT NOT NULL CHECK (status IN ('ACTIVE', 'ARCHIVED')),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  -- Only a WEB_URL source can be re-fetched, and it can only be re-fetched if it
+  -- remembers where from.
+  CHECK (source_type <> 'WEB_URL' OR original_location IS NOT NULL)
+) STRICT;
+
+-- The track's source list, newest first.
+CREATE INDEX sources_track_idx ON sources (certification_id, created_at DESC);
+
+CREATE TABLE source_snapshots (
+  id TEXT PRIMARY KEY,
+  source_id TEXT NOT NULL REFERENCES sources (id) ON DELETE CASCADE,
+  -- sha256 of the normalized text. Two snapshots of one source with the same hash
+  -- would be two records of the same content, so a refresh that finds nothing changed
+  -- records nothing — the unique index below is what enforces that rather than a
+  -- read-then-decide, and it is per source so two sources may legitimately hold
+  -- identical text.
+  content_hash TEXT NOT NULL,
+  -- Where the extracted text is, relative to the storage root. Never a path the
+  -- browser sent.
+  object_key TEXT NOT NULL,
+  byte_size INTEGER NOT NULL CHECK (byte_size > 0),
+  char_count INTEGER NOT NULL CHECK (char_count > 0),
+  retrieved_at TEXT NOT NULL
+) STRICT;
+
+CREATE UNIQUE INDEX source_snapshots_content_idx
+  ON source_snapshots (source_id, content_hash);
+
+-- The snapshot list on a source page, and "the current content of this source",
+-- which is the newest row.
+CREATE INDEX source_snapshots_source_idx
+  ON source_snapshots (source_id, retrieved_at DESC);
+
+CREATE TABLE source_chunks (
+  id TEXT PRIMARY KEY,
+  snapshot_id TEXT NOT NULL
+    REFERENCES source_snapshots (id) ON DELETE CASCADE,
+  -- Position within the snapshot, from 0. The chunker is deterministic, so this is
+  -- reproducible from the snapshot text rather than an arbitrary insertion order.
+  chunk_index INTEGER NOT NULL CHECK (chunk_index >= 0),
+  text TEXT NOT NULL,
+  -- Half-open character offsets into the snapshot text, so a chunk can be located in
+  -- the document it came from and evidence can be shown in context in slice 2.
+  char_start INTEGER NOT NULL CHECK (char_start >= 0),
+  char_end INTEGER NOT NULL CHECK (char_end > char_start),
+  UNIQUE (snapshot_id, chunk_index)
+) STRICT;
+
+-- Which objectives a source is about, decided by the owner (\`SPEC.md\` section 6.15).
+-- On the source rather than the snapshot: the owner's judgement is about the document,
+-- and a refresh must not silently drop the mapping work.
+CREATE TABLE source_objective_links (
+  source_id TEXT NOT NULL REFERENCES sources (id) ON DELETE CASCADE,
+  objective_id TEXT NOT NULL
+    REFERENCES certification_objectives (id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (source_id, objective_id)
+) STRICT;
+
+-- "Which sources cover this objective", which is how slice 2 selects grounding.
+CREATE INDEX source_objective_links_objective_idx
+  ON source_objective_links (objective_id);
+`,
+  },
 ];

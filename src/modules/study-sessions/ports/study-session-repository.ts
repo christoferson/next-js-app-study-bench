@@ -89,8 +89,18 @@ export interface StudySessionRepository {
    * has to choose from.
    */
   findInProgress(): Promise<StudySessionWithItems | null>;
-  /** Sessions most recent first, bounded by `limit`. */
-  listHistory(limit: number): Promise<SessionHistoryEntry[]>;
+  /**
+   * Sessions most recent first, bounded by `limit`.
+   *
+   * `certificationId` narrows to sessions that included that track, which is what a
+   * single track's progress page shows. Filtering here rather than in the caller keeps
+   * the bound meaningful: reading ten sessions and then discarding the ones belonging
+   * to other tracks would show fewer than ten, and sometimes none.
+   */
+  listHistory(
+    limit: number,
+    certificationId?: CertificationId,
+  ): Promise<SessionHistoryEntry[]>;
 
   /**
    * Inserts a session, its track associations, and its composed items.

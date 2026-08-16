@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DocumentUnreadableError } from "@/modules/ai-generation/ports/document-text-extractor";
+import { DocumentUnreadableError } from "./document-text-extractor";
 import { UnpdfDocumentTextExtractor } from "./unpdf-document-text-extractor";
 
 /**

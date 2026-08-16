@@ -69,6 +69,65 @@ export interface BankItemCounts {
   readonly activeFlashcards: number;
 }
 
+/**
+ * How much studying happened, and when, for one track or for everything.
+ *
+ * `answeringSeconds` sums `question_attempts.duration_seconds`, which is nullable:
+ * an attempt recorded from a page restored from history carries no duration. Those
+ * attempts contribute nothing rather than a guessed average, so the figure is a
+ * floor, not an estimate — the view labels it "time answering" and says how many
+ * attempts were untimed rather than calling it total study time.
+ *
+ * `activeDays` counts distinct local-free UTC dates on which anything was recorded,
+ * over attempts and card reviews together: a day spent only on flashcards was still
+ * a day studied.
+ *
+ * `lastStudiedAt` is the later of the newest attempt and the newest review, or
+ * `null` when neither exists.
+ */
+export interface StudyActivity {
+  readonly answeringSeconds: number;
+  /** Attempts with no recorded duration, so the sum can be labelled honestly. */
+  readonly untimedAttempts: number;
+  readonly activeDays: number;
+  /** Distinct active dates this calendar month, for the dashboard summary. */
+  readonly activeDaysThisMonth: number;
+  /** Consecutive active days ending today or yesterday; 0 when neither. */
+  readonly streakDays: number;
+  readonly lastStudiedAt: IsoTimestamp | null;
+  /** Attempts plus card reviews inside the trailing window the caller asked for. */
+  readonly recentItems: number;
+}
+
+/** What the activity read needs to know about "now". */
+export interface StudyActivityCriteria {
+  /** Today's UTC date, `YYYY-MM-DD`, against which the streak is measured. */
+  readonly today: string;
+  /** Start of the trailing window for `recentItems`, as an ISO timestamp. */
+  readonly recentSince: IsoTimestamp;
+}
+
+/**
+ * Accuracy over the most recent attempts, for the trend line.
+ *
+ * Bounded by count rather than by date: "the last 30 answers" is a comparable
+ * sample whether they were given in one evening or over a month, whereas "the last
+ * 30 days" is empty for an owner who studied heavily and then stopped.
+ */
+export interface RecentAccuracy extends AccuracyTotals {
+  /** How many attempts the window actually held, which may be under the limit. */
+  readonly windowSize: number;
+}
+
+/** One root objective's rolled-up coverage and accuracy. */
+export interface ObjectiveRollupRow extends AccuracyTotals {
+  readonly objectiveId: ObjectiveId;
+  /** Active questions mapped to this objective or any descendant of it. */
+  readonly questionCount: number;
+  /** Of those, how many have at least one recorded attempt. */
+  readonly attemptedQuestionCount: number;
+}
+
 export interface ProgressRepository {
   /** Accuracy per track, over every recorded attempt. */
   accuracyByTrack(): Promise<TrackAccuracy[]>;
@@ -84,10 +143,41 @@ export interface ProgressRepository {
   accuracyByQuestionType(
     certificationId: CertificationId,
   ): Promise<QuestionTypeAccuracy[]>;
+  /**
+   * Active questions and attempted questions rolled up to each root objective.
+   *
+   * One row per root (an objective with no parent) of the track, including roots
+   * with nothing under them. A question counts towards a root when it is mapped to
+   * that root or to any objective beneath it, and it counts once per root however
+   * many of the root's descendants it is mapped to — otherwise a question mapped to
+   * two sibling tasks would look like two questions in the domain.
+   */
+  objectiveRollup(
+    certificationId: CertificationId,
+  ): Promise<ObjectiveRollupRow[]>;
   /** One row per confidence level that has been used at least once. */
-  calibration(): Promise<CalibrationTotals[]>;
+  calibration(certificationId?: CertificationId): Promise<CalibrationTotals[]>;
   /** Recent incorrect answers, most recent first, bounded. */
-  recentMistakes(limit: number): Promise<RecentMistake[]>;
+  recentMistakes(
+    limit: number,
+    certificationId?: CertificationId,
+  ): Promise<RecentMistake[]>;
+  /**
+   * Timing, active days, streak, and last activity, for one track or for all.
+   *
+   * Scoped by the question's own track for attempts and by the card's track for
+   * reviews, rather than by the session's tracks: a mixed session's answers belong
+   * to the track each question came from.
+   */
+  studyActivity(
+    criteria: StudyActivityCriteria,
+    certificationId?: CertificationId,
+  ): Promise<StudyActivity>;
+  /** Accuracy over the most recent `limit` attempts of one track. */
+  recentAccuracy(
+    certificationId: CertificationId,
+    limit: number,
+  ): Promise<RecentAccuracy>;
   /**
    * Objectives of one track with no recorded attempt.
    *

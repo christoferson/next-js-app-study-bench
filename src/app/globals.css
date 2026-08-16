@@ -1402,27 +1402,85 @@ a:hover {
   gap: var(--space-5);
 }
 
-/* A whole answer row is the target, not just the tick, and it stays above the
-   2.75rem minimum with two lines of text inside it. */
+/* An answer choice, a confidence level, a session mode, a study track: one row, one
+   control, and the whole row is the target rather than just the tick.
+
+   No border and no fill at rest. These rows already sit inside a `.choice-set` panel,
+   so a framed box per row made a panel of boxes — the same nesting the feedback list
+   was flattened to avoid. A row needs a hit area and a state, not a frame, so the
+   state is drawn only when it means something: a tint under the pointer or the
+   keyboard, and a stronger one when the row is the chosen one.
+
+   `min-height` tops a single-line row up to the 2.75rem target from
+   `spec/UI-GUIDELINES.md`, and the negative `margin-inline` cancels the row's own
+   padding against the panel's, so the tint reaches out towards the panel edge while the
+   control still starts on the same left edge as the hint text above it.
+
+   `grid-column` because the row is a `.choice-row` grid: without it the label is
+   sized to its own text in the first column and the tint would stop mid-row. */
 .study-choice {
   display: flex;
+  grid-column: 1 / -1;
   align-items: flex-start;
-  gap: var(--space-3);
+  column-gap: var(--space-2);
   min-height: 2.75rem;
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--color-border);
+  margin-inline: calc(var(--space-2) * -1);
+  padding: var(--space-2);
   border-radius: var(--radius-sm);
-  background-color: var(--color-surface);
   font-size: 1rem;
   font-weight: 400;
   color: var(--color-text);
   cursor: pointer;
 }
 
+/* The control sits on the optical centre of the row's *first* line. `align-items:
+   flex-start` on the row is what keeps it on the first line rather than drifting to the
+   middle of a wrapped choice, but flush against the top a 1.25rem control inside a
+   1.55rem line box (body line-height 1.55 at this row's 1rem) reads as high, so half the
+   difference puts it back down. Both terms are in rem on purpose: `em` would resolve
+   against the input's own font-size, which is the UA's rather than this row's, and rem
+   keeps the offset right as the owner's text-size setting moves the root.
+
+   The UA's own margins are replaced so the spacing in the row is only what is written
+   here: `column-gap` for the row's own items, plus this one extra step, which makes the
+   control-to-text distance 0.75rem while leaving the answer choice's letter-to-text gap
+   at the 0.5rem the static preview uses. */
+.study-choice input[type="checkbox"],
+.study-choice input[type="radio"] {
+  flex: none;
+  margin: calc((1.55rem - 1.25rem) / 2) var(--space-1) 0 0;
+}
+
+/* Under the pointer or the keyboard. Neutral rather than gold: gold belongs to the
+   chosen row below, and two warm tints one shade apart would distinguish nothing. */
+.study-choice:hover:not(.study-choice-unavailable),
+.study-choice:focus-within {
+  background-color: var(--color-badge-bg);
+}
+
+/* The chosen row, in three signals, because a tint on its own is a colour-only state:
+   the control's own dot or tick, the weight of the text, and a satin bar down the left
+   edge. The bar is an inset shadow rather than a border so nothing reflows as the
+   selection moves, and both golds stay fills — never text (see the palette note at the
+   top of this file). */
+.study-choice:has(:checked) {
+  background-color: rgba(240, 203, 70, 0.16);
+  box-shadow: inset 3px 0 0 var(--color-satin);
+  font-weight: 600;
+}
+
+/* Every span directly inside a row, whatever it is: a track name, a two-line
+   confidence, or the letter and text of an answer choice. It sets only `min-width`, so
+   a long one wraps at 360px instead of pushing the row wide.
+
+   Nothing else, deliberately. This used to be the stacking wrapper — `display: flex;
+   flex-direction: column` — which is now wrong twice over: an answer choice has no
+   wrapper (its letter and its text are flex items of the label itself, and are matched
+   by this same selector), so a `flex` value here would beat `.choice-letter { flex:
+   none }` and a column direction would stand the letter on top of its own choice. The
+   two-line rows stack by making their own lines blocks instead. */
 .study-choice > span {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
+  min-width: 0;
 }
 
 /* An unavailable mode is dimmed and says why next to it; the reason carries the
@@ -1432,12 +1490,22 @@ a:hover {
   cursor: not-allowed;
 }
 
+/* A two-line row — "Fairly sure" over what it means, a session mode over its hint —
+   stacks by making each line a block rather than by the wrapper being a flex column.
+   The wrapper is shared with the answer choices, where a column would break them (see
+   `.study-choice > span`), and a block is the plain way to say "own line" anyway. */
 .confidence-word {
+  display: block;
   font-weight: 600;
 }
 
+/* The hint keeps its own weight when the row is chosen: `.study-choice:has(:checked)`
+   bolds the row to mark the selection, and letting that reach a 0.8125rem muted line
+   would make the explanation compete with the word it explains. */
 .confidence-hint {
+  display: block;
   font-size: 0.8125rem;
+  font-weight: 400;
   color: var(--color-text-muted);
 }
 
@@ -1507,18 +1575,94 @@ a:hover {
 
 /* Progress */
 
-/* Objective rows are indented by nesting depth, capped so a deep tree still fits a
-   360-pixel width. */
-.objective-progress-list .card[data-depth="1"] {
+/* One domain (a root objective) inside a track's progress card. The card supplies the
+   panel, so the disclosure itself is flush: no border, no fill, no padding of its own. */
+.domain-row {
+  border: 0;
+  background: none;
+}
+
+.domain-row > summary {
+  padding: 0;
+  min-height: 2.75rem;
+}
+
+.domain-row[open] > summary {
+  margin-bottom: var(--space-3);
+  border-bottom: 0;
+}
+
+.domain-row > .collapsible-body {
+  padding: 0;
+  gap: var(--space-3);
+}
+
+/* The code and the title on one line, wrapping as a pair rather than the count being
+   dragged onto its own row at 360px. */
+.domain-row-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-1) var(--space-2);
+  min-width: 0;
+}
+
+.domain-row-label {
+  flex: none;
+  font-weight: 700;
+}
+
+.domain-row-name {
+  color: var(--color-text-muted);
+  font-weight: 400;
+}
+
+/* The attempted share of a domain's questions. The bar is a second reading of the
+   sentence under it, never the only one: the figure is printed as text as well, so the
+   row survives a browser that styles `<progress>` differently. */
+.domain-bar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.domain-bar progress {
+  width: 100%;
+  height: 0.5rem;
+  appearance: none;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background-color: var(--color-surface);
+}
+
+/* Both vendor tracks are needed: WebKit and Firefox expose the fill through different
+   pseudo-elements, and Gold on Surface is a fill under no words, which is the only place
+   the palette allows it. */
+.domain-bar progress::-webkit-progress-bar {
+  background-color: var(--color-surface);
+  border-radius: var(--radius-sm);
+}
+
+.domain-bar progress::-webkit-progress-value {
+  background-color: var(--color-gold);
+  border-radius: var(--radius-sm);
+}
+
+.domain-bar progress::-moz-progress-bar {
+  background-color: var(--color-gold);
+  border-radius: var(--radius-sm);
+}
+
+/* Child objectives sit inside an open domain, indented once and quieter than it: they
+   are the detail behind the row that was opened, not rows of the same rank. */
+.objective-child-list {
+  gap: var(--space-2);
   margin-inline-start: var(--space-3);
 }
 
-.objective-progress-list .card[data-depth="2"] {
-  margin-inline-start: var(--space-5);
-}
-
-.objective-progress-list .card[data-depth="3"] {
-  margin-inline-start: var(--space-6);
+.objective-child-list .card {
+  padding: var(--space-3);
+  background-color: var(--color-surface);
 }
 
 /* Audio */

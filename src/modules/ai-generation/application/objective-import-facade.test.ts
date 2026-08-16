@@ -26,8 +26,8 @@ import type {
   DocumentKind,
   DocumentTextExtraction,
   DocumentTextExtractor,
-} from "@/modules/ai-generation/ports/document-text-extractor";
-import { DocumentUnreadableError } from "@/modules/ai-generation/ports/document-text-extractor";
+} from "@/platform/documents/document-text-extractor";
+import { DocumentUnreadableError } from "@/platform/documents/document-text-extractor";
 import { ObjectiveImportFacade } from "./objective-import-facade";
 import type { UploadedDocument } from "./objective-import-facade";
 import { MAX_SYLLABUS_CHARACTERS } from "./schemas";

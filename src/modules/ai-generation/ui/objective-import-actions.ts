@@ -14,7 +14,7 @@ import {
 } from "@/modules/ai-generation/application/schemas";
 import type { UploadedDocument } from "@/modules/ai-generation/application/objective-import-facade";
 import { SyllabusUnreadableError } from "@/modules/ai-generation/domain/errors";
-import type { DocumentKind } from "@/modules/ai-generation/ports/document-text-extractor";
+import type { DocumentKind } from "@/platform/documents/document-text-extractor";
 
 /**
  * Server Actions for the objective import.

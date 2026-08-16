@@ -1,16 +1,11 @@
 import Link from "next/link";
-import { describeQuestionType } from "@/modules/question-bank/domain/question";
 import type {
   AccuracyView,
   ProgressView,
-  TrackProgressView,
+  StudyActivityView,
+  TrackSummaryView,
 } from "@/modules/study-sessions/application/progress-facade";
-import {
-  describeCalibrationBand,
-  describeCalibrationMeaning,
-  describeConfidence,
-} from "@/modules/study-sessions/domain/question-attempt";
-import { describeSessionMode } from "@/modules/study-sessions/domain/study-session";
+import { RECENT_ACTIVITY_DAYS } from "@/modules/study-sessions/application/progress-facade";
 
 interface ProgressDashboardProps {
   readonly view: ProgressView;
@@ -19,21 +14,23 @@ interface ProgressDashboardProps {
 /**
  * The progress dashboard (`SPEC.md` section 6.8).
  *
- * Every figure is counted evidence: accuracy where answers exist, coverage of the
- * syllabus, which objectives have never been touched, recent mistakes, cards due, what
- * the bank holds, and how well the owner's confidence matched their results. There is
- * deliberately no pass probability and no readiness score — the facade cannot produce
- * one and this page does not imply one.
+ * One thin line about everything, then one compact card per track. Nothing more: the
+ * earlier version of this page rendered every objective, every recent mistake, the
+ * calibration table, and the session history for every track on one screen, which
+ * answered "how am I doing" by requiring the owner to read the whole bank. The detail
+ * lives on `/progress/[slug]` now, and each card links to it.
  *
- * Where there is no evidence the page says so instead of printing a zero. "Not
- * attempted yet" and "0% correct" are different statements, and only one of them is
+ * Every figure is counted evidence — accuracy where answers exist, dates where
+ * activity exists — and there is deliberately no pass probability or readiness score
+ * (`SPEC.md` section 6.8). Where there is no evidence the card says "not studied yet"
+ * rather than printing a zero: those are different statements, and only one of them is
  * true of unstudied material (`spec/UI-GUIDELINES.md` section 1.4).
  */
 export function ProgressDashboard({ view }: ProgressDashboardProps) {
   return (
     <>
       <section className="section">
-        <h2 className="section-heading">Overall</h2>
+        <h2 className="section-heading">Everything so far</h2>
         {view.empty ? (
           <p className="empty-state">
             You have not answered any questions yet. Start a session and this
@@ -42,120 +39,36 @@ export function ProgressDashboard({ view }: ProgressDashboardProps) {
         ) : (
           <dl className="meta">
             <div className="meta-item">
-              <dt>Questions answered</dt>
-              <dd>{view.overall.attemptCount}</dd>
+              <dt>Time answering</dt>
+              <dd>{describeAnsweringTime(view.activity)}</dd>
+            </div>
+            <div className="meta-item">
+              <dt>Days active this month</dt>
+              <dd>{view.activity.activeDaysThisMonth}</dd>
+            </div>
+            <div className="meta-item">
+              <dt>Items in the last {RECENT_ACTIVITY_DAYS} days</dt>
+              <dd>{view.activity.recentItems}</dd>
             </div>
             <div className="meta-item">
               <dt>Answered correctly</dt>
-              <dd>
-                {view.overall.correctCount} ({describeAccuracy(view.overall)})
-              </dd>
+              <dd>{describeAccuracy(view.overall)}</dd>
             </div>
           </dl>
         )}
       </section>
 
-      {view.tracks.map((track) => (
-        <TrackSection key={track.track.id} track={track} />
-      ))}
-
-      {view.confidence.length > 0 ? (
-        <section className="section">
-          <h2 className="section-heading">Confidence calibration</h2>
-          <p className="section-note">
-            How often each confidence level turned out to be right. Confident
-            and wrong is the pattern worth acting on, and those questions are
-            prioritised in your next session.
-          </p>
-          <ul className="card-list">
-            {view.confidence.map((row) => (
-              <li className="card" key={row.confidence}>
-                <div className="card-heading">
-                  <h3 className="card-title">
-                    {describeConfidence(row.confidence)}
-                  </h3>
-                  <span className="badge">
-                    {row.attemptCount} answer
-                    {row.attemptCount === 1 ? "" : "s"}
-                  </span>
-                </div>
-                <p className="card-text">{describeAccuracy(row)}</p>
-                <p className="question-row-meta">
-                  {describeCalibrationBand(row.correctBand)}:{" "}
-                  {describeCalibrationMeaning(row.correctBand)} ·{" "}
-                  {describeCalibrationBand(row.incorrectBand)}:{" "}
-                  {describeCalibrationMeaning(row.incorrectBand)}
-                </p>
-              </li>
-            ))}
-          </ul>
-        </section>
-      ) : null}
-
-      {view.recentMistakes.length > 0 ? (
-        <section className="section">
-          <h2 className="section-heading">Recent mistakes</h2>
-          <ul className="card-list">
-            {view.recentMistakes.map((mistake) => (
-              <li className="card" key={mistake.attemptId}>
-                <p className="card-text">{mistake.stem}</p>
-                <p className="question-row-meta">
-                  {view.trackNames.get(mistake.certificationId) ??
-                    "Removed track"}{" "}
-                  · {mistake.attemptedAt.slice(0, 10)} · you were{" "}
-                  {describeConfidence(mistake.confidence).toLowerCase()}
-                </p>
-              </li>
-            ))}
-          </ul>
-          <div className="section-actions">
-            <Link className="button-quiet" href="/study/new">
-              Start a mistake-review session
-            </Link>
-          </div>
-        </section>
-      ) : null}
-
       <section className="section">
-        <h2 className="section-heading">Recent sessions</h2>
-        {view.sessions.length === 0 ? (
-          <p className="empty-state">No sessions recorded yet.</p>
+        <h2 className="section-heading">Your tracks</h2>
+        {view.tracks.length === 0 ? (
+          <p className="empty-state">
+            You have no active study tracks yet. Add one and it will appear
+            here.
+          </p>
         ) : (
           <ul className="card-list">
-            {view.sessions.map((entry) => (
-              <li className="card" key={entry.session.id}>
-                <div className="card-heading">
-                  <h3 className="card-title">
-                    {describeSessionMode(entry.session.mode)}
-                  </h3>
-                  <span className="badge">
-                    {entry.session.createdAt.slice(0, 10)}
-                  </span>
-                  {entry.session.status === "IN_PROGRESS" ? (
-                    <span className="badge badge-alert">In progress</span>
-                  ) : null}
-                </div>
-                <p className="question-row-meta">
-                  {entry.settledCount} of {entry.itemCount} items ·{" "}
-                  {entry.attemptCount === 0
-                    ? "no questions answered"
-                    : `${entry.correctCount} of ${entry.attemptCount} correct`}{" "}
-                  ·{" "}
-                  {entry.session.certificationIds
-                    .map((id) => view.trackNames.get(id) ?? "Removed track")
-                    .join(", ")}
-                </p>
-                {entry.session.status === "IN_PROGRESS" ? (
-                  <div className="section-actions">
-                    <Link
-                      className="button-quiet"
-                      href={`/study/sessions/${entry.session.id}`}
-                    >
-                      Resume
-                    </Link>
-                  </div>
-                ) : null}
-              </li>
+            {view.tracks.map((summary) => (
+              <TrackSummaryCard key={summary.track.id} summary={summary} />
             ))}
           </ul>
         )}
@@ -164,113 +77,68 @@ export function ProgressDashboard({ view }: ProgressDashboardProps) {
   );
 }
 
-/** Everything measured for one track. */
-export function TrackSection({ track }: { readonly track: TrackProgressView }) {
-  const unseen = track.objectives.filter((row) => row.unseen);
-
+/**
+ * One track, compact enough to compare against the others at a glance.
+ *
+ * The name is the link to the detail page rather than a separate "view progress"
+ * button: the card is about one track, so the heading is the way into it.
+ */
+function TrackSummaryCard({ summary }: { readonly summary: TrackSummaryView }) {
   return (
-    <section className="section">
-      <h2 className="section-heading">{track.track.name}</h2>
+    <li className="card">
+      <div className="card-heading">
+        <h3 className="card-title">
+          <Link href={`/progress/${summary.track.slug}`}>
+            {summary.track.name}
+          </Link>
+        </h3>
+        {summary.dueFlashcardCount > 0 ? (
+          <span className="badge badge-highlight">
+            {summary.dueFlashcardCount} due
+          </span>
+        ) : null}
+      </div>
 
-      <dl className="meta">
-        <div className="meta-item">
-          <dt>Accuracy</dt>
-          <dd>{describeAccuracy(track.accuracy)}</dd>
-        </div>
-        <div className="meta-item">
-          <dt>Objective coverage</dt>
-          <dd>
-            {track.coverage.percentage === null
-              ? "No objectives yet"
-              : `${track.coverage.coveredObjectives} of ${track.coverage.totalObjectives} (${track.coverage.percentage}%)`}
-          </dd>
-        </div>
-        <div className="meta-item">
-          <dt>Cards due</dt>
-          <dd>{track.dueFlashcardCount}</dd>
-        </div>
-        <div className="meta-item">
-          <dt>Active questions</dt>
-          <dd>{track.bank.activeQuestions}</dd>
-        </div>
-        <div className="meta-item">
-          <dt>Active flashcards</dt>
-          <dd>{track.bank.activeFlashcards}</dd>
-        </div>
-        {track.bank.disputedQuestions > 0 ? (
+      {summary.unstudied ? (
+        <p className="card-text">Not studied yet.</p>
+      ) : (
+        <dl className="meta">
           <div className="meta-item">
-            <dt>Disputed questions</dt>
+            <dt>Last studied</dt>
+            <dd>{summary.activity.lastStudiedAt?.slice(0, 10) ?? "Never"}</dd>
+          </div>
+          <div className="meta-item">
+            <dt>Streak</dt>
+            <dd>{describeStreak(summary.activity.streakDays)}</dd>
+          </div>
+          <div className="meta-item">
+            <dt>Days active</dt>
+            <dd>{summary.activity.activeDays}</dd>
+          </div>
+          <div className="meta-item">
+            <dt>Objective coverage</dt>
             <dd>
-              {track.bank.disputedQuestions} (kept out of study until resolved)
+              {summary.coverage.percentage === null
+                ? "No objectives yet"
+                : `${summary.coverage.percentage}%`}
             </dd>
           </div>
-        ) : null}
-      </dl>
-
-      {track.questionTypes.length > 0 ? (
-        <section className="section">
-          <h3 className="section-heading">Accuracy by question type</h3>
-          <ul className="card-list">
-            {track.questionTypes.map((row) => (
-              <li className="card" key={row.questionType}>
-                <div className="card-heading">
-                  <h4 className="card-title">
-                    {describeQuestionType(row.questionType)}
-                  </h4>
-                  <span className="badge">{describeAccuracy(row)}</span>
-                </div>
-              </li>
-            ))}
-          </ul>
-        </section>
-      ) : null}
-
-      {track.objectives.length > 0 ? (
-        <section className="section">
-          <h3 className="section-heading">Accuracy by objective</h3>
-          <ul className="card-list objective-progress-list">
-            {track.objectives.map((row) => (
-              <li
-                className="card"
-                key={row.objective.id}
-                // Indentation by depth is expressed as a data attribute rather than
-                // an inline style, so the spacing scale stays in the stylesheet. It
-                // is capped at the third level, past which further indentation would
-                // cost more width than it explains at 360 pixels.
-                data-depth={Math.min(row.depth, 3)}
-              >
-                <div className="card-heading">
-                  <h4 className="card-title">{row.objective.title}</h4>
-                  {row.unseen ? (
-                    <span className="badge">Not studied yet</span>
-                  ) : (
-                    <span className="badge">{describeAccuracy(row)}</span>
-                  )}
-                </div>
-              </li>
-            ))}
-          </ul>
-        </section>
-      ) : null}
-
-      {unseen.length > 0 ? (
-        <p className="section-note">
-          {unseen.length} objective{unseen.length === 1 ? "" : "s"} of this
-          track
-          {unseen.length === 1 ? " has" : " have"} no answers yet. A session
-          prioritises these before revisiting what you already know.
-        </p>
-      ) : null}
+          <div className="meta-item">
+            <dt>Accuracy</dt>
+            <dd>{describeAccuracy(summary.accuracy)}</dd>
+          </div>
+        </dl>
+      )}
 
       <div className="section-actions">
         <Link
           className="button-quiet"
-          href={`/study/new?track=${track.track.slug}`}
+          href={`/study/new?track=${summary.track.slug}`}
         >
-          Study {track.track.name}
+          Study {summary.track.name}
         </Link>
       </div>
-    </section>
+    </li>
   );
 }
 
@@ -280,8 +148,51 @@ export function TrackSection({ track }: { readonly track: TrackProgressView }) {
  * Says "not attempted yet" rather than "0% correct" when there is no evidence, so the
  * page never reports a measurement it does not have.
  */
-function describeAccuracy(accuracy: AccuracyView): string {
+export function describeAccuracy(accuracy: AccuracyView): string {
   return accuracy.percentage === null
     ? "Not attempted yet"
     : `${accuracy.percentage}% correct of ${accuracy.attemptCount} answered`;
+}
+
+/**
+ * A streak in words, including the honest zero.
+ *
+ * Zero is a real answer here — there is no live streak — unlike an accuracy of zero,
+ * which would be a measurement standing in for no measurement.
+ */
+export function describeStreak(days: number): string {
+  return days === 0
+    ? "No current streak"
+    : `${days} day${days === 1 ? "" : "s"}`;
+}
+
+/**
+ * Recorded answering time, labelled for what it is.
+ *
+ * "Time answering", not "study time": the sum is over the per-question timers the
+ * answer form reports, so it excludes reading explanations, reviewing cards, and any
+ * attempt whose page was restored from history and carried no timing. The count of
+ * untimed answers is shown beside it rather than filled in with an average, so the
+ * figure stays a floor the owner can trust instead of an estimate
+ * (`spec/UI-GUIDELINES.md` section 1.4).
+ */
+export function describeAnsweringTime(activity: StudyActivityView): string {
+  const measured = describeDuration(activity.answeringSeconds);
+
+  return activity.untimedAttempts === 0
+    ? measured
+    : `${measured} (${activity.untimedAttempts} answer${
+        activity.untimedAttempts === 1 ? "" : "s"
+      } untimed)`;
+}
+
+/** Whole minutes, or hours and minutes once there are enough of them. */
+export function describeDuration(seconds: number): string {
+  const minutes = Math.floor(seconds / 60);
+
+  if (minutes < 60) {
+    return `${minutes} min`;
+  }
+
+  return `${Math.floor(minutes / 60)} h ${minutes % 60} min`;
 }

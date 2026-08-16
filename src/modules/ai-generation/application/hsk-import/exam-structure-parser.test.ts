@@ -4,7 +4,7 @@ import {
   HskExamStructureParseError,
   parseHskExamStructure,
   toStructureLines,
-} from "./hsk-exam-structure-parser";
+} from "./exam-structure-parser";
 
 /**
  * Every fixture in this file is invented.

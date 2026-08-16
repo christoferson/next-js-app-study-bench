@@ -9,6 +9,7 @@ import {
 import { applyObjectiveImportAction } from "@/modules/ai-generation/ui/objective-import-actions";
 import { FakeProviderNotice } from "@/modules/ai-generation/ui/fake-provider-notice";
 import { ObjectiveImportConfirm } from "@/modules/ai-generation/ui/objective-import-confirm";
+import type { ObjectiveMergeView } from "@/modules/ai-generation/application/objective-import-facade";
 
 interface ConfirmImportPageProps {
   readonly params: Promise<{
@@ -76,9 +77,23 @@ export default async function ConfirmImportPage({
             ? "This outline has already been added to the track."
             : proposal === null || view.nodeCount === 0
               ? "This extraction produced no outline to add."
-              : `A model read your document and proposes ${view.nodeCount} ${
+              : `${
+                  view.strategy.callsModel
+                    ? "A model read your document and proposes"
+                    : `${view.strategy.label} read your files and proposes`
+                } ${view.nodeCount} ${
                   view.nodeCount === 1 ? "objective" : "objectives"
-                }. Nothing has been added to the track yet — read the tree, then choose.`}
+                }${
+                  view.merge === null
+                    ? ""
+                    : `, matched against your ${view.merge.existingConsidered} existing ${
+                        view.merge.existingConsidered === 1
+                          ? "objective"
+                          : "objectives"
+                      }`
+                }. Nothing has been added to the track yet — read ${
+                  view.merge === null ? "the tree" : "the changes"
+                }, then choose.`}
         </p>
         <FakeProviderNotice provider={view.modelProvider} subject="past" />
         <div className="section-actions">
@@ -156,17 +171,23 @@ export default async function ConfirmImportPage({
       ) : (
         <section aria-labelledby="proposal-heading" className="section">
           <div className="section-heading">
-            <h2 id="proposal-heading">Check the outline</h2>
+            <h2 id="proposal-heading">
+              {view.merge === null ? "Check the outline" : "Check the changes"}
+            </h2>
             <p className="section-note">
               {view.nodeCount}{" "}
               {view.nodeCount === 1 ? "objective" : "objectives"} proposed,
-              codes and weights copied from the document. Anything you apply is
-              added after your existing objectives; nothing you already have is
-              changed.
+              codes and weights copied from the document.{" "}
+              {view.merge === null
+                ? "Anything you apply is added after your existing objectives; nothing you already have is changed."
+                : describeMergeCounts(view.merge)}
             </p>
           </div>
           <ObjectiveImportConfirm
             action={applyObjectiveImportAction}
+            addableCount={view.addableCount}
+            calledModel={view.strategy.callsModel}
+            merge={view.merge}
             nodeCount={view.nodeCount}
             roots={proposal.roots}
             runId={view.run.id}
@@ -176,6 +197,25 @@ export default async function ConfirmImportPage({
       )}
     </main>
   );
+}
+
+/**
+ * What the merge decided, in one sentence.
+ *
+ * The three counts named as three different things, because they are: an addition writes a
+ * new objective, an enrichment rewrites one description on something the owner already had,
+ * and a skip writes nothing at all. Collapsing them into "12 of 94 will be applied" would
+ * hide the only one of the three that touches existing content.
+ */
+function describeMergeCounts(merge: ObjectiveMergeView): string {
+  const { adds, enriches, skips } = merge.counts;
+  const parts = [
+    `${adds} ${adds === 1 ? "addition" : "additions"}`,
+    `${enriches} ${enriches === 1 ? "enrichment" : "enrichments"}`,
+    `${skips} already covered`,
+  ];
+
+  return `Matched against your existing outline: ${parts.join(", ")}. Tick what you want; nothing else is touched.`;
 }
 
 function firstValue(value: string | string[] | undefined): string {

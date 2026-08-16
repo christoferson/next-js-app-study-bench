@@ -12,6 +12,12 @@ import {
 } from "@/modules/ai-generation/application/schemas";
 import type { ObjectiveImportRequestInput } from "@/modules/ai-generation/application/schemas";
 import { SyllabusUnreadableError } from "@/modules/ai-generation/domain/errors";
+import {
+  MAX_IMPORT_STRATEGY_FILES,
+  defaultImportStrategy,
+  importStrategiesFor,
+} from "@/modules/ai-generation/domain/import-strategy";
+import type { ImportStrategyArchetype } from "@/modules/ai-generation/domain/import-strategy";
 import { personaForStudyType } from "@/modules/ai-generation/domain/personas";
 import { ObjectiveImportForm } from "./objective-import-form";
 
@@ -32,6 +38,7 @@ function validatingAction(
     try {
       onValid(
         parseInput(objectiveImportRequestSchema, {
+          strategyKey: String(form.get("strategyKey") ?? ""),
           pastedText: String(form.get("pastedText") ?? ""),
           additionalInstructions: String(
             form.get("additionalInstructions") ?? "",
@@ -63,8 +70,11 @@ function renderForm(
   options: {
     readonly action?: ReturnType<typeof validatingAction>;
     readonly existingObjectiveCount?: number;
+    readonly archetype?: ImportStrategyArchetype;
   } = {},
 ): void {
+  const archetype = options.archetype ?? "TECHNICAL";
+
   render(
     <ObjectiveImportForm
       action={options.action ?? validatingAction()}
@@ -75,6 +85,9 @@ function renderForm(
       maxFileBytes={MAX_SYLLABUS_FILE_BYTES}
       maxCharacters={MAX_SYLLABUS_CHARACTERS}
       existingObjectiveCount={options.existingObjectiveCount ?? 0}
+      strategies={importStrategiesFor(archetype)}
+      defaultStrategyKey={defaultImportStrategy(archetype).key}
+      maxFiles={MAX_IMPORT_STRATEGY_FILES}
     />,
   );
 }
@@ -181,6 +194,184 @@ describe("ObjectiveImportForm", () => {
     });
   });
 
+  describe("choosing how the documents are read", () => {
+    it("offers every strategy, whatever the track is", () => {
+      // Ordering rather than filtering: a language track may hold a prose syllabus for
+      // some other examination, and the owner is the one holding the document.
+      renderForm({ archetype: "LANGUAGE" });
+
+      expect(
+        screen.getByRole("radio", { name: /Read it with AI/ }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("radio", { name: /HSK examination syllabus/ }),
+      ).toBeInTheDocument();
+    });
+
+    it("preselects the AI reader for a technical track", () => {
+      renderForm({ archetype: "TECHNICAL" });
+
+      expect(
+        screen.getByRole("radio", { name: /Read it with AI/ }),
+      ).toBeChecked();
+    });
+
+    it("preselects the HSK reader for a language track", () => {
+      renderForm({ archetype: "LANGUAGE" });
+
+      expect(
+        screen.getByRole("radio", { name: /HSK examination syllabus/ }),
+      ).toBeChecked();
+    });
+
+    it("says which strategies spend a model call and which do not", () => {
+      renderForm();
+
+      expect(screen.getByText(/Calls the model\./)).toBeVisible();
+      expect(screen.getByText(/Calls no model at all\./)).toBeVisible();
+    });
+
+    it("submits the chosen strategy key", async () => {
+      const onValid = vi.fn();
+
+      renderForm({ action: validatingAction(onValid), archetype: "LANGUAGE" });
+
+      const user = userEvent.setup();
+
+      await user.click(screen.getByRole("radio", { name: /Read it with AI/ }));
+      await user.click(screen.getByLabelText(/paste the outline/i));
+      await user.paste(SYNTHETIC_OUTLINE);
+      await submit(user);
+
+      await waitFor(() => {
+        expect(onValid).toHaveBeenCalledTimes(1);
+      });
+
+      expect(onValid.mock.calls[0]?.[0]?.strategyKey).toBe("GENERIC_OUTLINE");
+    });
+  });
+
+  describe("the multi-file path", () => {
+    it("takes several files and accepts JSON for the deterministic reader", () => {
+      renderForm({ archetype: "LANGUAGE" });
+
+      const input = screen.getByLabelText(/syllabus files/i);
+
+      expect(input).toHaveAttribute("multiple");
+      expect(input.getAttribute("accept")).toContain(".json");
+    });
+
+    it("takes one file and no JSON for the AI reader", async () => {
+      renderForm({ archetype: "LANGUAGE" });
+
+      const user = userEvent.setup();
+
+      await user.click(screen.getByRole("radio", { name: /Read it with AI/ }));
+
+      const input = screen.getByLabelText(/syllabus file/i);
+
+      expect(input).not.toHaveAttribute("multiple");
+      expect(input.getAttribute("accept")).not.toContain(".json");
+    });
+
+    it("says any subset of the syllabus documents is a complete import", () => {
+      renderForm({ archetype: "LANGUAGE" });
+
+      expect(
+        screen.getByText(
+          /the grammar appendix on its own is a complete import/,
+        ),
+      ).toBeVisible();
+    });
+
+    it("offers no paste box for a reader that parses files", () => {
+      // Pasted text has no role and no filename, so there is nothing a parser could be
+      // chosen for it — a box that could never be used is a dead control.
+      renderForm({ archetype: "LANGUAGE" });
+
+      expect(screen.queryByLabelText(/paste the outline/i)).toBeNull();
+    });
+
+    it("offers a role select per chosen file, defaulting to automatic", async () => {
+      renderForm({ archetype: "LANGUAGE" });
+
+      const user = userEvent.setup();
+
+      // No files chosen yet, so there is nothing to assign a role to.
+      expect(screen.queryByText("What is each file?")).toBeNull();
+
+      await user.upload(screen.getByLabelText(/syllabus files/i), [
+        new File(["structure"], "syllabus.txt", { type: "text/plain" }),
+        new File(["[]"], "grammar.json", { type: "application/json" }),
+      ]);
+
+      expect(screen.getByText("What is each file?")).toBeVisible();
+      expect(screen.getByText("syllabus.txt")).toBeVisible();
+      expect(screen.getByText("grammar.json")).toBeVisible();
+
+      const selects = screen.getAllByRole("combobox");
+
+      expect(selects).toHaveLength(2);
+      expect(selects[0]).toHaveValue("");
+    });
+
+    it("submits an overridden role alongside its file, in order", async () => {
+      const onValid = vi.fn();
+
+      renderForm({ action: validatingAction(onValid), archetype: "LANGUAGE" });
+
+      const user = userEvent.setup();
+
+      const input = screen.getByLabelText(/syllabus files/i);
+
+      await user.upload(input, [
+        new File(["structure"], "syllabus.txt", { type: "text/plain" }),
+        new File(["notes"], "notes.md", { type: "text/markdown" }),
+      ]);
+      await user.selectOptions(
+        screen.getAllByRole("combobox")[1] as HTMLElement,
+        "THEME_NOTES",
+      );
+      await submit(user);
+
+      await waitFor(() => {
+        expect(onValid).toHaveBeenCalledTimes(1);
+      });
+
+      const form = onValid.mock.calls[0]?.[1] as FormData;
+
+      // Positional pairing is the contract the Server Action reads: a blank first role
+      // means "classify it", and the second names what the owner chose. The roles are
+      // asserted on the submitted `FormData` and the filenames on the input, because
+      // jsdom's `FormData` copies a file entry as an empty blob — see the single-file
+      // upload test above.
+      expect(form.getAll("documentRole")).toEqual(["", "THEME_NOTES"]);
+      expect(
+        [...((input as HTMLInputElement).files ?? [])].map((file) => file.name),
+      ).toEqual(["syllabus.txt", "notes.md"]);
+      expect(onValid.mock.calls[0]?.[0]?.strategyKey).toBe("HSK_EXAMINATION");
+    });
+
+    it("clears a selection made for the other strategy", async () => {
+      // The accepted types and the file count differ per strategy, so a file chosen for
+      // one must not silently ride along into the other and be rejected server-side.
+      renderForm({ archetype: "LANGUAGE" });
+
+      const user = userEvent.setup();
+
+      await user.upload(screen.getByLabelText(/syllabus files/i), [
+        new File(["[]"], "grammar.json", { type: "application/json" }),
+      ]);
+
+      expect(screen.getByText("grammar.json")).toBeVisible();
+
+      await user.click(screen.getByRole("radio", { name: /Read it with AI/ }));
+
+      expect(screen.queryByText("What is each file?")).toBeNull();
+      expect(screen.getByLabelText(/syllabus file/i)).toHaveValue("");
+    });
+  });
+
   describe("what it submits", () => {
     it("submits a pasted outline as the facade will receive it", async () => {
       const onValid = vi.fn();
@@ -202,6 +393,9 @@ describe("ObjectiveImportForm", () => {
       });
 
       expect(onValid.mock.calls[0]?.[0]).toEqual({
+        // A technical track offers the AI reader first and it is checked by default, so
+        // an owner who changes nothing gets the behaviour this form has always had.
+        strategyKey: "GENERIC_OUTLINE",
         pastedText: SYNTHETIC_OUTLINE,
         additionalInstructions: "only the content outline",
         // No persona select is rendered when the owner has stored none, so the field
@@ -240,6 +434,7 @@ describe("ObjectiveImportForm", () => {
       await expect(chosen?.text()).resolves.toBe(SYNTHETIC_OUTLINE);
       // Both routes are optional on their own, so a file with no paste submits a null.
       expect(onValid.mock.calls[0]?.[0]).toEqual({
+        strategyKey: "GENERIC_OUTLINE",
         pastedText: null,
         additionalInstructions: null,
         personaId: null,
@@ -260,6 +455,7 @@ describe("ObjectiveImportForm", () => {
       });
 
       expect(onValid.mock.calls[0]?.[0]).toEqual({
+        strategyKey: "GENERIC_OUTLINE",
         pastedText: null,
         additionalInstructions: null,
         personaId: null,

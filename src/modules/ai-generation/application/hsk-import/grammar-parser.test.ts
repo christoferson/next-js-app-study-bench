@@ -3,7 +3,7 @@ import {
   assertHskGrammarOutlineSize,
   HskGrammarParseError,
   parseHskGrammarOutline,
-} from "./hsk-grammar-parser";
+} from "./grammar-parser";
 
 /**
  * Every fixture in this file is invented.

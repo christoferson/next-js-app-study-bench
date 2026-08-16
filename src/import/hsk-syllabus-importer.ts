@@ -5,19 +5,8 @@ import type {
 import type {
   Objective,
   ObjectiveId,
-  ObjectiveSourceType,
 } from "@/modules/certifications/domain/objective";
-import {
-  GRAMMAR_ROOT,
-  TASKS_ROOT_TITLE,
-  TOPICS_ROOT_TITLE,
-} from "@/modules/certifications/domain/objective-kind";
-import type {
-  HskExamSkillKind,
-  HskExamStructure,
-} from "./hsk-exam-structure-parser";
-import type { HskGrammarOutline } from "./hsk-grammar-parser";
-import type { HskThemeEntry, HskThemeOutline } from "./hsk-theme-parser";
+import type { PlannedObjective } from "@/modules/ai-generation/application/hsk-import/objective-plan";
 import { REAL_TRACK_SLUGS } from "./real-content-importer";
 import type { RealImportDependencies } from "./real-content-importer";
 
@@ -35,7 +24,7 @@ import type { RealImportDependencies } from "./real-content-importer";
  *
  * **Idempotency is by root.** A root whose title or code already exists on the
  * track is reported as already present and neither it nor its children are
- * written. Six roots are therefore independent: an interrupted run can be resumed
+ * written. The roots are therefore independent: an interrupted run can be resumed
  * by re-running, and a root the owner has since renamed is left alone rather than
  * being written a second time. The `HSK 5 vocabulary` root that `import:real`
  * created, and every card mapped to it, is never read or touched here.
@@ -44,51 +33,37 @@ import type { RealImportDependencies } from "./real-content-importer";
  * does, so the imported objectives pass the same validation and hierarchy rules as
  * ones the owner types.
  *
- * **Provenance is split, because the sources differ in kind.** The examination
- * structure and the grammar appendix come from the syllabus the examining body
- * publishes, and are recorded as `OFFICIAL_SYLLABUS`. The topic areas and language
- * tasks come from the owner's notes — a chatbot answer citing third-party study
- * sites — and are recorded as `AI_PROPOSED` and titled "unofficial", because
- * AI-derived content must never be presented as official
- * (`SPEC.md` section 6.2, `spec/AI-GUIDELINES.md` section 1.3).
+ * **The parsers and the plan now live in the ai-generation module**
+ * (`application/hsk-import/`), because the web import strategy needs the same
+ * readers and `src/import/` is script-side code — it writes through facades, prints
+ * to the console, and reads `external/`. They are re-exported below so this script
+ * and its tests keep their import paths. What stays here is the *writing*: the
+ * per-root idempotency check and the facade walk, which are script concerns.
+ *
+ * **Provenance is split, because the sources differ in kind** — the examination
+ * structure and the grammar appendix are `OFFICIAL_SYLLABUS`, the owner's theme
+ * notes are `AI_PROPOSED`. `application/hsk-import/objective-plan.ts` decides that
+ * and states why.
  *
  * As in `import:real`, no wording from any source document is embedded in this
- * repository: the descriptions written here are the owner's own, and the syllabus
- * text that reaches the database arrives through the parsers at run time.
+ * repository: the descriptions the planner writes are the owner's own, and the
+ * syllabus text that reaches the database arrives through the parsers at run time.
  */
-
-/** Source type for the objectives read from the published syllabus. */
-const SYLLABUS_SOURCE: ObjectiveSourceType = "OFFICIAL_SYLLABUS";
 
 /**
- * Source type for the objectives read from the owner's unofficial notes.
+ * The parsers and the planner, re-exported at their historical paths.
  *
- * `AI_PROPOSED` rather than `IMPORTED`: the notes are a chatbot answer, so the
- * themes are a model's proposal about what the examination covers, not a
- * transcription of a document. Labelling them `IMPORTED` would hide that.
+ * Kept so the CLI script and its tests continue to work unchanged after the
+ * relocation — the same courtesy `@/shared/text-normalization` was given its earlier
+ * callers. New code should import from
+ * `@/modules/ai-generation/application/hsk-import/*` directly.
  */
-const UNOFFICIAL_SOURCE: ObjectiveSourceType = "AI_PROPOSED";
-
-/**
- * The names the roots are created under.
- *
- * Imported from the domain rather than declared here, because generation reads them
- * back: an objective's kind is judged by the root it descends from, so the importer
- * that writes a root and the prompt that recognises it must agree on its name. The
- * word "unofficial" in the theme titles is deliberate and is part of that contract.
- */
-const GRAMMAR_ROOT_CODE = GRAMMAR_ROOT.code;
-const GRAMMAR_ROOT_TITLE = GRAMMAR_ROOT.title;
-
-/** One objective to create, with its descendants. Pure data, no identifiers. */
-export interface PlannedObjective {
-  readonly code: string | null;
-  readonly title: string;
-  readonly description: string | null;
-  readonly weight: number | null;
-  readonly sourceType: ObjectiveSourceType;
-  readonly children: readonly PlannedObjective[];
-}
+export {
+  describeSkillKind,
+  describeTheme,
+  planHskSyllabusObjectives,
+} from "@/modules/ai-generation/application/hsk-import/objective-plan";
+export type { PlannedObjective } from "@/modules/ai-generation/application/hsk-import/objective-plan";
 
 /** What the import did to one root and its subtree. */
 export interface RootImportResult {
@@ -110,154 +85,6 @@ export class HskSyllabusImportError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "HskSyllabusImportError";
-  }
-}
-
-/**
- * The whole objective plan, as data.
- *
- * Pure and exported so the shape of the tree — six roots, what carries a weight,
- * which source type each subtree gets — is asserted directly rather than through a
- * database. The writing below is then a trivial walk.
- */
-export function planHskSyllabusObjectives(sources: {
-  readonly structure: HskExamStructure;
-  readonly grammar: HskGrammarOutline;
-  /** Optional: theme notes are the one unofficial input and a level may have none. */
-  readonly themes: HskThemeOutline | null;
-}): readonly PlannedObjective[] {
-  return [
-    ...sources.structure.skills.map(planSkill),
-    planGrammar(sources.grammar),
-    ...(sources.themes === null
-      ? []
-      : [
-          planThemes(
-            TOPICS_ROOT_TITLE,
-            "Topic areas the owner's own notes suggest the examination draws its passages and audio from. Unofficial: proposed by a chatbot citing third-party study sites, not published by the examining body.",
-            sources.themes.topics.entries,
-          ),
-          planThemes(
-            TASKS_ROOT_TITLE,
-            "Communication tasks the owner's own notes suggest the examination asks a candidate to perform. Unofficial: proposed by a chatbot citing third-party study sites, not published by the examining body.",
-            sources.themes.tasks.entries,
-          ),
-        ]),
-  ];
-}
-
-/**
- * One skill, with one child per part.
- *
- * The root carries the skill's item count as its weight. That is only a legitimate
- * percentage because the examination has exactly 100 items, which the structure
- * parser asserts before this is reached — so the three weights add to 100 and mean
- * "this share of the paper" rather than "this many questions".
- */
-function planSkill(
-  skill: HskExamStructure["skills"][number],
-): PlannedObjective {
-  const itemCount = skill.parts.reduce(
-    (total, part) => total + part.itemCount,
-    0,
-  );
-
-  return {
-    code: skill.code,
-    title: describeSkillKind(skill.kind),
-    description: `${describeSkillKind(skill.kind)} section of the HSK 5 paper: ${skill.parts.length} part(s), ${itemCount} items.`,
-    weight: itemCount,
-    sourceType: SYLLABUS_SOURCE,
-    children: skill.parts.map((part) => ({
-      code: part.code,
-      title: `Part ${part.position} (${part.itemCount} items)`,
-      // The syllabus's own statement of the part's format, item count included.
-      description: part.description,
-      weight: null,
-      sourceType: SYLLABUS_SOURCE,
-      children: [],
-    })),
-  };
-}
-
-/**
- * The grammar appendix, three levels deep.
- *
- * A level for the appendix, a level per category group, and a leaf per grammar
- * point. The leaves are what make the tree worth having: a drill request can name
- * one pattern, and a generated question can be mapped to the exact point it
- * exercises rather than to "grammar".
- */
-function planGrammar(grammar: HskGrammarOutline): PlannedObjective {
-  return {
-    code: GRAMMAR_ROOT_CODE,
-    title: GRAMMAR_ROOT_TITLE,
-    description: `The ${grammar.pointCount} grammar points the HSK 5 syllabus lists, in its own ${grammar.groups.length} categories.`,
-    weight: null,
-    sourceType: SYLLABUS_SOURCE,
-    children: grammar.groups.map((group) => ({
-      code: group.category,
-      title: group.name,
-      description: `${group.points.length} grammar point(s) the syllabus lists under ${group.category} / ${group.name}.`,
-      weight: null,
-      sourceType: SYLLABUS_SOURCE,
-      children: group.points.map((point) => ({
-        // The group's own name, so a picker row reads "复句 — ……，便……".
-        code: group.name,
-        title: point.content,
-        description: point.detail === "" ? null : point.detail,
-        weight: null,
-        sourceType: SYLLABUS_SOURCE,
-        children: [],
-      })),
-    })),
-  };
-}
-
-function planThemes(
-  title: string,
-  description: string,
-  entries: readonly HskThemeEntry[],
-): PlannedObjective {
-  return {
-    code: null,
-    title,
-    description,
-    weight: null,
-    sourceType: UNOFFICIAL_SOURCE,
-    children: entries.map((entry) => ({
-      code: null,
-      title: describeTheme(entry),
-      description: entry.description,
-      weight: null,
-      sourceType: UNOFFICIAL_SOURCE,
-      children: [],
-    })),
-  };
-}
-
-/**
- * One theme's title: the Chinese name and the English gloss together.
- *
- * The two lists name themselves in opposite orders, and both names are useful — the
- * Chinese is what a generated passage should be about, the English is what the
- * owner reads down a list of objectives — so both are kept, in one order.
- */
-export function describeTheme(entry: HskThemeEntry): string {
-  return entry.chineseName === ""
-    ? entry.englishName
-    : `${entry.chineseName} — ${entry.englishName}`;
-}
-
-/** The skill's owner-facing name. Exhaustive, so a fourth skill must decide. */
-export function describeSkillKind(kind: HskExamSkillKind): string {
-  switch (kind) {
-    case "LISTENING":
-      return "Listening";
-    case "READING":
-      return "Reading";
-    case "WRITING":
-      return "Writing";
   }
 }
 

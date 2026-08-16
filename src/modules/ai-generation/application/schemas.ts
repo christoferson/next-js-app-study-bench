@@ -18,6 +18,8 @@ import {
   MIN_BATCH_ITEMS,
 } from "@/modules/ai-generation/domain/generation-limits";
 import { IMPORT_SOURCE_CHOICES } from "@/modules/ai-generation/domain/objective-import";
+import { IMPORT_STRATEGY_KEYS } from "@/modules/ai-generation/domain/import-strategy";
+import { MAX_MERGE_ITEMS } from "@/modules/ai-generation/domain/objective-merge";
 import {
   TUTOR_ASK_KINDS,
   TUTOR_NOTE_LIMIT,
@@ -240,6 +242,17 @@ export const MAX_SYLLABUS_FILE_BYTES = 10 * 1024 * 1024;
  */
 export const objectiveImportRequestSchema = z.object({
   /**
+   * Which reader runs. See `domain/import-strategy.ts`.
+   *
+   * Required rather than defaulted, so a form that stops sending it fails loudly instead
+   * of silently reverting every import to the AI extractor. The page always renders a
+   * checked radio, so an ordinary submission always carries one.
+   */
+  strategyKey: enumOf(
+    IMPORT_STRATEGY_KEYS,
+    "Choose how the documents should be read.",
+  ),
+  /**
    * Text the owner pasted instead of, or as well as, uploading a file.
    *
    * Bounded by the same cap the extracted text is, so a paste and an upload are the
@@ -265,6 +278,29 @@ export const applyObjectiveImportSchema = z.object({
     IMPORT_SOURCE_CHOICES,
     "Choose whether this outline is the official syllabus or unofficial.",
   ),
+  /**
+   * Which merge items the owner left checked, as `add:<ref>` / `enrich:<ref>` keys.
+   *
+   * `null` rather than an empty array when the form sent no checkbox at all, and the two mean
+   * different things: a plain tree import has no checkboxes, so `null` is "apply the whole
+   * proposal", while `[]` is a merge whose every box the owner cleared — which the facade
+   * refuses rather than treating as "apply everything". Collapsing them would turn
+   * "I unchecked all of it" into the largest possible write.
+   *
+   * The keys are matched against the stored plan at apply time, so an unrecognised one is
+   * ignored there rather than rejected here: this schema's job is bounding the *size* of the
+   * list, and the plan is the only thing that knows which keys are real.
+   */
+  itemKeys: z
+    .array(
+      z
+        .string()
+        .max(ID_LIMIT)
+        .transform((value) => value.trim()),
+    )
+    .max(MAX_MERGE_ITEMS)
+    .nullish()
+    .transform((values): readonly string[] | null => values ?? null),
 });
 
 export type ApplyObjectiveImportInput = z.output<

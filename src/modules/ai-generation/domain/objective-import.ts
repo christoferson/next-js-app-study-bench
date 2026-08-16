@@ -20,7 +20,15 @@
 /** The deepest tree the import accepts: roots are depth 1. */
 export const MAX_IMPORT_DEPTH = 3;
 
-/** The most objectives one import may propose, counting every level. */
+/**
+ * The most objectives one *model-proposed* import may carry, counting every level.
+ *
+ * The default, and the only cap that applies to an extraction: an over-long tree is the
+ * shape a hallucinating extraction takes, so 150 is as much a plausibility check as a
+ * size limit. A deterministic strategy passes its own, higher cap
+ * (`domain/import-strategy.ts` explains why the number differs by how much the input is
+ * trusted).
+ */
 export const MAX_IMPORT_NODES = 150;
 
 /** Field limits, matching what the objective form itself accepts. */
@@ -81,6 +89,16 @@ export function proposedTreeDepth(nodes: readonly ProposedObjective[]): number {
  */
 export function checkProposedTree(
   nodes: readonly ProposedObjective[],
+  /**
+   * The node cap in force, which the strategy decides.
+   *
+   * A parameter rather than a constant so the same checks serve both a model's answer
+   * and a deterministic parse of a published document, without the second having to
+   * skip validation to be allowed to be bigger. Depth and the per-node rules are
+   * unconditional: three levels and a non-empty title are statements about objective
+   * hierarchies, not about how much the source is trusted.
+   */
+  maxNodes: number = MAX_IMPORT_NODES,
 ): readonly string[] {
   const problems: string[] = [];
   const count = countProposedObjectives(nodes);
@@ -96,9 +114,9 @@ export function checkProposedTree(
   // then dutifully offered to add to the owner's track. Accepting emptiness lets the
   // truthful answer be expressible, and the confirm page has a state that says so.
 
-  if (count > MAX_IMPORT_NODES) {
+  if (count > maxNodes) {
     problems.push(
-      `objectives: ${count} objectives were proposed but at most ${MAX_IMPORT_NODES} are accepted; merge the finest-grained items into their parents`,
+      `objectives: ${count} objectives were proposed but at most ${maxNodes} are accepted; merge the finest-grained items into their parents`,
     );
   }
 

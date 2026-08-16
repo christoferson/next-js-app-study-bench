@@ -20,6 +20,7 @@ import {
   QUESTION_SCHEMA_NAME,
 } from "@/modules/ai-generation/application/output-schemas";
 import { OBJECTIVE_IMPORT_SCHEMA_NAME } from "@/modules/ai-generation/application/objective-import-schema";
+import { OBJECTIVE_MERGE_SCHEMA_NAME } from "@/modules/ai-generation/application/objective-merge-schema";
 import { QUESTION_REVIEW_SCHEMA_NAME } from "@/modules/ai-generation/application/question-review-schema";
 import { ANSWER_EVALUATION_SCHEMA_NAME } from "@/modules/ai-generation/application/answer-evaluation-schema";
 import { QUESTION_CHALLENGE_SCHEMA_NAME } from "@/modules/ai-generation/application/question-challenge-schema";
@@ -90,6 +91,26 @@ export interface FakeLanguageModelGatewayOptions {
    * repair fail, which is the case the owner sees as `MALFORMED_OUTPUT`.
    */
   readonly objectiveImportMode?: "OUTLINE" | "MALFORMED";
+  /**
+   * What a synthesised objective merge returns.
+   *
+   * `"MERGE"` is the ordinary answer and the one worth describing, because it is extractive
+   * in both directions at once and that is the whole point. It reads the extracted objectives
+   * and the existing objectives out of the prompt, matches them on folded titles, and returns
+   * `ENRICH` for a title the track already has *with* something to add, `SKIP` for one it has
+   * with nothing to add, and `ADD` for everything else — nesting each addition under the
+   * existing objective that its extracted parent matches, or under the addition that its
+   * extracted parent became. So a facade that never sent the existing hierarchy produces a
+   * plan that adds everything at the top level, and one that never sent the ids produces a
+   * plan the checks reject; both are failing tests rather than passes.
+   *
+   * `"ADD_ALL"` adds every extracted objective at the top level, which is the coarse answer
+   * the confirm page has to render sensibly. `"MALFORMED"` returns verdicts about refs that
+   * were never sent and an id that does not exist, on every turn, so the failed-merge path —
+   * which keeps the extraction and drops the reconciliation — is exercised without scripting a
+   * payload by hand.
+   */
+  readonly objectiveMergeMode?: "MERGE" | "ADD_ALL" | "MALFORMED";
   /**
    * What a synthesised question review returns.
    *
@@ -187,6 +208,8 @@ export class FakeLanguageModelGateway implements LanguageModelGateway {
 
   private readonly objectiveImportMode: "OUTLINE" | "MALFORMED";
 
+  private readonly objectiveMergeMode: "MERGE" | "ADD_ALL" | "MALFORMED";
+
   private readonly questionReviewMode: "SOUND" | "MAJOR_ISSUES" | "MALFORMED";
 
   private readonly tutorMode: "ANSWER" | "MALFORMED";
@@ -209,6 +232,7 @@ export class FakeLanguageModelGateway implements LanguageModelGateway {
     this.responses = options.responses ?? null;
     this.usage = options.usage === undefined ? DEFAULT_USAGE : options.usage;
     this.objectiveImportMode = options.objectiveImportMode ?? "OUTLINE";
+    this.objectiveMergeMode = options.objectiveMergeMode ?? "MERGE";
     this.questionReviewMode = options.questionReviewMode ?? "SOUND";
     this.tutorMode = options.tutorMode ?? "ANSWER";
     this.answerEvaluationMode = options.answerEvaluationMode ?? "COVERED";
@@ -273,6 +297,7 @@ export class FakeLanguageModelGateway implements LanguageModelGateway {
     if (this.responses === null) {
       return synthesizePayload(request, {
         objectiveImportMode: this.objectiveImportMode,
+        objectiveMergeMode: this.objectiveMergeMode,
         questionReviewMode: this.questionReviewMode,
         tutorMode: this.tutorMode,
         answerEvaluationMode: this.answerEvaluationMode,
@@ -336,12 +361,30 @@ interface PromptFacts {
     readonly index: number;
     readonly text: string;
   }[];
+  /**
+   * The objectives the track already had, as a merge prompt described them.
+   *
+   * Keyed by database id, because that is how the merge contract addresses an existing
+   * objective and therefore the only key a verdict may name. Empty for every prompt that is
+   * not a merge — which is what makes "a merge that was sent no hierarchy can only add"
+   * the fixture's behaviour rather than a case it has to special-case.
+   */
+  readonly mergeExisting: readonly MergeLine[];
+  /**
+   * The objectives the extraction proposed, as a merge prompt described them.
+   *
+   * Keyed by the ref the sender assigned (`n1`, `n2`, …), so a fixture's verdicts are about
+   * nodes that were actually sent and a facade that forgot to send the extracted outline
+   * produces an empty plan rather than a plausible one.
+   */
+  readonly mergeExtracted: readonly MergeLine[];
 }
 
 function synthesizePayload<Value>(
   request: StructuredGenerationRequest<Value>,
   modes: {
     readonly objectiveImportMode: "OUTLINE" | "MALFORMED";
+    readonly objectiveMergeMode: "MERGE" | "ADD_ALL" | "MALFORMED";
     readonly questionReviewMode: "SOUND" | "MAJOR_ISSUES" | "MALFORMED";
     readonly tutorMode: "ANSWER" | "MALFORMED";
     readonly answerEvaluationMode: "COVERED" | "PARTIAL" | "MALFORMED";
@@ -364,6 +407,8 @@ function synthesizePayload<Value>(
       return modes.objectiveImportMode === "MALFORMED"
         ? malformedOutline()
         : { objectives: extractOutline(facts.uploadedDocument) };
+    case OBJECTIVE_MERGE_SCHEMA_NAME:
+      return synthesizeMerge(facts, modes.objectiveMergeMode);
     case QUESTION_REVIEW_SCHEMA_NAME:
       return synthesizeReview(facts, modes.questionReviewMode);
     case TUTOR_SCHEMA_NAME:
@@ -663,6 +708,200 @@ function extractOutline(document: string): readonly unknown[] {
   });
 
   return roots.map(toPayload);
+}
+
+/** One line of either outline block, as the merge template writes it. */
+interface MergeLine {
+  /** `id` for an existing objective, `ref` for an extracted one. */
+  readonly key: string;
+  readonly title: string;
+  readonly description: string | null;
+  readonly code: string | null;
+  readonly weight: number | null;
+  /** The parent's key, or `null` for `parent: none`. */
+  readonly parent: string | null;
+}
+
+/**
+ * The two outlines a merge prompt carried, read out of their own delimiters.
+ *
+ * `- id: x | title: y | ...` and `- ref: n1 | title: y | ...`, which is exactly what the
+ * template writes. Keyed by whichever of `id`/`ref` opens the line, so one reader serves both
+ * blocks and a template that stopped writing identifiers produces empty lists — an unusable
+ * plan and a failing test rather than an invented pass.
+ */
+function readMergeLines(user: string, tag: string): readonly MergeLine[] {
+  return readDelimitedBlock(user, tag)
+    .split("\n")
+    .flatMap((line) => {
+      const trimmed = line.trim();
+
+      if (!trimmed.startsWith("- ")) {
+        return [];
+      }
+
+      const fields = new Map(
+        trimmed
+          .slice(2)
+          .split(" | ")
+          .flatMap((field) => {
+            const separator = field.indexOf(": ");
+
+            return separator === -1
+              ? []
+              : [
+                  [
+                    field.slice(0, separator).trim(),
+                    field.slice(separator + 2).trim(),
+                  ] as const,
+                ];
+          }),
+      );
+      const key = fields.get("id") ?? fields.get("ref");
+      const title = fields.get("title");
+
+      if (key === undefined || title === undefined) {
+        return [];
+      }
+
+      const parent = fields.get("parent") ?? "none";
+      const weight = fields.get("weight");
+
+      return [
+        {
+          key,
+          title,
+          description: fields.get("description") ?? null,
+          code: fields.get("code") ?? null,
+          weight:
+            weight === undefined ? null : Number(weight.replace(/%$/, "")),
+          parent: parent === "none" ? null : parent,
+        },
+      ];
+    });
+}
+
+/**
+ * A reconciliation of the two outlines the prompt carried.
+ *
+ * Extractive on both sides, for the reason the outline fixture is extractive on one: a fixed
+ * demo plan would pass whether or not the facade ever sent the existing hierarchy, and
+ * "did the merge actually see the track's objectives" is the single thing the merge tests
+ * exist to check. Matching is on folded titles, which is *not* what a real model does — it
+ * reads meaning — but it is the one deterministic rule that produces all three verdicts from
+ * real inputs, which is what the fixtures need.
+ */
+function synthesizeMerge(
+  facts: PromptFacts,
+  mode: "MERGE" | "ADD_ALL" | "MALFORMED",
+): unknown {
+  const extracted = facts.mergeExtracted;
+  const existing = facts.mergeExisting;
+
+  if (mode === "MALFORMED") {
+    // Wrong in three independent ways — a ref that was never sent, an existing id that does
+    // not exist, and two verdicts for one ref — so no repair rescues it and it stays invalid
+    // if any one check is relaxed.
+    return {
+      items: [
+        {
+          kind: "ADD",
+          ref: "not-a-ref-that-was-sent",
+          title: "Invented",
+        },
+        {
+          kind: "ENRICH",
+          ref: extracted[0]?.key ?? "n1",
+          existingId: "objective-that-does-not-exist",
+          description: "Malformed demo enrichment.",
+        },
+        {
+          kind: "ENRICH",
+          ref: extracted[0]?.key ?? "n1",
+          existingId: "objective-that-does-not-exist",
+          description: "Malformed demo enrichment, again.",
+        },
+      ],
+      summary: "Malformed demo merge.",
+    };
+  }
+
+  if (mode === "ADD_ALL") {
+    return {
+      items: extracted.map((node) => ({
+        kind: "ADD",
+        ref: node.key,
+        // Deliberately top-level, including for nodes that had a parent: this is the coarse
+        // answer, and the confirm page has to render it without inventing nesting.
+        parentExistingId: null,
+        parentRef: null,
+        code: node.code,
+        title: node.title,
+        description: node.description,
+        weight: node.weight,
+      })),
+      summary: `Demo merge from the fake gateway: all ${extracted.length} extracted objectives added as new top-level objectives. No model was called.`,
+    };
+  }
+
+  const fold = (value: string) => value.trim().toLowerCase();
+  const existingByTitle = new Map(
+    existing.map((node) => [fold(node.title), node]),
+  );
+  /** Which verdict each extracted ref got, so a child can be parented onto it. */
+  const verdictByRef = new Map<string, { kind: string; targetId: string }>();
+  const items = extracted.map((node) => {
+    const match = existingByTitle.get(fold(node.title));
+
+    if (match !== undefined) {
+      verdictByRef.set(node.key, { kind: "MATCHED", targetId: match.key });
+
+      // Something to add to what is recorded, so it is an enrichment; nothing to add, so it
+      // is a duplicate. The existing description is not in the prompt (the merge template
+      // deliberately sends titles and codes only), so "has something to add" is decided by
+      // the extracted node carrying a description at all.
+      return node.description === null
+        ? {
+            kind: "SKIP",
+            ref: node.key,
+            reason: `Demo skip from the fake gateway: "${node.title}" is already on this track and the new material adds nothing to it.`,
+            matchedExistingId: match.key,
+          }
+        : {
+            kind: "ENRICH",
+            ref: node.key,
+            existingId: match.key,
+            description: `${node.description} (Demo enrichment from the fake gateway; no model was called.)`,
+          };
+    }
+
+    // Where the addition goes: under the existing objective its extracted parent matched, or
+    // under the addition its extracted parent became, or nowhere.
+    const parentVerdict =
+      node.parent === null ? undefined : verdictByRef.get(node.parent);
+
+    verdictByRef.set(node.key, { kind: "ADD", targetId: node.key });
+
+    return {
+      kind: "ADD",
+      ref: node.key,
+      parentExistingId:
+        parentVerdict?.kind === "MATCHED" ? parentVerdict.targetId : null,
+      parentRef: parentVerdict?.kind === "ADD" ? parentVerdict.targetId : null,
+      code: node.code,
+      title: node.title,
+      description: node.description,
+      weight: node.weight,
+    };
+  });
+  const adds = items.filter((item) => item.kind === "ADD").length;
+  const enriches = items.filter((item) => item.kind === "ENRICH").length;
+  const skips = items.filter((item) => item.kind === "SKIP").length;
+
+  return {
+    items,
+    summary: `Demo merge from the fake gateway against ${existing.length} existing ${existing.length === 1 ? "objective" : "objectives"}: ${adds} added, ${enriches} enriched, ${skips} already covered. No model was called.`,
+  };
 }
 
 /**
@@ -1059,6 +1298,8 @@ function readPrompt(user: string): PromptFacts {
     challengedStem: readStem(user, "owner_question_being_challenged"),
     ownerObjection: readDelimitedBlock(user, "owner_objection"),
     sourceExcerpts: readSourceExcerpts(user),
+    mergeExisting: readMergeLines(user, "owner_existing_objectives"),
+    mergeExtracted: readMergeLines(user, "owner_extracted_objectives"),
   };
 }
 

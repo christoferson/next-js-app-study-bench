@@ -126,6 +126,19 @@ export function maxOutputTokensFor(
 /** The ceiling for one extracted outline. See `maxOutputTokensFor`. */
 export const OBJECTIVE_IMPORT_OUTPUT_TOKENS = 16_000;
 
+/**
+ * The ceiling for one objective merge.
+ *
+ * Higher than an extraction's, and for a reason that is not "merging is harder": a merge
+ * returns one verdict per extracted objective, and the extracted objective may be one of four
+ * hundred nodes a deterministic parse produced rather than one of the hundred and fifty a
+ * model would. A verdict is short — a kind, two identifiers, and either a copied title or a
+ * sentence — but four hundred of them with an enriched description among them is more output
+ * than the outline itself was. Truncation here is the expensive failure, because the repair
+ * attempt would spend a second full merge on it.
+ */
+export const OBJECTIVE_MERGE_OUTPUT_TOKENS = 24_000;
+
 function tokensPerItem(kind: GeneratedItemKind): number {
   switch (kind) {
     case "QUESTION":

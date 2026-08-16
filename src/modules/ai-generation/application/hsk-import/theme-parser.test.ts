@@ -4,7 +4,7 @@ import {
   HskThemeParseError,
   parseHskThemeOutline,
   toThemeLines,
-} from "./hsk-theme-parser";
+} from "./theme-parser";
 
 /**
  * Every fixture in this file is invented.

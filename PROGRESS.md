@@ -507,6 +507,36 @@ print packs, D11 speech input, D12 PWA, D13 production).
   (~2.7k tokens). Known gaps: refresh-flag path tested via fixtures, not
   a genuinely changed live web source; single-model single-call citation
   evidence.
+- 2026-08-16 (owner-driven rework, two slices): objective import became a
+  strategy-based, multi-file, merge-aware workflow. Fixes that led here: the
+  Server Actions 1 MB default body limit rejected >1 MB uploads with a 413
+  before validation (next.config.ts bodySizeLimit 12mb, matching the forms'
+  10 MB promise), and the generic AI extractor honestly returned an empty
+  outline for the HSK syllabus (tables, not prose). Slice A: ImportStrategy
+  registry (GENERIC_OUTLINE ai-extraction / HSK_EXAMINATION deterministic),
+  default ordered by the track persona's archetype; HSK strategy accepts
+  multiple files in one submit (.txt/.md/.json/.pdf, any subset) with
+  per-file role auto-classification (syllabus structure / grammar appendix /
+  theme notes) and manual override; the HSK parsers moved from script-side
+  `src/import/` into `ai-generation/application/hsk-import/` (re-exported
+  for the CLI); node cap is per-strategy (150 AI / 400 deterministic —
+  trust follows input kind); deterministic imports record runs with
+  provider "deterministic" and null usage. Slice B: importing onto a track
+  that already has objectives runs an LLM merge (`objective-merge` template
+  v1, generation model): existing tree sent with real ids (capped 300),
+  extracted nodes proposed per-item as ADD (with existing or intra-batch
+  parent) / ENRICH (description only — never title/code/parent of existing
+  nodes) / SKIP (with reason); validated deterministically; stored as a
+  discriminated payload on the same run (old TREE payloads still readable);
+  confirm page groups adds/enriches/skips with per-item checkboxes; apply
+  writes only ticked items in one transaction, cascading omission for
+  unticked parents; second apply refused. Live-verified: real model merged
+  a doctored grammar file with perfect placement (~10k tokens) and
+  recognized a full re-upload as already covered (0 adds/0 enriches/84
+  skips, ~20k tokens). Note: the hsk-4-chinese track carries 94 objectives
+  imported during slice-A verification (real, correct data — keep or
+  delete at will). Deferred: per-root sourceType on mixed multi-file
+  imports; JLPT/other strategies as new plugins when documents exist.
 - Known deferred items: ORDERING question type (needed for HSK Writing
   Part 1 word-ordering drills), homograph numbering normalization at import,
   enrichment of the remaining ~1,500 vocabulary words pending owner quality

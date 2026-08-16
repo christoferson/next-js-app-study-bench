@@ -207,7 +207,9 @@ added, `unpdf`, for reading an uploaded syllabus PDF.
   anything is written — see
   [Importing objectives from a syllabus](#importing-objectives-from-a-syllabus).
   The uploaded file is not stored, applying is one transaction, and applying the
-  same proposal twice is refused rather than duplicating it.
+  same proposal twice is refused rather than duplicating it. On a track that already
+  holds objectives, a second model call reconciles the two outlines and you tick each
+  addition, each enrichment, and read each skip's reason.
 - **Vocabulary and cloze cards hold more.** A vocabulary card can now carry
   further senses, synonyms, antonyms, several worked examples each with its own
   reading and translation, and a usage note — all of them **optional and
@@ -622,23 +624,98 @@ card already has its detail, the page says so and makes no model call.
 
 "Import objectives" on a track page, at
 `/study-tracks/[slug]/objectives/import`, turns a syllabus into an objective tree
-without typing it out. Upload the exam guide as a **PDF**, upload a **plain-text
-file**, or **paste** the outline; a model reads it and proposes a tree of up to
-three levels, with the codes and percentage weightings the document states. Text is
-extracted locally with [`unpdf`](https://github.com/unjs/unpdf) — pure JavaScript,
-no system PDF tooling to install.
+without typing it out. The first thing the form asks is **how the documents should
+be read**, because not every syllabus is prose:
 
-**Nothing is written until you confirm.** Extraction produces a proposal, not
-objectives. The confirm page at `/study-tracks/[slug]/objectives/import/[runId]`
-shows the whole proposed tree — codes, titles, weights, descriptions, and the node
-count — and you choose:
+| Reader                       | What it does                                                                                                                                             | Input                                                  | Model | Node cap |
+| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ | ----- | -------- |
+| **Read it with AI**          | A model reads one document and copies out the outline it states. For an exam guide written as headings and prose.                                        | One PDF or text file, pasted text, or both             | Yes   | 150      |
+| **HSK examination syllabus** | Parsers written for the HSK documents read the examination structure, the grammar appendix, and topic notes. Nothing is inferred and no model is called. | Up to 8 files at once — `.txt`, `.md`, `.json`, `.pdf` | No    | 400      |
+
+Both readers are always offered; the order is a hint, not a filter. A **language**
+track sees the HSK reader first and a **technical** track sees the AI reader first,
+which is the only thing the track's persona archetype decides — a language track
+holding a prose syllabus for some other examination just picks the other one.
+
+**Why two caps.** A model's answer is held to 150 objectives because an over-long
+tree is the shape a hallucinating extraction takes. A deterministic parse is held to
+400, because its size is the _document's_ size: the HSK 5 plan is 94 objectives from
+the syllabus text and grammar appendix alone, and a level with a longer grammar
+appendix is legitimately larger. The cap still bounds one transaction and one screen;
+it is just not the model's cap. Which cap applies is read back from the run's own
+provenance, so the confirm page and the apply step re-validate at the same number the
+extraction did.
+
+Text is extracted locally with [`unpdf`](https://github.com/unjs/unpdf) — pure
+JavaScript, no system PDF tooling to install.
+
+**The HSK reader takes any subset.** Choose several files in one submission and each
+one is recognised by its own contents — a JSON grammar table, the examination
+structure, or topic notes — with a **role select per file** to override the guess or
+leave a file out. The grammar appendix on its own is a complete import; so is the
+syllabus text on its own. A file that matches nothing is reported as unrecognised and
+the rest are still imported, and two files claiming the same role is refused rather
+than silently half-applied.
+
+**A deterministic import is still a run**, recorded with honest provenance:
+`model_provider` is `deterministic`, `model_id` is the strategy key, the generation
+mode is `IMPORTED`, and `usage_metadata` stays null — zero tokens recorded as zero
+would look like a call that returned nothing.
+
+**Nothing is written until you confirm**, whichever reader ran. Extraction produces a
+proposal, not objectives. The confirm page at
+`/study-tracks/[slug]/objectives/import/[runId]` shows the whole proposed tree —
+codes, titles, weights, descriptions, and the node count — and you choose:
 
 - **Where it came from.** "Official syllabus" or "Unofficial or AI-assisted",
   recorded on every objective the import adds. There is no default, because a model
   reading a PDF is not what makes an outline official.
-- **Apply**, which inserts the whole tree in one transaction, appended after your
-  existing objectives and in document order, then opens the track. Or **Discard**,
-  which writes nothing.
+- **Apply**, which writes in one transaction and then opens the track. Or
+  **Discard**, which writes nothing.
+
+#### Importing onto a track that already has objectives
+
+Importing one more document onto a track that already holds an outline is the
+ordinary case — the grammar appendix after the syllabus text, an updated exam guide
+after last year's — and it is not the same decision as a first import. So a second
+step runs between extraction and the confirm page, and it produces **one verdict per
+extracted objective**:
+
+| Verdict    | What it does                                                                                   |
+| ---------- | ---------------------------------------------------------------------------------------------- |
+| **Add**    | Writes the objective, under a named existing objective, under another addition, or as a root.  |
+| **Enrich** | Replaces one existing objective's **description** with one extending it from the new material. |
+| **Skip**   | A duplicate, with the reason and the objective that already covers it. Writes nothing.         |
+
+An enrichment changes the description and nothing else — never the title, the code,
+the weight, the parent, the lifecycle, or the source type. The objective is still
+whatever you made it.
+
+**A track with no objectives skips the merge entirely.** There is nothing to
+reconcile against, every extracted objective is new by construction, and asking a
+model to confirm that would spend tokens on hundreds of verdicts that all say the same
+thing. Such an import is exactly what it was before this step existed: one tree, one
+Apply.
+
+**Per item, because that is the granularity the mistakes happen at.** The confirm page
+groups the verdicts as _Will add (N)_, _Will enrich (N)_ with the old and new
+description side by side, and _Skipped (N)_ folded away with each reason. Additions and
+enrichments start ticked; skips have no checkbox, because there is nothing to do to a
+duplicate. Applying writes **only what is ticked**, in one transaction. Unticking a
+parent addition takes what was nested under it with it, and the page says how many
+were dropped that way rather than reparenting them somewhere you did not choose.
+
+**A failed merge is not a failed import.** If the merge call fails, the extraction is
+kept as a plain tree proposal and the run stays complete — the expensive half already
+worked, and a coarse proposal beats losing the document read. Both calls' tokens are
+recorded together on the one run that made them.
+
+**A very large outline is matched against the first 300 objectives.** The comparison is
+bounded rather than the prompt growing without limit, and the confirm page states the
+truncation so an addition you already have further down your outline is something you
+can go looking for. A merge costs roughly 2–6k tokens on top of the extraction,
+depending on how much the two outlines hold, and runs free on the fake provider like
+every other AI flow.
 
 The confirm page has its own URL and survives a refresh: the proposal is stored on
 the extraction's run row, so re-reading it costs nothing and you can extract on a

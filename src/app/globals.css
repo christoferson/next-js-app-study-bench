@@ -588,6 +588,23 @@ a:hover {
   border-style: dashed;
 }
 
+/* A proposed root the track already has. Dimmed and dashed rather than hidden,
+   so the owner sees what the import read as well as what it will do — and the
+   dashed border carries the meaning without relying on the opacity alone. The
+   dimming stops at the row's own text: the "will be skipped" note beneath it
+   stays at full contrast, because that note is the explanation. */
+.objective-node-skipped > .objective {
+  background-color: var(--color-surface);
+  border-style: dashed;
+}
+
+.objective-node-skipped > .objective > .objective-labels,
+.objective-node-skipped > .objective > .objective-title,
+.objective-node-skipped > .objective > .objective-weight,
+.objective-node-skipped .objective-tree {
+  opacity: 0.6;
+}
+
 .objective-labels {
   display: flex;
   flex-wrap: wrap;

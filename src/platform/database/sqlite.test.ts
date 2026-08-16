@@ -123,8 +123,9 @@ describe("runMigrations", () => {
       // failure rather than a silent addition. Extended in D4 with the flashcard
       // tables from migration 0003, in D5 with the session and attempt tables
       // from migration 0004, in D6 with the generation-run table from
-      // migration 0005, in D10 with `media_assets` from migration 0007, and in
-      // the personas slice with `personas` from migration 0009.
+      // migration 0005, in D10 with `media_assets` from migration 0007, in
+      // the personas slice with `personas` from migration 0009, and in D8 slice 1
+      // with the four source-library tables from migration 0014.
       expect(tables.map((table) => table.name)).toEqual([
         "certification_objectives",
         "certifications",
@@ -142,6 +143,10 @@ describe("runMigrations", () => {
         "review_schedules",
         "schema_migrations",
         "session_certifications",
+        "source_chunks",
+        "source_objective_links",
+        "source_snapshots",
+        "sources",
         "study_session_items",
         "study_sessions",
       ]);

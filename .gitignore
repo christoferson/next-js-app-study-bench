@@ -18,6 +18,13 @@
 # committed (`SPEC.md` section 9.1).
 /data/audio/
 
+# imported source text (D8) — the extracted text of every document the owner
+# imported. Not committed for two reasons: it is somebody else's copyrighted
+# exam guide as often as not, and it is local data like the database beside it.
+# The snapshot rows keep the object keys, so what is missing is visible rather
+# than silent.
+/data/sources/
+
 # next.js
 /.next/
 /out/

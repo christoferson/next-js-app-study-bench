@@ -151,10 +151,7 @@ export class FetchUrlRetriever implements UrlRetriever {
   }
 
   /** One request, with network and abort failures turned into owner-facing text. */
-  private async fetchOnce(
-    url: string,
-    signal: AbortSignal,
-  ): Promise<Response> {
+  private async fetchOnce(url: string, signal: AbortSignal): Promise<Response> {
     let response: Response;
 
     try {
@@ -207,9 +204,7 @@ export class FetchUrlRetriever implements UrlRetriever {
   ): Promise<RetrievedDocument> {
     const contentType = baseContentType(response.headers.get("content-type"));
 
-    if (
-      ![...HTML_TYPES, ...TEXT_TYPES, ...PDF_TYPES].includes(contentType)
-    ) {
+    if (![...HTML_TYPES, ...TEXT_TYPES, ...PDF_TYPES].includes(contentType)) {
       throw new SourceRetrievalFailedError(
         contentType === ""
           ? "That address did not say what kind of document it returned, so it was not imported."

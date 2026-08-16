@@ -1779,6 +1779,38 @@ a:hover {
   }
 }
 
+/* Sources */
+
+/* The beginning of a stored source document (D8).
+ *
+ * A `<pre>`, because the whitespace is the content: paragraph breaks are what the chunker
+ * split on, and a preview that reflowed them would not show what was actually stored.
+ * `white-space: pre-wrap` rather than plain `pre` so long lines wrap instead of forcing the
+ * page to scroll sideways on a phone — a PDF extraction routinely has a line no phone is
+ * wide enough for.
+ *
+ * The reading measure is deliberately not applied. This is a machine-readable artefact
+ * being inspected, not prose to be read comfortably, and narrowing it would hide how the
+ * text is actually laid out. The height is capped instead, so the preview cannot push the
+ * rest of the page out of reach.
+ */
+.text-preview {
+  max-height: 24rem;
+  overflow: auto;
+  margin: 0;
+  padding: var(--space-4);
+  background-color: var(--color-panel);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  color: var(--color-text-muted);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.8125rem;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  tab-size: 2;
+}
+
 /* "Audio unavailable", and nothing more technical than that. */
 .audio-play-error {
   font-size: 0.8125rem;

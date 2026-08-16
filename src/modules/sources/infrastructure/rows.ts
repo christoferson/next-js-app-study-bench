@@ -113,7 +113,9 @@ function toAuthority(sourceId: string, value: string): SourceAuthority {
 
 function toStatus(sourceId: string, value: string): SourceStatus {
   if (value !== "ACTIVE" && value !== "ARCHIVED") {
-    throw new Error(`Stored source ${sourceId} has an unknown status: ${value}`);
+    throw new Error(
+      `Stored source ${sourceId} has an unknown status: ${value}`,
+    );
   }
 
   return value;

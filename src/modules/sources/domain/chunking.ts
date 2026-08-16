@@ -198,16 +198,23 @@ function splitOversized(
 /**
  * The end of the last sentence that finishes at or before `limit`.
  *
- * A sentence end is `.`, `!`, `?`, `。`, `！`, `？` or `…` followed by whitespace or the
- * limit. The CJK punctuation is here because a language track's sources are Chinese
- * text, where a full stop is `。` and there is no space after it — a Latin-only rule
- * would fall through to the whitespace strategy on every Chinese paragraph and cut it
- * at arbitrary points.
+ * Two families of sentence end, and they need different rules:
  *
- * Returns the offset *after* the punctuation and any following spaces, so the next
- * piece starts at a word. `null` when there is no sentence end late enough to be worth
- * using — a cut in the first quarter of a chunk would produce a stub, so the whitespace
- * strategy gets a chance instead.
+ * - **Latin** `.`, `!`, `?`, `…` count only when whitespace or the limit follows. Without
+ *   that condition, `AWS S3.Standard`, `v1.2`, and `e.g.` would all be cut mid-token, and
+ *   a full stop inside a version number is far commoner in a technical exam guide than one
+ *   at the end of a line is rare.
+ * - **CJK** `。`, `！`, `？` count wherever they appear. These are full-width, they are
+ *   used for nothing but sentence ends, and Chinese text puts no space after them — so
+ *   requiring one would reject every sentence boundary in a Chinese document and fall
+ *   through to the whitespace strategy, which in text with no spaces at all means the hard
+ *   cut. That is precisely the failure the CJK punctuation is listed here to prevent, and
+ *   it was the behaviour before the split below existed.
+ *
+ * Returns the offset *after* the punctuation and any following spaces, so the next piece
+ * starts at a word. `null` when there is no sentence end late enough to be worth using — a
+ * cut in the first quarter of a chunk would produce a stub, so the whitespace strategy gets
+ * a chance instead.
  */
 function lastIndexOfSentenceEnd(
   text: string,
@@ -219,7 +226,15 @@ function lastIndexOfSentenceEnd(
   for (let index = limit - 1; index > minimum; index -= 1) {
     const character = text[index];
 
-    if (character === undefined || !isSentenceEnd(character)) {
+    if (character === undefined) {
+      continue;
+    }
+
+    if (isCjkSentenceEnd(character)) {
+      return skipWhitespace(text, index + 1, limit);
+    }
+
+    if (!isLatinSentenceEnd(character)) {
       continue;
     }
 
@@ -233,10 +248,13 @@ function lastIndexOfSentenceEnd(
   return null;
 }
 
-function isSentenceEnd(character: string): boolean {
-  return character === "."
-    ? true
-    : "!?…。！？".includes(character);
+/** Full-width sentence-ending punctuation, which is self-delimiting. */
+function isCjkSentenceEnd(character: string): boolean {
+  return "。！？".includes(character);
+}
+
+function isLatinSentenceEnd(character: string): boolean {
+  return ".!?…".includes(character);
 }
 
 /** The last whitespace run at or before `limit`, or `null` if there is none late. */
@@ -295,5 +313,7 @@ function toChunk(text: string, span: Span): TextChunk | null {
     end -= 1;
   }
 
-  return start === end ? null : { text: text.slice(start, end), charStart: start, charEnd: end };
+  return start === end
+    ? null
+    : { text: text.slice(start, end), charStart: start, charEnd: end };
 }

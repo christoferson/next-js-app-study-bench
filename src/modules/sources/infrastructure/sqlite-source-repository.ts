@@ -10,11 +10,7 @@ import type {
   SourceSnapshotId,
 } from "@/modules/sources/domain/source";
 import type { SourceRepository } from "@/modules/sources/ports/source-repository";
-import type {
-  SourceChunkRow,
-  SourceRow,
-  SourceSnapshotRow,
-} from "./rows";
+import type { SourceChunkRow, SourceRow, SourceSnapshotRow } from "./rows";
 import { toSource, toSourceChunk, toSourceSnapshot } from "./rows";
 
 const SOURCE_COLUMNS = `id, certification_id, title, source_type, authority,
@@ -142,9 +138,7 @@ export class SqliteSourceRepository implements SourceRepository {
     return rows.map(toSourceSnapshot);
   }
 
-  async findLatestSnapshot(
-    sourceId: SourceId,
-  ): Promise<SourceSnapshot | null> {
+  async findLatestSnapshot(sourceId: SourceId): Promise<SourceSnapshot | null> {
     const row = this.database
       .prepare(
         `SELECT ${SNAPSHOT_COLUMNS} FROM source_snapshots
@@ -157,9 +151,7 @@ export class SqliteSourceRepository implements SourceRepository {
     return row === undefined ? null : toSourceSnapshot(row);
   }
 
-  async findSnapshotById(
-    id: SourceSnapshotId,
-  ): Promise<SourceSnapshot | null> {
+  async findSnapshotById(id: SourceSnapshotId): Promise<SourceSnapshot | null> {
     const row = this.database
       .prepare(`SELECT ${SNAPSHOT_COLUMNS} FROM source_snapshots WHERE id = ?`)
       .get(id) as SourceSnapshotRow | undefined;

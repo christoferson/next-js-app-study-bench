@@ -30,7 +30,10 @@ import type {
   SourceSnapshot,
   SourceType,
 } from "@/modules/sources/domain/source";
-import { isRefreshable, objectKeyForContentHash } from "@/modules/sources/domain/source";
+import {
+  isRefreshable,
+  objectKeyForContentHash,
+} from "@/modules/sources/domain/source";
 import type { SourceRepository } from "@/modules/sources/ports/source-repository";
 import type {
   SourceTransactionRepositories,
@@ -284,17 +287,14 @@ export class SourceFacade {
   }
 
   /** One snapshot's text, or `null` when its object has gone missing. */
-  async readSnapshotText(
-    snapshot: SourceSnapshot,
-  ): Promise<string | null> {
+  async readSnapshotText(snapshot: SourceSnapshot): Promise<string | null> {
     return this.readText(snapshot);
   }
 
   /** How many sources a track has. For the track page's summary line. */
   async countActiveSources(certificationId: string): Promise<number> {
-    const sources = await this.deps.sources.listByCertification(
-      certificationId,
-    );
+    const sources =
+      await this.deps.sources.listByCertification(certificationId);
 
     return sources.filter((source) => source.status === "ACTIVE").length;
   }
@@ -338,7 +338,10 @@ export class SourceFacade {
     );
 
     return this.importText(slug, {
-      title: input.title.length > 0 ? input.title : titleFromFilename(input.filename),
+      title:
+        input.title.length > 0
+          ? input.title
+          : titleFromFilename(input.filename),
       authority: input.authority,
       sourceType: isPdf
         ? "TEXT_PDF"
@@ -432,7 +435,11 @@ export class SourceFacade {
 
     const written = await this.writeSnapshot(source.id, text, contentHash);
 
-    return { changed: true, snapshot: written.snapshot, chunkCount: written.chunkCount };
+    return {
+      changed: true,
+      snapshot: written.snapshot,
+      chunkCount: written.chunkCount,
+    };
   }
 
   /** Renames a source or changes its authority. Content is untouched. */
@@ -744,7 +751,9 @@ function titleFromUrl(url: string): string {
       .replace(/[_-]+/g, " ")
       .trim();
 
-    return readable === "" ? parsed.hostname : `${parsed.hostname}: ${readable}`;
+    return readable === ""
+      ? parsed.hostname
+      : `${parsed.hostname}: ${readable}`;
   } catch {
     return url;
   }

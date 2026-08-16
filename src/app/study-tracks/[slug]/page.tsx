@@ -13,6 +13,7 @@ import { ObjectiveTree } from "@/modules/certifications/ui/objective-tree";
 import { OriginBadge } from "@/modules/certifications/ui/origin-badge";
 import { getQuestionBankFacade } from "@/modules/question-bank/composition";
 import { getFlashcardFacade } from "@/modules/flashcards/composition";
+import { getSourceFacade } from "@/modules/sources/composition";
 
 interface StudyTrackPageProps {
   readonly params: Promise<{ readonly slug: string }>;
@@ -30,9 +31,10 @@ export default async function StudyTrackPage({ params }: StudyTrackPageProps) {
   const isArchived = certification.status === "ARCHIVED";
   // Counts, not the whole bank: the track page summarises each bank and links to
   // it (`spec/ARCHITECTURE.md` section 8).
-  const [bank, cards] = await Promise.all([
+  const [bank, cards, sourceCount] = await Promise.all([
     getQuestionBankFacade().countBank(certification.id),
     getFlashcardFacade().countBank(certification.id),
+    getSourceFacade().countActiveSources(certification.id),
   ]);
 
   return (
@@ -134,6 +136,29 @@ export default async function StudyTrackPage({ params }: StudyTrackPageProps) {
               href={`/study-tracks/${certification.slug}/questions`}
             >
               Open question bank
+            </Link>
+          </div>
+        </div>
+      </section>
+
+      {/* Between the banks and generation, which is where it belongs in the order the
+          owner works: a source is not study material itself, it is what study material
+          can be written from. Slice 1 stores and maps them; grounding generation in them
+          is the next slice. */}
+      <section aria-labelledby="sources-heading" className="section">
+        <div className="section-heading">
+          <h2 id="sources-heading">Sources</h2>
+          <p className="section-note">
+            {sourceCount === 0
+              ? "No sources yet. A source is a document you trust — an exam guide, a documentation page, your own notes — stored so study material can be written from what it actually says."
+              : `${sourceCount} active source${sourceCount === 1 ? "" : "s"}.`}
+          </p>
+          <div className="section-actions">
+            <Link
+              className="button"
+              href={`/study-tracks/${certification.slug}/sources`}
+            >
+              Sources
             </Link>
           </div>
         </div>

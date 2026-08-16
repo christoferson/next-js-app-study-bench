@@ -123,7 +123,8 @@ export async function checkUrlIsSafeToFetch(
     return {
       allowed: false,
       reason: "UNRESOLVABLE",
-      message: "That address could not be found. Check the spelling of the host.",
+      message:
+        "That address could not be found. Check the spelling of the host.",
     };
   }
 

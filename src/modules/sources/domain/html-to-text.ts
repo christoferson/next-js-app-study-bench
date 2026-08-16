@@ -144,30 +144,36 @@ export function htmlToText(html: string): string {
  * and — because nothing renders this as HTML — that is inert.
  */
 function decodeEntities(text: string): string {
-  return text.replace(/&(#x?[0-9a-fA-F]+|[a-zA-Z][a-zA-Z0-9]*);/g, (match, reference: string) => {
-    if (reference.startsWith("#")) {
-      const isHex = reference[1] === "x" || reference[1] === "X";
-      const codepoint = Number.parseInt(
-        isHex ? reference.slice(2) : reference.slice(1),
-        isHex ? 16 : 10,
-      );
+  return text.replace(
+    // `[xX]`, because `&#X43;` is as valid as `&#x43;` and the branch below already
+    // reads both. With a lowercase-only `x` here that branch was unreachable and an
+    // uppercase reference survived into the stored text as literal characters.
+    /&(#[xX]?[0-9a-fA-F]+|[a-zA-Z][a-zA-Z0-9]*);/g,
+    (match, reference: string) => {
+      if (reference.startsWith("#")) {
+        const isHex = reference[1] === "x" || reference[1] === "X";
+        const codepoint = Number.parseInt(
+          isHex ? reference.slice(2) : reference.slice(1),
+          isHex ? 16 : 10,
+        );
 
-      // Surrogates and out-of-range values would throw or produce lone surrogates that
-      // cannot be written as UTF-8. Left as written text instead.
-      if (
-        !Number.isInteger(codepoint) ||
-        codepoint < 0x20 ||
-        codepoint > 0x10ffff ||
-        (codepoint >= 0xd800 && codepoint <= 0xdfff)
-      ) {
-        return match;
+        // Surrogates and out-of-range values would throw or produce lone surrogates that
+        // cannot be written as UTF-8. Left as written text instead.
+        if (
+          !Number.isInteger(codepoint) ||
+          codepoint < 0x20 ||
+          codepoint > 0x10ffff ||
+          (codepoint >= 0xd800 && codepoint <= 0xdfff)
+        ) {
+          return match;
+        }
+
+        return String.fromCodePoint(codepoint);
       }
 
-      return String.fromCodePoint(codepoint);
-    }
-
-    return NAMED_ENTITIES.get(reference.toLowerCase()) ?? match;
-  });
+      return NAMED_ENTITIES.get(reference.toLowerCase()) ?? match;
+    },
+  );
 }
 
 /**

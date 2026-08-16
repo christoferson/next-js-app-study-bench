@@ -50,7 +50,7 @@ export function SourceList({ slug, entries }: SourceListProps) {
               archived={entry.source.status === "ARCHIVED"}
             />
           </div>
-          <p className="card-meta">
+          <p className="card-text">
             {entry.snapshotCount === 0
               ? "No stored text."
               : `${entry.snapshotCount} snapshot${entry.snapshotCount === 1 ? "" : "s"}`}
@@ -62,7 +62,7 @@ export function SourceList({ slug, entries }: SourceListProps) {
               : ""}
           </p>
           {entry.source.originalLocation === null ? null : (
-            <p className="card-meta">{entry.source.originalLocation}</p>
+            <p className="card-text">{entry.source.originalLocation}</p>
           )}
         </li>
       ))}

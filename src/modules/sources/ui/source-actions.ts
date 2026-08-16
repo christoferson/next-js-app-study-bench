@@ -16,7 +16,10 @@ import {
   linkSourceObjectiveSchema,
   sourceIdentitySchema,
 } from "@/modules/sources/application/schemas";
-import { SourceEmptyError, SourceTooLargeError } from "@/modules/sources/domain/errors";
+import {
+  SourceEmptyError,
+  SourceTooLargeError,
+} from "@/modules/sources/domain/errors";
 
 /**
  * Server Actions for the source library.
@@ -314,7 +317,5 @@ export async function unlinkSourceObjectiveAction(
 function isSupportedUpload(filename: string): boolean {
   const name = filename.toLowerCase();
 
-  return (
-    name.endsWith(".pdf") || name.endsWith(".txt") || name.endsWith(".md")
-  );
+  return name.endsWith(".pdf") || name.endsWith(".txt") || name.endsWith(".md");
 }

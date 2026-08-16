@@ -53,7 +53,9 @@ export function snapshotFixture(
   };
 }
 
-export function chunkFixture(overrides: Partial<SourceChunk> = {}): SourceChunk {
+export function chunkFixture(
+  overrides: Partial<SourceChunk> = {},
+): SourceChunk {
   return {
     id: "chunk-1",
     snapshotId: "snapshot-1",
@@ -127,9 +129,12 @@ export class FakeUrlRetriever implements UrlRetriever {
     const queue = this.queues.get(url);
     // The last scripted outcome repeats, so a refresh test that expects "unchanged"
     // does not have to script the same document twice.
-    const outcome = queue === undefined || queue.length === 0
-      ? undefined
-      : (queue.length === 1 ? queue[0] : queue.shift());
+    const outcome =
+      queue === undefined || queue.length === 0
+        ? undefined
+        : queue.length === 1
+          ? queue[0]
+          : queue.shift();
 
     if (outcome === undefined) {
       throw new Error(`No response was scripted for ${url}.`);

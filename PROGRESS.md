@@ -2,14 +2,15 @@
 
 ## Current milestone
 
-D7 — AI Tutor and Question Quality Workflow
+D8 — Source Library and Grounded Generation
 
 ## Status
 
-D7 completed on 2026-08-16, delivered in three ≤1-hour slices per the
-owner's standing rule (slice 1: AI question review, 2026-08-15; slice 2:
-tutor, 2026-08-15/16; slice 3: AI grading + challenge, 2026-08-16).
-Awaiting owner direction for what follows (D8 proposed).
+D7 completed 2026-08-16 (three slices: AI review, tutor, grading +
+challenge). D8 authorized and in progress in two slices: slice 1 (source
+library foundation) completed 2026-08-16; slice 2 (grounded/hybrid
+generation, evidence display, source verification, outdated detection)
+remains.
 
 ## Completed milestones
 
@@ -26,7 +27,8 @@ Awaiting owner direction for what follows (D8 proposed).
 
 ## In progress
 
-- None
+- D8 — Source Library and Grounded Generation (slice 1 done 2026-08-16;
+  slice 2 pending)
 
 ## Planned milestones
 
@@ -444,6 +446,40 @@ Awaiting owner direction for what follows (D8 proposed).
   correctly rejected a plausible objection on the stem's actual criterion —
   no sycophancy). Known gap: grading/challenge panels verified by component
   tests + facade smoke, not a real browser click-through.
+- 2026-08-16 (owner-driven batch alongside D8): session answer choices are
+  plain aligned rows (letter and text share a line, control centred on the
+  first line, no bordered boxes; checked state is control + weight + gold
+  bar, never colour alone). `/progress` split into a short cross-track
+  dashboard (per-track cards: last studied, streak, days active, coverage,
+  accuracy, due) and `/progress/[slug]` per-track detail (headline stats
+  incl. honest "time answering" floor with untimed count, 30-item accuracy
+  trend with documented thresholds, root-objective rollups via recursive
+  CTE with expandable children, collapsed calibration/mistakes/history).
+  The document text extractor moved to `src/platform/documents/` (generic
+  infrastructure; sources and ai-generation both consume it).
+- 2026-08-16 (D8 slice 1): source library foundation. New
+  `src/modules/sources/` module + migration `0014` (STRICT `sources`,
+  `source_snapshots` UNIQUE(source_id, content_hash), `source_chunks` with
+  half-open offsets, `source_objective_links`). Four import kinds (paste,
+  markdown/text file, text PDF via the shared extractor with a clear
+  scanned-PDF failure, web URL). Snapshots are immutable (no update path
+  exists on the port); extracted text lives in object storage under
+  `data/sources/` (git-ignored), chunk text in SQLite (~1500-char
+  paragraph-aware deterministic chunker, offsets verified against stored
+  text). URL retrieval implements every SECURITY.md section 4 control
+  (scheme allowlist, DNS-resolved private/loopback/link-local/metadata
+  rejection v4+v6 fail-closed, per-hop redirect revalidation max 3, 15s
+  timeout, 5 MB double cap, content-type allowlist, dependency-free
+  HTML→text) behind a UrlRetriever port — no live network in tests.
+  UI: sources list / import / detail (snapshots, objective links,
+  archive/restore, refresh for URL sources with changed/unchanged notice,
+  preview). Boundary: sources never imports ai-generation (slice 2 will
+  point ai-generation at sources). Audit of the interrupted first run
+  found and fixed two real bugs (CJK sentence boundaries never matched in
+  the chunker; uppercase hex entities undecoded) plus two UI polish gaps.
+  Single-track sources (SPEC lists certificationIds plural — multi-track
+  linking deferred). Slice 2 pending: grounded/hybrid generation, evidence
+  display, source verification, outdated-question detection.
 - Known deferred items: ORDERING question type (needed for HSK Writing
   Part 1 word-ordering drills), homograph numbering normalization at import,
   enrichment of the remaining ~1,500 vocabulary words pending owner quality

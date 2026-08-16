@@ -266,10 +266,18 @@ use. It is ignored by git (`/data/audio/`) for the same reason as the database: 
 clip is your study content read aloud. Set `STUDYBENCH_AUDIO_ROOT` to use another
 root directory. Tests write to temporary directories and never touch `./data`.
 
+Imported source text is written to `./data/sources/`, one file per snapshot, named
+after the hash of its content. It is ignored by git (`/data/sources/`) for a second
+reason on top of the first: an imported exam guide is usually somebody else's
+copyrighted document, and it has no business in a repository. The snapshot rows keep
+the object keys, so a missing file shows as "the stored text could not be read"
+rather than as an empty document.
+
 To start over, stop the server and delete `data/study-bench.db` (plus any
-`-shm`/`-wal` files). Delete `data/audio/` too — an orphaned file is harmless but
-a database without its files would show players that fail to load. This destroys
-local data and cannot be undone.
+`-shm`/`-wal` files). Delete `data/audio/` and `data/sources/` too — an orphaned
+file is harmless but a database without its files would show players that fail to
+load and sources with no readable text. This destroys local data and cannot be
+undone.
 
 ## Commands
 
@@ -692,6 +700,87 @@ The panel keeps the latest challenge of a question and marks it as judging an ea
 revision if you have edited the question since. Challenging is withdrawn once a
 question is retired or archived, and the dispute button is not offered for a question
 already disputed.
+
+## Sources
+
+A **source** is a document you decided to trust — an official exam guide, a
+documentation page, your own notes. Importing one stores its text so that study
+material can later be written from what the document actually says rather than from a
+model's memory. Open a track and press **Sources**, then **Add source**.
+
+There are three ways in, and the document decides which:
+
+| Route                | Use it for                                                          | Refreshable |
+| -------------------- | ------------------------------------------------------------------- | ----------- |
+| **Paste text**       | A syllabus in an email, your own notes, a page a fetch cannot reach | No          |
+| **Upload a file**    | A PDF, markdown, or text file you already have                      | No          |
+| **Fetch a web page** | Official documentation at an `http(s)` address                      | Yes         |
+
+Whichever you use, you also record an **authority** — official, trusted third party,
+written by me, general web, or unknown. Nothing about a file or an address reveals
+this: the same PDF shape covers an official exam guide and a stranger's revision
+notes, so it is your judgement that is stored, and it travels with every question
+later written from the source.
+
+Give a title or leave it blank. A file takes its filename and a URL takes its host
+and last path segment; only a paste needs one typed, because pasted text contains
+nothing to name it by.
+
+### What an import stores
+
+Three things, and the split is why a source is useful later:
+
+- A **source** row: the title, the type, the authority, where it came from. It holds
+  no text, so nothing about it changes when the page behind it is edited.
+- A **snapshot**: the extracted text at one moment, identified by the SHA-256 of it.
+  The text goes to `data/sources/`; the row keeps the hash, the size, the character
+  count, and the time. **Snapshots are never edited.**
+- **Passages**: the snapshot split into chunks of roughly 1,500 characters on
+  paragraph boundaries, each with the character offsets that locate it in the
+  document. Splitting is deterministic, so the same text always produces the same
+  passages.
+
+Only the text is kept. An uploaded PDF is read once and the bytes discarded — nothing
+in the product renders the original file, and re-extracting it would produce the same
+text.
+
+A **scanned PDF has no text layer to read**, and the import says so plainly instead of
+storing an empty document. Paste the text instead, or use a PDF with real text in it.
+
+### Refreshing a web source
+
+A source page shows **Refresh** for a web page and for nothing else — a paste has no
+address to re-read, and a filename is a label rather than a location, so the button is
+absent rather than greyed out.
+
+Refresh fetches the address again and compares content hashes:
+
+- **Unchanged** — nothing is recorded, and the page says the document had not changed
+  since the last reading. An import that silently does nothing would be
+  indistinguishable from one that failed.
+- **Changed** — a new snapshot is appended _beside_ the old one, which is kept. The
+  history of what the document said stays intact, which is what makes "this question
+  was written from text that has since changed" answerable later.
+
+Fetching is guarded (`spec/SECURITY.md` section 4): `http` and `https` only, the
+address resolved through DNS and refused if any resolved address is inside a private,
+loopback, link-local, or cloud-metadata range, the same check repeated on **every**
+redirect hop, at most three hops followed manually, a 15-second timeout, a 5 MB cap
+applied while streaming, and an allow-list of content types. HTML becomes plain text
+inside the fetch adapter, so no retrieved markup ever reaches the rest of the
+application. **The test suite never fetches anything**; the adapter is tested against a
+fake resolver and a stubbed `fetch`.
+
+### Mapping objectives, and archiving
+
+A source page maps the source to this track's objectives — your judgement about what
+the document covers, which is how later work will find the right passages of the right
+source. Mapping can never cross tracks: the objective is re-checked against the
+source's own track inside the transaction that writes the link.
+
+**Archive** takes a source out of use without destroying it, and there is no delete.
+A question written from a source cites its passages, and deleting the text a question
+was written from would leave that question unverifiable.
 
 ## Spoken audio
 

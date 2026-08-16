@@ -46,6 +46,13 @@ vi.mock("@/modules/flashcards/composition", () => ({
   getFlashcardFacade: () => ({ countBank: countCards }),
 }));
 
+const countActiveSources =
+  vi.fn<(certificationId: string) => Promise<number>>();
+
+vi.mock("@/modules/sources/composition", () => ({
+  getSourceFacade: () => ({ countActiveSources }),
+}));
+
 vi.mock("next/navigation", () => ({
   notFound: (): never => {
     throw new NotFoundSignal("NEXT_NOT_FOUND");
@@ -97,6 +104,8 @@ describe("Study-track detail page", () => {
     countBank.mockResolvedValue({ total: 0, active: 0 });
     countCards.mockReset();
     countCards.mockResolvedValue({ total: 0, active: 0, due: 0 });
+    countActiveSources.mockReset();
+    countActiveSources.mockResolvedValue(0);
   });
 
   it("renders the track name and metadata", async () => {
@@ -252,6 +261,39 @@ describe("Study-track detail page", () => {
     await renderTrackPage("demo-cloud-practitioner");
 
     expect(screen.getByText(/No flashcards yet/)).toBeVisible();
+  });
+
+  it("links to the source library for this track", async () => {
+    stubDetail();
+    countActiveSources.mockResolvedValue(3);
+
+    await renderTrackPage("demo-cloud-practitioner");
+
+    expect(screen.getByRole("link", { name: "Sources" })).toHaveAttribute(
+      "href",
+      "/study-tracks/demo-cloud-practitioner/sources",
+    );
+    expect(screen.getByText("3 active sources.")).toBeVisible();
+  });
+
+  it("counts a single source in the singular", async () => {
+    stubDetail();
+    countActiveSources.mockResolvedValue(1);
+
+    await renderTrackPage("demo-cloud-practitioner");
+
+    expect(screen.getByText("1 active source.")).toBeVisible();
+  });
+
+  it("explains what a source is when the library is empty", async () => {
+    // The count is zero by default, so this is the first thing the owner reads about
+    // the library — the link has to be reachable before there is anything behind it.
+    stubDetail();
+
+    await renderTrackPage("demo-cloud-practitioner");
+
+    expect(screen.getByText(/No sources yet/)).toBeVisible();
+    expect(screen.getByRole("link", { name: "Sources" })).toBeInTheDocument();
   });
 
   /**

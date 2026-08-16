@@ -22,10 +22,12 @@ import type { FlashcardWithRevision } from "@/modules/flashcards/domain/flashcar
 import type { QuestionRepository } from "@/modules/question-bank/ports/question-repository";
 import type { FlashcardRepository } from "@/modules/flashcards/ports/flashcard-repository";
 import {
+  AnswerNotGradableError,
   GeneratedDraftNotRejectableError,
   GenerationBatchTooLargeError,
   GenerationRunNotFoundError,
   ProviderFailure,
+  QuestionNotChallengeableError,
   QuestionNotReviewableError,
   TutorAskNotAnswerableError,
 } from "@/modules/ai-generation/domain/errors";
@@ -58,6 +60,17 @@ import {
   recommendsDispute,
 } from "@/modules/ai-generation/domain/question-review";
 import type { QuestionReview } from "@/modules/ai-generation/domain/question-review";
+import {
+  ANSWER_EVALUATION_ITEM_COUNT,
+  recommendedSelfGrade,
+} from "@/modules/ai-generation/domain/answer-evaluation";
+import type { AnswerEvaluation } from "@/modules/ai-generation/domain/answer-evaluation";
+import {
+  QUESTION_CHALLENGE_ITEM_COUNT,
+  recommendsDispute as challengeRecommendsDispute,
+  recommendsRevision,
+} from "@/modules/ai-generation/domain/question-challenge";
+import type { QuestionChallenge } from "@/modules/ai-generation/domain/question-challenge";
 import {
   TUTOR_EXCHANGE_LIMIT,
   TUTOR_ITEM_COUNT,
@@ -123,6 +136,21 @@ import {
   serializeQuestionReview,
   validateQuestionReview,
 } from "./question-review-schema";
+import {
+  ANSWER_EVALUATION_SCHEMA_DESCRIPTION,
+  ANSWER_EVALUATION_SCHEMA_NAME,
+  answerEvaluationJsonSchema,
+  answerEvaluationValidator,
+  serializeAnswerEvaluation,
+} from "./answer-evaluation-schema";
+import {
+  QUESTION_CHALLENGE_SCHEMA_DESCRIPTION,
+  QUESTION_CHALLENGE_SCHEMA_NAME,
+  questionChallengeJsonSchema,
+  readQuestionChallenge,
+  serializeQuestionChallenge,
+  validateQuestionChallenge,
+} from "./question-challenge-schema";
 import {
   TUTOR_SCHEMA_DESCRIPTION,
   TUTOR_SCHEMA_NAME,
@@ -400,6 +428,65 @@ export interface QuestionReviewOutcome {
   readonly run: GenerationRun;
   readonly review: QuestionReview | null;
   readonly qualityStatusChanged: boolean;
+}
+
+/**
+ * What one grading produced.
+ *
+ * The run either way and the grading only when there was one, exactly as a tutor ask
+ * reports itself: a provider outage is a recorded outcome the feedback screen reads rather
+ * than an exception it has to render.
+ *
+ * `recommendedSelfGrade` is the point of the whole flow, and it is deliberately a
+ * *recommendation* the view may act on rather than anything written anywhere. It is `null`
+ * for a `PARTIALLY_CORRECT` verdict, because a partial answer is exactly the case where
+ * only the owner can decide (`domain/answer-evaluation.ts`).
+ */
+export interface AnswerEvaluationOutcome {
+  readonly run: GenerationRun;
+  readonly evaluation: AnswerEvaluation | null;
+  readonly recommendedSelfGrade: "CORRECT" | "INCORRECT" | null;
+}
+
+/**
+ * The latest AI challenge of one question, as the question's page shows it.
+ *
+ * A view rather than the run row for the reasons `QuestionReviewView` is one, plus the one
+ * that makes a challenge different: the outcome may recommend an action, and whether that
+ * action is actually available is a fact about the question *now* rather than about the
+ * challenge.
+ *
+ * `offersDispute` and `revisionNote` are the two wirings the acceptance criteria ask for,
+ * and both stop short of doing anything: the first prefills a button the owner clicks, and
+ * the second is a note shown beside the edit form the owner already has. Nothing here
+ * writes a revision (`spec/AI-GUIDELINES.md` section 1.10).
+ */
+export interface QuestionChallengeView {
+  readonly run: GenerationRun;
+  readonly challenge: QuestionChallenge | null;
+  /** Set when the question has been edited since this challenge was judged. */
+  readonly staleRevision: boolean;
+  /**
+   * Whether the panel offers the prefilled dispute button.
+   *
+   * `false` for a question that is already disputed, for the reason the review's is: the
+   * button would set the state it is already in and overwrite the owner's own recorded
+   * reason.
+   */
+  readonly offersDispute: boolean;
+  /**
+   * What the challenge said a new revision would have to change, or `null`.
+   *
+   * Lifted out of the outcome so the view does not have to know the `REVISE`-plus-note
+   * rule, and named a *note* here as well, because that is all it is.
+   */
+  readonly revisionNote: string | null;
+}
+
+/** What one challenge produced. */
+export interface QuestionChallengeOutcome {
+  readonly run: GenerationRun;
+  readonly challenge: QuestionChallenge | null;
 }
 
 /** The run review screen (`SPEC.md` section 24.2, generation preview). */
@@ -1165,6 +1252,437 @@ export class GenerationFacade {
         return {
           run: await this.failRun(pending, error.category, TUTOR_ITEM_COUNT),
           response: null,
+        };
+      }
+
+      throw error;
+    }
+  }
+
+  /**
+   * Asks a model what it makes of one written answer, and records what it said.
+   *
+   * **The grading is advice. The owner's own verdict is the record.** That is the design
+   * decision this method exists to express, and it is why nothing here touches the attempt:
+   * the owner has already self-graded, the attempt keeps `SELF_ASSESSED`, and what comes
+   * back is a second opinion beside it. The one thing the outcome offers the interface is
+   * `recommendedSelfGrade`, which the feedback screen may use to *highlight* a button —
+   * never to press one (`domain/answer-evaluation.ts`).
+   *
+   * The answer text is passed in rather than read back from the attempt. The page has it,
+   * and reading it back would make this module depend on study-sessions for a string it was
+   * handed — the same boundary the module-boundaries test enforces in the other direction.
+   *
+   * Refused before the call, rather than after paying for the discovery:
+   *
+   * - a question that is not in this track, so a guessed address cannot spend a call;
+   * - a question that is not `SHORT_ANSWER`, because grading compares an answer against
+   *   expected concepts and a choice question has none — a marked choice is graded by
+   *   comparison, which needs no model at all;
+   * - a question whose revision records no expected concepts, because there is then
+   *   nothing to grade against and `checkAnswerEvaluation` would reject every answer.
+   *
+   * Any lifecycle is allowed, deliberately as for the tutor: the owner answered this
+   * question, so understanding their answer is legitimate whatever has happened to the
+   * question since.
+   */
+  async evaluateShortAnswer(
+    slug: CertificationSlug,
+    questionId: string,
+    answerText: string,
+  ): Promise<AnswerEvaluationOutcome> {
+    const certification = await this.deps.certifications.findBySlug(slug);
+
+    if (certification === null) {
+      throw new CertificationNotFoundError(slug);
+    }
+
+    const current =
+      await this.deps.questions.findWithCurrentRevision(questionId);
+
+    if (
+      current === null ||
+      current.question.certificationId !== certification.id
+    ) {
+      throw new AnswerNotGradableError(
+        "That question no longer exists in this track.",
+      );
+    }
+
+    const { content } = current.revision;
+
+    if (content.type !== "SHORT_ANSWER") {
+      throw new AnswerNotGradableError(
+        "Only a written answer can be graded this way. A question with choices is marked by comparing what you picked, which needs no model call.",
+      );
+    }
+
+    const expectedConcepts = content.expectedConcepts;
+
+    if (expectedConcepts.length === 0) {
+      throw new AnswerNotGradableError(
+        "This question records no expected concepts, so there is nothing to grade an answer against. Add them by editing the question.",
+      );
+    }
+
+    const answer = answerText.trim();
+
+    if (answer.length === 0) {
+      throw new AnswerNotGradableError("There is no answer text to grade.");
+    }
+
+    const [objectives, linkedIds] = await Promise.all([
+      this.deps.objectives.listByCertification(certification.id),
+      this.deps.questions.listObjectiveLinks(questionId),
+    ]);
+    const persona = await this.resolvePersona(certification, null);
+    const prompt = renderPrompt("ANSWER_EVALUATION", {
+      persona,
+      trackName: certification.name,
+      examCode: certification.examCode,
+      objectives: objectives
+        .filter((objective) => linkedIds.includes(objective.id))
+        .map((objective) => ({
+          id: objective.id,
+          code: objective.code,
+          title: objective.title,
+          description: objective.description,
+          kind: objectiveKind(objectives, objective.id),
+        })),
+      spec: {
+        itemCount: ANSWER_EVALUATION_ITEM_COUNT,
+        objectiveIds: [],
+        difficulty: null,
+        additionalInstructions: null,
+        questionTypes: [],
+        cardTypes: [],
+      },
+      reviewedRevision: current.revision,
+      gradedAnswer: answer,
+    });
+    // The answer is hashed rather than named, unlike the revision: a fingerprint column
+    // must not become a copy of what the owner typed, and grading the same answer twice
+    // still has to fingerprint the same. The revision travels as its identifier, which is
+    // immutable, so an edit changes the fingerprint by construction.
+    const inputHash = sha256Hex(
+      [
+        `certification=${certification.id}`,
+        "kind=ANSWER_EVALUATION",
+        `question=${questionId}`,
+        `revision=${current.revision.id}`,
+        `answer=${sha256Hex(answer)}`,
+      ].join("\n"),
+    );
+    const pending: GenerationRun = {
+      id: this.deps.ids.nextId(),
+      certificationId: certification.id,
+      itemKind: "ANSWER_EVALUATION",
+      // Marked from the model's own knowledge against concepts the owner recorded. No
+      // source was consulted, and the panel says so in words too.
+      generationMode: "MODEL_KNOWLEDGE",
+      // The review gateway, for the reason the tutor uses it: marking is a judging job
+      // rather than an authoring one, and the run has to record the model actually asked.
+      modelProvider: this.reviewGateway.provider,
+      modelId: this.reviewGateway.modelId,
+      personaId: persona.id,
+      personaVersion: persona.version,
+      promptTemplateId: templateIdForItemKind("ANSWER_EVALUATION"),
+      promptTemplateVersion: templateVersionForItemKind("ANSWER_EVALUATION"),
+      inputHash,
+      selectedSourceSnapshotIds: [],
+      requestedItemCount: ANSWER_EVALUATION_ITEM_COUNT,
+      successfulItemCount: 0,
+      failedItemCount: 0,
+      usageMetadata: null,
+      failureReason: null,
+      proposedPayload: null,
+      // Stays null forever: a grading proposes nothing to write, not even to the attempt.
+      appliedAt: null,
+      subjectQuestionId: questionId,
+      // The exact revision whose concepts the answer was marked against, so a later edit
+      // makes the grading visibly historical rather than silently misattributed.
+      subjectRevisionId: current.revision.id,
+      startedAt: this.deps.clock.now(),
+      completedAt: null,
+      status: "PENDING",
+    };
+
+    await this.deps.unitOfWork.transaction(async ({ runs }) => {
+      await runs.create(pending);
+    });
+
+    try {
+      const produced = await this.reviewGateway.generateStructured({
+        system: prompt.system,
+        user: prompt.user,
+        schemaName: ANSWER_EVALUATION_SCHEMA_NAME,
+        schemaDescription: ANSWER_EVALUATION_SCHEMA_DESCRIPTION,
+        schema: answerEvaluationJsonSchema(),
+        // Closed over the question's own concepts, so the gateway stays ignorant of them
+        // and a grading that names a concept the question does not have is still refused.
+        validate: answerEvaluationValidator(expectedConcepts),
+        maxOutputTokens: maxOutputTokensFor(
+          "ANSWER_EVALUATION",
+          ANSWER_EVALUATION_ITEM_COUNT,
+        ),
+      });
+      const evaluation = produced.value;
+      const completed: GenerationRun = {
+        ...pending,
+        successfulItemCount: ANSWER_EVALUATION_ITEM_COUNT,
+        failedItemCount: 0,
+        usageMetadata: produced.usage,
+        proposedPayload: serializeAnswerEvaluation(evaluation),
+        completedAt: this.deps.clock.now(),
+        status: "COMPLETED",
+      };
+
+      await this.deps.unitOfWork.transaction(async ({ runs }) => {
+        await runs.complete(completed);
+      });
+
+      return {
+        run: completed,
+        evaluation,
+        recommendedSelfGrade: recommendedSelfGrade(evaluation.verdict),
+      };
+    } catch (error) {
+      if (error instanceof ProviderFailure) {
+        return {
+          run: await this.failRun(
+            pending,
+            error.category,
+            ANSWER_EVALUATION_ITEM_COUNT,
+          ),
+          evaluation: null,
+          recommendedSelfGrade: null,
+        };
+      }
+
+      throw error;
+    }
+  }
+
+  /**
+   * The latest AI challenge of one question, for the panel on its page.
+   *
+   * `null` when the question has never been challenged, which is the ordinary case: the
+   * page then shows the challenge form and no outcome.
+   */
+  async findQuestionChallenge(
+    questionId: string,
+  ): Promise<QuestionChallengeView | null> {
+    const run = await this.deps.runs.findLatestChallengeForQuestion(questionId);
+
+    if (run === null) {
+      return null;
+    }
+
+    const current =
+      await this.deps.questions.findWithCurrentRevision(questionId);
+
+    if (current === null) {
+      return null;
+    }
+
+    const challenge = readQuestionChallenge(run.proposedPayload);
+
+    return {
+      run,
+      challenge,
+      staleRevision:
+        run.subjectRevisionId !== null &&
+        run.subjectRevisionId !== current.question.currentRevisionId,
+      offersDispute:
+        challenge !== null &&
+        challengeRecommendsDispute(challenge) &&
+        current.question.qualityStatus !== "DISPUTED",
+      revisionNote:
+        challenge !== null && recommendsRevision(challenge)
+          ? challenge.suggestedRevisionNote
+          : null,
+    };
+  }
+
+  /**
+   * Asks a model to adjudicate one objection the owner raised, and records what it said.
+   *
+   * This is the acceptance criterion "a challenge can produce a structured quality
+   * finding" (`SPEC.md` section 25.2 item 11), and the criterion it must not break is the
+   * next one: the AI never rewrites the question
+   * (`spec/AI-GUIDELINES.md` section 1.10, item 12).
+   *
+   * Both are held by construction rather than by care here:
+   *
+   * - **The finding is structured.** A verdict about whose reading holds, a recommendation,
+   *   the argument, and at most a *note* about what a revision would change — validated,
+   *   consistency-checked, and stored on the run so it is readable months later beside the
+   *   question (`domain/question-challenge.ts`).
+   * - **The revision stays the owner's.** There is no field in `QuestionChallenge` that can
+   *   carry a replacement stem, choice, answer key, or explanation, and no call in this
+   *   method that writes to a question at all. A `DISPUTE` recommendation becomes a
+   *   prefilled button the owner clicks; a `REVISE` recommendation becomes a note beside
+   *   the edit form they already have.
+   * - **The objection is data, not instruction.** It travels in the user message inside its
+   *   own delimiter pair, labelled as the person's words, and the system message says the
+   *   adjudicator's job cannot be changed by anything inside those markers
+   *   (`spec/SECURITY.md`, `spec/AI-GUIDELINES.md` section 1.7).
+   *
+   * The lifecycle rule is the review's rather than the tutor's: challenging something the
+   * owner has already retired or archived would spend a call on a decision that has been
+   * made.
+   */
+  async challengeQuestion(
+    slug: CertificationSlug,
+    questionId: string,
+    reason: string,
+  ): Promise<QuestionChallengeOutcome> {
+    const certification = await this.deps.certifications.findBySlug(slug);
+
+    if (certification === null) {
+      throw new CertificationNotFoundError(slug);
+    }
+
+    const current =
+      await this.deps.questions.findWithCurrentRevision(questionId);
+
+    if (
+      current === null ||
+      current.question.certificationId !== certification.id
+    ) {
+      throw new QuestionNotChallengeableError(
+        "That question no longer exists in this track.",
+      );
+    }
+
+    if (!isReviewableLifecycle(current.question.lifecycleStatus)) {
+      throw new QuestionNotChallengeableError(
+        "Only a draft or active question can be challenged. You have already taken this one out of study.",
+      );
+    }
+
+    const objection = reason.trim();
+
+    if (objection.length === 0) {
+      throw new QuestionNotChallengeableError(
+        "Say what you disagree with, so there is something to judge.",
+      );
+    }
+
+    const [objectives, linkedIds] = await Promise.all([
+      this.deps.objectives.listByCertification(certification.id),
+      this.deps.questions.listObjectiveLinks(questionId),
+    ]);
+    const persona = await this.resolvePersona(certification, null);
+    const prompt = renderPrompt("QUESTION_CHALLENGE", {
+      persona,
+      trackName: certification.name,
+      examCode: certification.examCode,
+      objectives: objectives
+        .filter((objective) => linkedIds.includes(objective.id))
+        .map((objective) => ({
+          id: objective.id,
+          code: objective.code,
+          title: objective.title,
+          description: objective.description,
+          kind: objectiveKind(objectives, objective.id),
+        })),
+      spec: {
+        itemCount: QUESTION_CHALLENGE_ITEM_COUNT,
+        objectiveIds: [],
+        difficulty: null,
+        additionalInstructions: null,
+        questionTypes: [],
+        cardTypes: [],
+      },
+      reviewedRevision: current.revision,
+      challengeReason: objection,
+    });
+    // The objection is hashed rather than carried, for the reason the graded answer is: a
+    // fingerprint must not become a copy of what the owner wrote, and two different
+    // objections to the same revision are two different requests.
+    const inputHash = sha256Hex(
+      [
+        `certification=${certification.id}`,
+        "kind=QUESTION_CHALLENGE",
+        `question=${questionId}`,
+        `revision=${current.revision.id}`,
+        `reason=${sha256Hex(objection)}`,
+      ].join("\n"),
+    );
+    const pending: GenerationRun = {
+      id: this.deps.ids.nextId(),
+      certificationId: certification.id,
+      itemKind: "QUESTION_CHALLENGE",
+      generationMode: "MODEL_KNOWLEDGE",
+      modelProvider: this.reviewGateway.provider,
+      modelId: this.reviewGateway.modelId,
+      personaId: persona.id,
+      personaVersion: persona.version,
+      promptTemplateId: templateIdForItemKind("QUESTION_CHALLENGE"),
+      promptTemplateVersion: templateVersionForItemKind("QUESTION_CHALLENGE"),
+      inputHash,
+      selectedSourceSnapshotIds: [],
+      requestedItemCount: QUESTION_CHALLENGE_ITEM_COUNT,
+      successfulItemCount: 0,
+      failedItemCount: 0,
+      usageMetadata: null,
+      failureReason: null,
+      proposedPayload: null,
+      // Stays null forever, including for a challenge that recommends a revision: the
+      // revision is the owner's own edit, so there is nothing here to apply.
+      appliedAt: null,
+      subjectQuestionId: questionId,
+      subjectRevisionId: current.revision.id,
+      startedAt: this.deps.clock.now(),
+      completedAt: null,
+      status: "PENDING",
+    };
+
+    await this.deps.unitOfWork.transaction(async ({ runs }) => {
+      await runs.create(pending);
+    });
+
+    try {
+      const produced = await this.reviewGateway.generateStructured({
+        system: prompt.system,
+        user: prompt.user,
+        schemaName: QUESTION_CHALLENGE_SCHEMA_NAME,
+        schemaDescription: QUESTION_CHALLENGE_SCHEMA_DESCRIPTION,
+        schema: questionChallengeJsonSchema(),
+        validate: validateQuestionChallenge,
+        maxOutputTokens: maxOutputTokensFor(
+          "QUESTION_CHALLENGE",
+          QUESTION_CHALLENGE_ITEM_COUNT,
+        ),
+      });
+      const challenge = produced.value;
+      const completed: GenerationRun = {
+        ...pending,
+        successfulItemCount: QUESTION_CHALLENGE_ITEM_COUNT,
+        failedItemCount: 0,
+        usageMetadata: produced.usage,
+        proposedPayload: serializeQuestionChallenge(challenge),
+        completedAt: this.deps.clock.now(),
+        status: "COMPLETED",
+      };
+
+      // Nothing is written to the question, not even on a STORED_ANSWER_WRONG verdict.
+      // Disputing is the owner's click, offered prefilled by `findQuestionChallenge`.
+      await this.deps.unitOfWork.transaction(async ({ runs }) => {
+        await runs.complete(completed);
+      });
+
+      return { run: completed, challenge };
+    } catch (error) {
+      if (error instanceof ProviderFailure) {
+        return {
+          run: await this.failRun(
+            pending,
+            error.category,
+            QUESTION_CHALLENGE_ITEM_COUNT,
+          ),
+          challenge: null,
         };
       }
 

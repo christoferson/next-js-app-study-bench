@@ -9,8 +9,10 @@ import { getGenerationFacade } from "@/modules/ai-generation/composition";
 import {
   acceptQuestionReviewAction,
   askTutorAction,
+  challengeQuestionAction,
   reviewQuestionAction,
 } from "@/modules/ai-generation/ui/actions";
+import { QuestionChallengePanel } from "@/modules/ai-generation/ui/question-challenge-panel";
 import { QuestionReviewPanel } from "@/modules/ai-generation/ui/question-review-panel";
 import { TutorPanel } from "@/modules/ai-generation/ui/tutor-panel";
 import {
@@ -69,7 +71,7 @@ export default async function QuestionDetailPage({
   // Read-aloud was removed from question pages by owner decision (2026-08-15):
   // question audio belongs to future listening-comprehension study, not the
   // management view. Vocabulary card audio is unaffected.
-  const [attempts, aiReview, tutorExchanges] = await Promise.all([
+  const [attempts, aiReview, tutorExchanges, aiChallenge] = await Promise.all([
     getStudyFacade().listAttemptsForQuestion(question.id),
     // The latest completed review of this question, or `null` if it has never been
     // reviewed. A cheap read that makes the findings panel part of the question
@@ -79,6 +81,11 @@ export default async function QuestionDetailPage({
     // answer survives the reload it was recorded on: the ask action revalidates this
     // path rather than returning the answer to the client.
     getGenerationFacade().findTutorExchanges(question.id),
+    // The latest challenge, or `null` if the owner has never objected to this question.
+    // Read here rather than inside the panel for the reason the review is: the panel is a
+    // client island, and a server read keeps the outcome durable across the reload the
+    // challenge action revalidates.
+    getGenerationFacade().findQuestionChallenge(question.id),
   ]);
   // Matches `isReviewableLifecycle` in the facade, which re-checks it: a retired or
   // archived question is out of study, so reviewing it would spend a model call on
@@ -339,6 +346,37 @@ export default async function QuestionDetailPage({
           exchanges={tutorExchanges}
           questionId={question.id}
           slug={certification.slug}
+        />
+      </section>
+
+      {/* Last of the three AI panels and directly before Manage, because a challenge is
+          where reading turns into a decision: the two actions it argues for — dispute, or
+          write a new revision — are the controls in the section below and the edit form it
+          links to.
+
+          `id="challenge"` is the anchor a run-history row links to, so a recorded challenge
+          is reachable from the run that spent the call. */}
+      <section
+        aria-labelledby="challenge-heading"
+        className="section"
+        id="challenge"
+        style={{ scrollMarginTop: "1rem" }}
+      >
+        <div className="section-heading">
+          <h2 id="challenge-heading">Challenge this question</h2>
+          <p className="section-note">
+            If you think the marked answer is wrong, say why and a model will
+            argue both readings. It reaches a verdict and recommends what to do;
+            it never rewrites the question, so a new revision is yours to write.
+          </p>
+        </div>
+        <QuestionChallengePanel
+          slug={certification.slug}
+          questionId={question.id}
+          challengeable={reviewable}
+          view={aiChallenge}
+          challengeAction={challengeQuestionAction}
+          disputeAction={disputeQuestionAction}
         />
       </section>
 

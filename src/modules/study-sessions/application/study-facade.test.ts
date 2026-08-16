@@ -639,6 +639,169 @@ describe("StudyFacade", () => {
     });
   });
 
+  /**
+   * The disputed-question exclusion, asserted per mode rather than once.
+   *
+   * A dispute is the owner's way of taking a question out of study without
+   * destroying it, so the exclusion is a property of composition and not of one
+   * mode's ranking. `MISTAKE_REVIEW` is the mode worth pinning: its candidates are
+   * questions the owner is known to have got wrong, which is exactly the set a
+   * disputed question is most likely to be in, and the mode could plausibly have
+   * been implemented from attempt history instead of from studiable candidates.
+   *
+   * This behaviour has existed since D5. These tests are the regression net for it,
+   * because the question-challenge workflow now offers disputing as a one-click
+   * outcome, and a challenge is only worth acting on if the dispute it recommends
+   * actually removes the question from study.
+   */
+  describe("a disputed question", () => {
+    /** Marks a question disputed at `LATER`, the way the dispute action does. */
+    async function dispute(id: string): Promise<void> {
+      await questions.setQualityStatus(
+        id,
+        "DISPUTED",
+        "The marked answer looks wrong.",
+        LATER,
+      );
+    }
+
+    it("leaves a single-track session", async () => {
+      await createQuestion("q-good");
+      await createQuestion("q-bad");
+
+      await dispute("q-bad");
+
+      const session = await facade.startSession(startInput());
+      const view = await facade.findSession(session.id);
+
+      expect(view?.itemCount).toBe(1);
+      expect(view?.current?.item.content).toMatchObject({
+        questionId: "q-good",
+      });
+    });
+
+    it("leaves a mixed-track session", async () => {
+      await createQuestion("q-first");
+      await createQuestion("q-second", { certificationId: SECOND_TRACK.id });
+
+      await dispute("q-second");
+
+      const session = await facade.startSession(
+        startInput({
+          mode: "MIXED_TRACKS",
+          certificationIds: [TRACK.id, SECOND_TRACK.id],
+        }),
+      );
+      const view = await facade.findSession(session.id);
+
+      expect(view?.itemCount).toBe(1);
+      expect(view?.current?.item.content).toMatchObject({
+        questionId: "q-first",
+      });
+    });
+
+    it("leaves a mistake review even though the mistake is still recorded", async () => {
+      // The mode most at risk: the question is in the mistake set by construction.
+      await createQuestion("q-1");
+      await createQuestion("q-2");
+
+      const first = await facade.startSession(
+        startInput({ mode: "QUESTIONS_ONLY" }),
+      );
+
+      // Both answered incorrectly, so both are mistakes before the dispute.
+      await answerCurrent(first.id, "choice-2");
+      await answerCurrent(first.id, "choice-2");
+      await facade.finishSession(first.id);
+
+      await dispute("q-2");
+
+      const review = await facade.startSession(
+        startInput({ mode: "MISTAKE_REVIEW" }),
+      );
+      const view = await facade.findSession(review.id);
+
+      expect(view?.itemCount).toBe(1);
+      expect(view?.current?.item.content).toMatchObject({ questionId: "q-1" });
+
+      // The attempt itself is untouched: a dispute removes the question from
+      // study, not the history of having answered it.
+      const attempts = await facade.listAttemptsForQuestion("q-2");
+
+      expect(attempts).toHaveLength(1);
+    });
+
+    it("stops offering a mode that only a disputed question made available", async () => {
+      await createQuestion("q-1");
+
+      const session = await facade.startSession(
+        startInput({ mode: "QUESTIONS_ONLY" }),
+      );
+
+      await answerCurrent(session.id, "choice-2");
+      await facade.finishSession(session.id);
+
+      await dispute("q-1");
+
+      const form = await facade.findStartForm(null);
+
+      // Both counts and both modes, because a control that starts an empty
+      // session is the failure this availability check exists to prevent.
+      expect(form.activeQuestionCount).toBe(0);
+      expect(
+        form.modes.find((mode) => mode.mode === "MISTAKE_REVIEW")?.available,
+      ).toBe(false);
+      expect(
+        form.modes.find((mode) => mode.mode === "QUESTIONS_ONLY")?.available,
+      ).toBe(false);
+      await expect(
+        facade.startSession(startInput({ mode: "MISTAKE_REVIEW" })),
+      ).rejects.toBeInstanceOf(NoStudyContentError);
+    });
+
+    it("returns to study when the dispute is resolved", async () => {
+      // A dispute is reversible by design: resolving one is how a challenge that
+      // turned out to be wrong is undone.
+      await createQuestion("q-1");
+
+      await dispute("q-1");
+      await questions.setQualityStatus("q-1", "SOURCE_CHECKED", null, LATER);
+
+      const session = await facade.startSession(
+        startInput({ mode: "QUESTIONS_ONLY" }),
+      );
+      const view = await facade.findSession(session.id);
+
+      expect(view?.itemCount).toBe(1);
+    });
+
+    it("excludes no other quality status", async () => {
+      // Only DISPUTED removes a question from study. OUTDATED and the review
+      // statuses are notes about provenance, not withdrawals.
+      for (const [index, status] of (
+        [
+          "UNREVIEWED",
+          "AI_REVIEWED",
+          "SOURCE_CHECKED",
+          "USER_APPROVED",
+          "OUTDATED",
+        ] as const
+      ).entries()) {
+        const id = `q-status-${index}`;
+
+        await createQuestion(id);
+        await questions.setQualityStatus(id, status, null, LATER);
+      }
+
+      const session = await facade.startSession(
+        startInput({ mode: "QUESTIONS_ONLY" }),
+      );
+      const view = await facade.findSession(session.id);
+
+      expect(view?.itemCount).toBe(5);
+    });
+  });
+
   describe("submitting an answer", () => {
     it("records the attempt and completes the item together", async () => {
       await createQuestion("q-1");

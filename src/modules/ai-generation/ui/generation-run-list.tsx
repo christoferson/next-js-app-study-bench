@@ -124,6 +124,25 @@ function subjectRunKind(kind: GeneratedItemKind): {
         deleted: "The question this answer was about has since been deleted.",
         anchor: "#tutor",
       };
+    case "ANSWER_EVALUATION":
+      return {
+        provenance: "Marked from model knowledge",
+        outcome: "one written answer graded",
+        link: "Open the question that was answered",
+        deleted: "The question this grading was about has since been deleted.",
+        // No anchor: a grading is read on the feedback screen of the session it happened
+        // in, which is gone by the time this row is read. The question is what is left.
+        anchor: "",
+      };
+    case "QUESTION_CHALLENGE":
+      return {
+        provenance: "Adjudicated from model knowledge",
+        outcome: "one objection judged",
+        link: "Read the outcome on the question",
+        deleted:
+          "The question this challenge was about has since been deleted.",
+        anchor: "#challenge",
+      };
     case "QUESTION":
     case "FLASHCARD":
     case "ENRICH_VOCABULARY":

@@ -13,12 +13,16 @@ import {
   isNothingToEnrichNotice,
 } from "@/modules/ai-generation/application/generation-facade";
 import {
+  challengeQuestionSchema,
   enrichmentRequestSchema,
   generationRequestSchema,
+  gradeAnswerSchema,
   rejectDraftSchema,
   reviewQuestionSchema,
   tutorAskSchema,
 } from "@/modules/ai-generation/application/schemas";
+import type { AnswerGradingState } from "@/modules/ai-generation/ui/grading-state";
+import { IDLE_GRADING_STATE } from "@/modules/ai-generation/ui/grading-state";
 
 /**
  * Server Actions for AI generation.
@@ -271,6 +275,107 @@ export async function askTutorAction(
 
   // The run history gains a row whatever the outcome was, including a failure, because an
   // ask that failed still spent a call.
+  revalidatePath(runsPath(slug));
+
+  return { status: "idle", fieldErrors: {}, values: {} };
+}
+
+/**
+ * Grades one written answer and hands the result straight back to the panel.
+ *
+ * The only action in this module that returns model output, and the reason is the shape of
+ * the flow rather than convenience: a grading is about one attempt on one session's feedback
+ * screen, the run records it against the *question*, and there is no attempt-to-run link a
+ * revalidated page could read it back through. So the panel that asked for it receives it,
+ * and durability is the run history's job (`ui/grading-state.ts`).
+ *
+ * Nothing is revalidated on the session's path, because nothing about the session changed:
+ * the attempt keeps the verdict the owner recorded, which is the whole point of the advisory
+ * design. The run history is revalidated, because a call was spent either way.
+ *
+ * A provider failure comes back as a category on the state rather than as a form error, so
+ * the panel can say the grading did not arrive without implying the owner's own verdict is
+ * in doubt. What does become a form error is an answer that cannot be graded at all
+ * (`AnswerNotGradableError`) — a choice question, or a question with no expected concepts.
+ */
+export async function gradeAnswerAction(
+  _state: AnswerGradingState,
+  form: FormData,
+): Promise<AnswerGradingState> {
+  const slug = readString(form, "slug");
+
+  try {
+    const input = parseInput(gradeAnswerSchema, {
+      questionId: readString(form, "questionId"),
+      answerText: readString(form, "answerText"),
+    });
+    const outcome = await getGenerationFacade().evaluateShortAnswer(
+      slug,
+      input.questionId,
+      input.answerText,
+    );
+
+    // Revalidated because the run history gained a row, not because anything about the
+    // question or the attempt did.
+    revalidatePath(runsPath(slug));
+
+    return {
+      ...IDLE_GRADING_STATE,
+      grading: outcome.evaluation,
+      failureCategory: outcome.run.failureReason,
+    };
+  } catch (error) {
+    if (isDomainError(error)) {
+      return { ...toInvalidFormState(error, form), ...GRADING_RESULT_ABSENT };
+    }
+    throw error;
+  }
+}
+
+/** No grading and no provider failure: the two result fields of an invalid submission. */
+const GRADING_RESULT_ABSENT = {
+  grading: null,
+  failureCategory: null,
+} as const;
+
+/**
+ * Challenges one question and stays on its page.
+ *
+ * No redirect, for the review's reason: the outcome belongs beside the question it is about,
+ * and revalidating the question's path is what puts it there.
+ *
+ * A provider failure is not a form error here either — the panel keeps showing the last
+ * outcome that did arrive, and the spent call is readable in the run history. What does
+ * become a form error is an objection that cannot be judged: an empty one, one longer than
+ * the bound, or a question already out of study (`QuestionNotChallengeableError`).
+ */
+export async function challengeQuestionAction(
+  _state: FormState,
+  form: FormData,
+): Promise<FormState> {
+  const slug = readString(form, "slug");
+
+  try {
+    const input = parseInput(challengeQuestionSchema, {
+      questionId: readString(form, "questionId"),
+      reason: readString(form, "reason"),
+    });
+
+    await getGenerationFacade().challengeQuestion(
+      slug,
+      input.questionId,
+      input.reason,
+    );
+
+    revalidatePath(`${trackPath(slug)}/questions/${input.questionId}`);
+  } catch (error) {
+    if (isDomainError(error)) {
+      return toInvalidFormState(error, form);
+    }
+    throw error;
+  }
+
+  // The run history gains a row whatever the outcome was, including a failure.
   revalidatePath(runsPath(slug));
 
   return { status: "idle", fieldErrors: {}, values: {} };

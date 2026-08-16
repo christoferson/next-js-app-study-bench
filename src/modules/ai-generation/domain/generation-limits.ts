@@ -1,4 +1,6 @@
+import { ANSWER_EVALUATION_ITEM_COUNT } from "./answer-evaluation";
 import type { GeneratedItemKind } from "./generation-run";
+import { QUESTION_CHALLENGE_ITEM_COUNT } from "./question-challenge";
 import { QUESTION_REVIEW_ITEM_COUNT } from "./question-review";
 import { TUTOR_ITEM_COUNT } from "./tutor-exchange";
 
@@ -68,6 +70,14 @@ export function maxItemsFor(kind: GeneratedItemKind): number {
     // its own.
     case "TUTOR_EXPLANATION":
       return TUTOR_ITEM_COUNT;
+    // One written answer, graded once. The button is on the feedback screen for a single
+    // attempt, so there is nothing to batch.
+    case "ANSWER_EVALUATION":
+      return ANSWER_EVALUATION_ITEM_COUNT;
+    // One objection, adjudicated once. Two objections to the same question are two
+    // challenges, each recorded with the reason it was about.
+    case "QUESTION_CHALLENGE":
+      return QUESTION_CHALLENGE_ITEM_COUNT;
   }
 }
 
@@ -138,5 +148,13 @@ function tokensPerItem(kind: GeneratedItemKind): number {
     // than one that fails loudly.
     case "TUTOR_EXPLANATION":
       return 2_000;
+    // A grading is two short lists of concepts copied back plus a paragraph of feedback,
+    // so it is the cheapest of the prose kinds.
+    case "ANSWER_EVALUATION":
+      return 1_500;
+    // A challenge has to argue both readings before deciding, which is two arguments plus
+    // a conclusion, so it needs about what a review needs.
+    case "QUESTION_CHALLENGE":
+      return 2_500;
   }
 }

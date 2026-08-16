@@ -2,18 +2,14 @@
 
 ## Current milestone
 
-Between milestones. D6 completed 2026-08-12; D10 (Polly audio) was brought
-forward and completed 2026-08-14 by owner decision. Substantial
-user-authorized non-milestone work through 2026-08-15 is recorded in
-Decisions below. D7 slice 1 (AI review of draft questions) is authorized
-next.
+D7 — AI Tutor and Question Quality Workflow
 
 ## Status
 
-D7 authorized by the owner on 2026-08-15, delivered in ≤1-hour slices
-(owner's standing rule). Slice 1 (AI question review) completed 2026-08-15.
-Slice 2 (tutor) authorized and in progress. Slice 3 (AI grading +
-challenge/dispute) remains.
+D7 completed on 2026-08-16, delivered in three ≤1-hour slices per the
+owner's standing rule (slice 1: AI question review, 2026-08-15; slice 2:
+tutor, 2026-08-15/16; slice 3: AI grading + challenge, 2026-08-16).
+Awaiting owner direction for what follows (D8 proposed).
 
 ## Completed milestones
 
@@ -26,11 +22,11 @@ challenge/dispute) remains.
 - D10 — Polly Audio Generation (2026-08-14, brought forward; audio study
   packs deferred to D9, listening question type and audio card type
   deferred, S3 storage deferred to D13)
+- D7 — AI Tutor and Question Quality Workflow (2026-08-16, three slices)
 
 ## In progress
 
-- D7 — AI Tutor and Question Quality Workflow (authorized 2026-08-15,
-  slice 1 starting)
+- None
 
 ## Planned milestones
 
@@ -417,6 +413,37 @@ challenge/dispute) remains.
   monochrome icon buttons for inline actions (bundled SVG, no network);
   collapsible objective domains and long histories; `unpdf` marked
   server-external (build warning fixed).
+- 2026-08-15/16 (D7 slice 2): AI tutor. `tutor-explanation` template v1
+  (teacher stance: persona role + guidance + prohibitions; explains the
+  CURRENT stored content and defers correctness doubts to review; no
+  citations; model-knowledge-only stated). Six single-call ask kinds
+  (explain answer / why is choice X wrong / simpler / technical / example /
+  follow-up question) — deliberately NOT a chat: bounded structured calls
+  cover every SPEC 6.16 tutoring ask; the gateway's `converse` method
+  remains unimplemented. Follow-up questions are ephemeral panel content,
+  never bank items. TUTOR_EXPLANATION runs (migration `0012`) with subject
+  question+revision; tutor uses the review model id. Panel at `#tutor` on
+  question pages; session feedback deep-links to it. Live-verified
+  (~3.3k tokens, high-quality explanation, question byte-identical after).
+- 2026-08-16 (D7 slice 3, completes D7): AI grading + challenge.
+  `answer-evaluation` v1: advisory grading of short answers
+  (verdict/conceptsCovered/conceptsMissed/feedback); the AI RECOMMENDS and
+  the owner still clicks the self-grade — evaluationMode stays
+  SELF_ASSESSED, no attempts-table change (deliberate reading of SPEC 6.16
+  "Grade a short answer"). `question-challenge` v1: adversarial
+  adjudication of an owner objection (steelmans both sides; verdict
+  STORED_ANSWER_STANDS/OWNER_HAS_A_POINT/STORED_ANSWER_WRONG;
+  recommendation KEEP/DISPUTE/REVISE with consistency rules — wrong answer
+  cannot recommend KEEP; REVISE requires a note, KEEP forbids one). DISPUTE
+  → prefilled dispute button; REVISE → suggested note displayed for the
+  owner to apply via the existing edit flow (owner-controlled revision
+  proposal per AI-GUIDELINES 1.10 — the AI never writes revisions).
+  Migration `0013` widens run kinds (ANSWER_EVALUATION,
+  QUESTION_CHALLENGE). Disputed-question exclusion from sessions is pinned
+  by regression test. Live challenge verified (~2.9k tokens; the model
+  correctly rejected a plausible objection on the stem's actual criterion —
+  no sycophancy). Known gap: grading/challenge panels verified by component
+  tests + facade smoke, not a real browser click-through.
 - Known deferred items: ORDERING question type (needed for HSK Writing
   Part 1 word-ordering drills), homograph numbering normalization at import,
   enrichment of the remaining ~1,500 vocabulary words pending owner quality

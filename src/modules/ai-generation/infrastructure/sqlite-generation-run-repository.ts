@@ -157,6 +157,30 @@ export class SqliteGenerationRunRepository implements GenerationRunRepository {
     return rows.map(toGenerationRun);
   }
 
+  /**
+   * The newest completed challenge of one question.
+   *
+   * Same index and same three conditions as the review query, with a different kind. The
+   * `item_kind` filter is what keeps a challenge out of the findings panel and a review
+   * out of the challenge panel, now that four kinds of run set the same subject column.
+   */
+  async findLatestChallengeForQuestion(
+    questionId: string,
+  ): Promise<GenerationRun | null> {
+    const row = this.database
+      .prepare(
+        `SELECT ${RUN_COLUMNS} FROM generation_runs
+         WHERE subject_question_id = ?
+           AND item_kind = 'QUESTION_CHALLENGE'
+           AND status = 'COMPLETED'
+         ORDER BY started_at DESC, id DESC
+         LIMIT 1`,
+      )
+      .get(questionId) as GenerationRunRow | undefined;
+
+    return row === undefined ? null : toGenerationRun(row);
+  }
+
   async create(run: GenerationRun): Promise<void> {
     this.database
       .prepare(
@@ -367,6 +391,12 @@ function itemSourceFor(kind: GeneratedItemKind): {
     // question is deliberately never written to the bank, so there is no row anywhere that
     // this run produced.
     case "TUTOR_EXPLANATION":
+    // Nor does a grading: its subject is an answer the owner typed, which lives on the
+    // attempt rather than in the bank, and the grading writes nothing at all.
+    case "ANSWER_EVALUATION":
+    // Nor does a challenge. Its outcome may say a revision is needed, but the revision is
+    // the owner's own edit, so no row anywhere belongs to this run.
+    case "QUESTION_CHALLENGE":
       return null;
     case "QUESTION":
       return { table: "questions", condition: "generation_run_id = ?" };

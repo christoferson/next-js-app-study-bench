@@ -1,8 +1,11 @@
+import type { ReactNode } from "react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Breadcrumbs, TRACKS_CRUMB } from "@/shared/ui/breadcrumbs";
 import { getAudioFacade, isAudioEnabled } from "@/modules/audio/composition";
 import { AudioClipList } from "@/modules/audio/ui/audio-clip-list";
+import { AnswerGradingPanel } from "@/modules/ai-generation/ui/answer-grading-panel";
+import { gradeAnswerAction } from "@/modules/ai-generation/ui/actions";
 import { getStudyFacade } from "@/modules/study-sessions/composition";
 import {
   finishSessionAction,
@@ -15,8 +18,12 @@ import { AnswerForm } from "@/modules/study-sessions/ui/answer-form";
 import { SessionCardItem } from "@/modules/study-sessions/ui/session-card-item";
 import { SessionControls } from "@/modules/study-sessions/ui/session-controls";
 import { describeSessionMode } from "@/modules/study-sessions/domain/study-session";
+import type { QuestionAttempt } from "@/modules/study-sessions/domain/question-attempt";
 import type { Certification } from "@/modules/certifications/domain/certification";
-import type { Question } from "@/modules/question-bank/domain/question";
+import type {
+  Question,
+  QuestionRevision,
+} from "@/modules/question-bank/domain/question";
 
 interface StudySessionPageProps {
   readonly params: Promise<{ readonly sessionId: string }>;
@@ -147,6 +154,14 @@ export default async function StudySessionPage({
           // than fetched: a session already carries them, and a question whose track has
           // since been removed yields `null` and no link instead of a broken address.
           tutorHref={tutorHrefFor(view.tracks, feedback.question)}
+          // Composed here rather than imported by the feedback panel, because
+          // `study-sessions` may not depend on `modules/ai-generation`. An app-layer page
+          // is the one place allowed to put two modules' views on one screen.
+          grading={gradingPanelFor(
+            trackSlugFor(view.tracks, feedback.question),
+            feedback.attempt,
+            feedback.revision,
+          )}
         />
       )}
 
@@ -227,11 +242,66 @@ function tutorHrefFor(
   tracks: readonly Certification[],
   question: Question,
 ): string | null {
-  const track = tracks.find(
-    (candidate) => candidate.id === question.certificationId,
-  );
+  const slug = trackSlugFor(tracks, question);
 
-  return track === undefined
+  return slug === null
     ? null
-    : `/study-tracks/${track.slug}/questions/${question.id}#tutor`;
+    : `/study-tracks/${slug}/questions/${question.id}#tutor`;
+}
+
+/**
+ * The slug of the answered question's track, or `null` when the session no longer carries it.
+ *
+ * Shared by the tutor link and the grading panel because both are addressed by track and
+ * both have to survive a track removed mid-session: neither renders rather than either
+ * pointing somewhere that no longer resolves.
+ */
+function trackSlugFor(
+  tracks: readonly Certification[],
+  question: Question,
+): string | null {
+  return (
+    tracks.find((candidate) => candidate.id === question.certificationId)
+      ?.slug ?? null
+  );
+}
+
+/**
+ * The AI grading panel for one recorded attempt, or nothing.
+ *
+ * Three conditions, and each rules out a case where there is nothing to grade:
+ *
+ * - the answer must be written text, because a choice question was already marked by
+ *   comparing ids and a second opinion on that would be theatre;
+ * - the revision must record expected concepts, because they are what an answer is graded
+ *   *against* — the facade refuses without them, so offering the button would be a lie;
+ * - the track must still be resolvable, because the action is addressed by slug.
+ *
+ * The attempt's own verdict goes in so the panel can say whether the model agreed. It stays
+ * the record either way: the grading is advice, and nothing here writes to the attempt
+ * (`SPEC.md` section 25.2 item 5).
+ */
+function gradingPanelFor(
+  slug: string | null,
+  attempt: QuestionAttempt,
+  revision: QuestionRevision,
+): ReactNode {
+  if (
+    slug === null ||
+    attempt.submittedAnswer.type !== "SHORT_ANSWER" ||
+    revision.content.type !== "SHORT_ANSWER" ||
+    revision.content.expectedConcepts.length === 0
+  ) {
+    return null;
+  }
+
+  return (
+    <AnswerGradingPanel
+      answerText={attempt.submittedAnswer.text}
+      gradeAction={gradeAnswerAction}
+      questionId={attempt.questionId}
+      recordedCorrect={attempt.isCorrect}
+      slug={slug}
+    />
+  );
 }

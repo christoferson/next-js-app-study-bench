@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import type {
   Choice,
   QuestionRevision,
@@ -35,6 +36,19 @@ interface AnswerFeedbackProps {
    * instead. Tutoring *inline*, without leaving the session, is deferred.
    */
   readonly tutorHref: string | null;
+  /**
+   * An optional panel offering a second opinion on a written answer, rendered below the
+   * expected concepts and above the explanation.
+   *
+   * A node passed in rather than a component imported, because grading is an AI concern and
+   * this module may not depend on `modules/ai-generation` — the boundary is asserted by
+   * `module-boundaries.test.ts`. The page composes the two, which is what an app-layer page
+   * is for, and this module goes on knowing nothing about models.
+   *
+   * `null` for every choice question, and for a written answer whose question records no
+   * expected concepts: there would be nothing to grade against.
+   */
+  readonly grading?: ReactNode;
 }
 
 /**
@@ -67,6 +81,7 @@ export function AnswerFeedback({
   continueHref,
   continueLabel,
   tutorHref,
+  grading = null,
 }: AnswerFeedbackProps) {
   const choices = contentChoices(revision.content);
   const correct = new Set(correctChoiceIds(revision.content));
@@ -124,6 +139,11 @@ export function AnswerFeedback({
           </ul>
         </div>
       ) : null}
+
+      {/* After the expected concepts, because a grading is about how the answer measured up
+          against them, and before the explanation, which is the question's own text rather
+          than a judgement of this attempt. */}
+      {grading}
 
       {revision.explanation !== null ? (
         <div className="question-answer">

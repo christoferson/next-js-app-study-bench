@@ -355,6 +355,49 @@ export class TutorAskNotAnswerableError extends DomainError {
 }
 
 /**
+ * This written answer cannot be graded.
+ *
+ * Its own error rather than reuse of the two above, because it is refused for reasons
+ * neither of them has: the question is not a short-answer question, so there are no
+ * expected concepts to grade against, or the answer is empty, or the question is gone from
+ * this track. Grading is allowed at any lifecycle for the reason tutoring is — the owner
+ * answered it, so understanding the answer is legitimate whatever has happened to the
+ * question since.
+ */
+export class AnswerNotGradableError extends DomainError {
+  readonly code = "ANSWER_NOT_GRADABLE";
+
+  constructor(readonly detail: string) {
+    super(detail);
+  }
+
+  fieldMessages(): Readonly<Record<string, readonly string[]>> {
+    return { "": [this.detail] };
+  }
+}
+
+/**
+ * This question cannot be challenged.
+ *
+ * Distinct from the review's refusal even though both are about the question, because a
+ * challenge is refused for a reason a review has no equivalent of: the owner has to say
+ * what they object to, and there is nothing to adjudicate without it. The lifecycle rule
+ * is the review's, though — challenging something already taken out of study spends a call
+ * on a decision that has been made.
+ */
+export class QuestionNotChallengeableError extends DomainError {
+  readonly code = "QUESTION_NOT_CHALLENGEABLE";
+
+  constructor(readonly detail: string) {
+    super(detail);
+  }
+
+  fieldMessages(): Readonly<Record<string, readonly string[]>> {
+    return { "": [this.detail] };
+  }
+}
+
+/**
  * A provider failure reduced to a category.
  *
  * Not a `DomainError`: it never reaches a form. The facade catches it, records

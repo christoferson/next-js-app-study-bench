@@ -22,8 +22,10 @@ import type { Flashcard } from "@/modules/flashcards/domain/flashcard";
 import { SqliteFlashcardRepository } from "@/modules/flashcards/infrastructure/sqlite-flashcard-repository";
 import { FlashcardQuestionDependencyChecker } from "@/modules/flashcards/infrastructure/flashcard-question-dependency-checker";
 import {
+  AnswerNotGradableError,
   GeneratedDraftNotRejectableError,
   GenerationBatchTooLargeError,
+  QuestionNotChallengeableError,
   QuestionNotReviewableError,
   TutorAskNotAnswerableError,
 } from "@/modules/ai-generation/domain/errors";
@@ -2847,6 +2849,614 @@ describe("GenerationFacade", () => {
       expect(await tutorFacade().facade.findTutorExchanges(questionId)).toEqual(
         [],
       );
+    });
+  });
+
+  describe("grading a written answer", () => {
+    /** One short-answer question of the AWS track, with concepts to mark against. */
+    async function seedShortAnswer(
+      overrides: Partial<Question> = {},
+      expectedConcepts: readonly string[] = ["object storage", "eleven nines"],
+    ): Promise<string> {
+      const question = questionFixture({
+        id: "question-being-marked",
+        certificationId: AWS_TRACK.id,
+        currentRevisionId: "revision-being-marked",
+        ...overrides,
+      });
+
+      await questions.create(
+        question,
+        revisionFixture({
+          id: question.currentRevisionId,
+          questionId: question.id,
+          questionType: "SHORT_ANSWER",
+          stem: "Describe the demo object store's durability.",
+          content: { type: "SHORT_ANSWER", expectedConcepts },
+        }),
+      );
+
+      return question.id;
+    }
+
+    function gradingFacade(
+      mode: "COVERED" | "PARTIAL" | "MALFORMED" = "COVERED",
+    ): {
+      facade: GenerationFacade;
+      gateway: FakeLanguageModelGateway;
+    } {
+      const gateway = new FakeLanguageModelGateway({
+        answerEvaluationMode: mode,
+      });
+
+      return { facade: facadeForGateway(gateway), gateway };
+    }
+
+    const ANSWER = "It stores objects and gives eleven nines of durability.";
+
+    it("records a grading run with its provenance and its subject", async () => {
+      const questionId = await seedShortAnswer();
+      const { run, evaluation } =
+        await gradingFacade().facade.evaluateShortAnswer(
+          AWS_TRACK.slug,
+          questionId,
+          ANSWER,
+        );
+
+      expect(run.itemKind).toBe("ANSWER_EVALUATION");
+      expect(run.status).toBe("COMPLETED");
+      expect(run.certificationId).toBe(AWS_TRACK.id);
+      // Nothing was looked up: the mark is against concepts the owner recorded.
+      expect(run.generationMode).toBe("MODEL_KNOWLEDGE");
+      expect(run.promptTemplateId).toBe("answer-evaluation");
+      expect(run.promptTemplateVersion).toBe(1);
+      expect(run.personaId).toBe("technical-certification");
+      expect(run.inputHash).toMatch(/^[0-9a-f]{64}$/);
+      expect(run.requestedItemCount).toBe(1);
+      expect(run.successfulItemCount).toBe(1);
+      expect(run.usageMetadata).not.toBeNull();
+      expect(run.subjectQuestionId).toBe(questionId);
+      expect(run.subjectRevisionId).toBe("revision-being-marked");
+      // A grading proposes nothing to write, not even to the attempt.
+      expect(run.appliedAt).toBeNull();
+      expect(evaluation?.verdict).toBe("CORRECT");
+    });
+
+    it("marks against the question's own concepts and echoes them back", async () => {
+      const questionId = await seedShortAnswer();
+      const { evaluation } = await gradingFacade(
+        "PARTIAL",
+      ).facade.evaluateShortAnswer(AWS_TRACK.slug, questionId, ANSWER);
+
+      expect(evaluation?.verdict).toBe("PARTIALLY_CORRECT");
+      expect(evaluation?.conceptsCovered).toEqual(["object storage"]);
+      expect(evaluation?.conceptsMissed).toEqual(["eleven nines"]);
+    });
+
+    it("recommends a self-grade without recording one", async () => {
+      // The advisory design: the verdict pre-selects what the owner might click, and the
+      // attempt keeps whatever they actually did (`domain/answer-evaluation.ts`).
+      const questionId = await seedShortAnswer();
+      const covered = await gradingFacade().facade.evaluateShortAnswer(
+        AWS_TRACK.slug,
+        questionId,
+        ANSWER,
+      );
+      const partial = await gradingFacade("PARTIAL").facade.evaluateShortAnswer(
+        AWS_TRACK.slug,
+        questionId,
+        ANSWER,
+      );
+
+      expect(covered.recommendedSelfGrade).toBe("CORRECT");
+      // "Some of it" is exactly the case a two-button record cannot express.
+      expect(partial.recommendedSelfGrade).toBeNull();
+    });
+
+    it("stores the grading so the run screen can read it back", async () => {
+      const questionId = await seedShortAnswer();
+      const { run } = await gradingFacade().facade.evaluateShortAnswer(
+        AWS_TRACK.slug,
+        questionId,
+        ANSWER,
+      );
+      const stored = await runs.findById(run.id);
+
+      expect(JSON.parse(stored?.proposedPayload ?? "null")).toMatchObject({
+        verdict: "CORRECT",
+        conceptsCovered: ["object storage", "eleven nines"],
+      });
+    });
+
+    it("sends the question and the answer as delimited data", async () => {
+      const questionId = await seedShortAnswer();
+      const { facade, gateway } = gradingFacade();
+
+      await facade.evaluateShortAnswer(AWS_TRACK.slug, questionId, ANSWER);
+
+      const prompt = gateway.promptsSent[0];
+
+      expect(prompt?.user).toContain("<owner_question_being_marked>");
+      expect(prompt?.user).toContain("<owner_written_answer>");
+      expect(prompt?.user).toContain(ANSWER);
+      expect(prompt?.user).toContain("Describe the demo object store");
+      // And neither in the system message, where either would be an instruction.
+      expect(prompt?.system).not.toContain(ANSWER);
+      expect(prompt?.system).not.toContain("Describe the demo object store");
+    });
+
+    it("changes nothing at all about the question or the bank", async () => {
+      const questionId = await seedShortAnswer();
+      const before = await questions.findWithCurrentRevision(questionId);
+      const counts = await questions.countsByCertification(AWS_TRACK.id);
+      const { facade, gateway } = gradingFacade();
+
+      await facade.evaluateShortAnswer(AWS_TRACK.slug, questionId, ANSWER);
+
+      expect(await questions.findWithCurrentRevision(questionId)).toEqual(
+        before,
+      );
+      expect(await questions.countsByCertification(AWS_TRACK.id)).toEqual(
+        counts,
+      );
+      expect(gateway.turnsTaken).toBe(1);
+    });
+
+    it("refuses to grade a question with choices", async () => {
+      // Marked by comparing identifiers already, so a model call would buy nothing.
+      const question = questionFixture({
+        id: "question-with-choices",
+        certificationId: AWS_TRACK.id,
+        currentRevisionId: "revision-with-choices",
+      });
+
+      await questions.create(
+        question,
+        revisionFixture({
+          id: question.currentRevisionId,
+          questionId: question.id,
+        }),
+      );
+
+      await expect(
+        gradingFacade().facade.evaluateShortAnswer(
+          AWS_TRACK.slug,
+          question.id,
+          ANSWER,
+        ),
+      ).rejects.toBeInstanceOf(AnswerNotGradableError);
+    });
+
+    it("refuses to grade against a question that records no concepts", async () => {
+      const questionId = await seedShortAnswer(
+        {
+          id: "question-no-concepts",
+          currentRevisionId: "revision-no-concepts",
+        },
+        [],
+      );
+
+      await expect(
+        gradingFacade().facade.evaluateShortAnswer(
+          AWS_TRACK.slug,
+          questionId,
+          ANSWER,
+        ),
+      ).rejects.toBeInstanceOf(AnswerNotGradableError);
+    });
+
+    it("refuses an empty answer, and a question from another track", async () => {
+      const questionId = await seedShortAnswer();
+
+      await expect(
+        gradingFacade().facade.evaluateShortAnswer(
+          AWS_TRACK.slug,
+          questionId,
+          "   ",
+        ),
+      ).rejects.toBeInstanceOf(AnswerNotGradableError);
+      await expect(
+        gradingFacade().facade.evaluateShortAnswer(
+          HSK_TRACK.slug,
+          questionId,
+          ANSWER,
+        ),
+      ).rejects.toBeInstanceOf(AnswerNotGradableError);
+      await expect(
+        gradingFacade().facade.evaluateShortAnswer(
+          "no-such-track",
+          questionId,
+          ANSWER,
+        ),
+      ).rejects.toBeInstanceOf(CertificationNotFoundError);
+    });
+
+    it("records a failed run rather than throwing when the grading is malformed", async () => {
+      // The gateway exhausts its repair attempt and raises `ProviderFailure`; the facade
+      // records the spent call and returns it, so the panel says the grading did not arrive
+      // and the owner's own verdict is untouched.
+      const questionId = await seedShortAnswer();
+      const { facade, gateway } = gradingFacade("MALFORMED");
+      const { run, evaluation, recommendedSelfGrade } =
+        await facade.evaluateShortAnswer(AWS_TRACK.slug, questionId, ANSWER);
+
+      expect(run.status).toBe("FAILED");
+      expect(run.failureReason).toBe("MALFORMED_OUTPUT");
+      expect(evaluation).toBeNull();
+      expect(recommendedSelfGrade).toBeNull();
+      expect(gateway.turnsTaken).toBe(2);
+      expect((await runs.findById(run.id))?.status).toBe("FAILED");
+    });
+
+    it("grades an answer to a question at any lifecycle", async () => {
+      // A question can be retired between the session that asked it and the feedback screen
+      // that grades the answer, and the answer was still given.
+      for (const status of [
+        "DRAFT",
+        "ACTIVE",
+        "RETIRED",
+        "ARCHIVED",
+      ] as const) {
+        const questionId = await seedShortAnswer({
+          id: `graded-question-${status}`,
+          currentRevisionId: `graded-revision-${status}`,
+          lifecycleStatus: status,
+        });
+        const { run } = await gradingFacade().facade.evaluateShortAnswer(
+          AWS_TRACK.slug,
+          questionId,
+          ANSWER,
+        );
+
+        expect(run.status).toBe("COMPLETED");
+      }
+    });
+
+    it("fingerprints the answer without copying it", async () => {
+      const questionId = await seedShortAnswer();
+      const { facade } = gradingFacade();
+      const first = await facade.evaluateShortAnswer(
+        AWS_TRACK.slug,
+        questionId,
+        ANSWER,
+      );
+      const same = await facade.evaluateShortAnswer(
+        AWS_TRACK.slug,
+        questionId,
+        ANSWER,
+      );
+      const other = await facade.evaluateShortAnswer(
+        AWS_TRACK.slug,
+        questionId,
+        "A different answer entirely.",
+      );
+
+      expect(same.run.inputHash).toBe(first.run.inputHash);
+      expect(other.run.inputHash).not.toBe(first.run.inputHash);
+      // A fingerprint column must not become a copy of what the owner typed.
+      expect(first.run.inputHash).not.toContain("objects");
+      expect(first.run.inputHash).not.toContain("eleven");
+    });
+  });
+
+  describe("challenging a question", () => {
+    /** One question of the AWS track worth objecting to. */
+    async function seedChallengedQuestion(
+      overrides: Partial<Question> = {},
+    ): Promise<string> {
+      const question = questionFixture({
+        id: "question-being-challenged",
+        certificationId: AWS_TRACK.id,
+        currentRevisionId: "revision-being-challenged",
+        ...overrides,
+      });
+
+      await questions.create(
+        question,
+        revisionFixture({
+          id: question.currentRevisionId,
+          questionId: question.id,
+          stem: "Which demo service stores objects?",
+        }),
+      );
+
+      return question.id;
+    }
+
+    function challengeFacade(
+      mode: "STANDS" | "OWNER_POINT" | "WRONG_REVISE" | "MALFORMED" = "STANDS",
+    ): {
+      facade: GenerationFacade;
+      gateway: FakeLanguageModelGateway;
+    } {
+      const gateway = new FakeLanguageModelGateway({ challengeMode: mode });
+
+      return { facade: facadeForGateway(gateway), gateway };
+    }
+
+    const OBJECTION =
+      "choice-2 is also correct, because block storage is durable too";
+
+    it("records a challenge run with its provenance and its subject", async () => {
+      const questionId = await seedChallengedQuestion();
+      const { run, challenge } =
+        await challengeFacade().facade.challengeQuestion(
+          AWS_TRACK.slug,
+          questionId,
+          OBJECTION,
+        );
+
+      expect(run.itemKind).toBe("QUESTION_CHALLENGE");
+      expect(run.status).toBe("COMPLETED");
+      expect(run.certificationId).toBe(AWS_TRACK.id);
+      expect(run.generationMode).toBe("MODEL_KNOWLEDGE");
+      expect(run.promptTemplateId).toBe("question-challenge");
+      expect(run.promptTemplateVersion).toBe(1);
+      expect(run.personaId).toBe("technical-certification");
+      expect(run.inputHash).toMatch(/^[0-9a-f]{64}$/);
+      expect(run.requestedItemCount).toBe(1);
+      expect(run.successfulItemCount).toBe(1);
+      expect(run.usageMetadata).not.toBeNull();
+      expect(run.subjectQuestionId).toBe(questionId);
+      expect(run.subjectRevisionId).toBe("revision-being-challenged");
+      // A recommendation is not a proposal to apply: the owner's click is the action.
+      expect(run.appliedAt).toBeNull();
+      expect(challenge?.verdict).toBe("STORED_ANSWER_STANDS");
+      expect(challenge?.recommendation).toBe("KEEP");
+    });
+
+    it("produces a structured finding, not prose", async () => {
+      // The acceptance criterion (`SPEC.md` section 25.2 item 11): a verdict, an argument,
+      // and a recommendation the owner can act on with one click.
+      const questionId = await seedChallengedQuestion();
+      const { challenge } = await challengeFacade(
+        "WRONG_REVISE",
+      ).facade.challengeQuestion(AWS_TRACK.slug, questionId, OBJECTION);
+
+      expect(challenge?.verdict).toBe("STORED_ANSWER_WRONG");
+      expect(challenge?.recommendation).toBe("REVISE");
+      expect(challenge?.suggestedRevisionNote).not.toBeNull();
+      expect(challenge?.reasoning.length).toBeGreaterThan(0);
+    });
+
+    it("sends the question and the objection as delimited data", async () => {
+      const questionId = await seedChallengedQuestion();
+      const { facade, gateway } = challengeFacade();
+
+      await facade.challengeQuestion(AWS_TRACK.slug, questionId, OBJECTION);
+
+      const prompt = gateway.promptsSent[0];
+
+      expect(prompt?.user).toContain("<owner_question_being_challenged>");
+      expect(prompt?.user).toContain("<owner_objection>");
+      expect(prompt?.user).toContain(OBJECTION);
+      expect(prompt?.user).toContain("Which demo service stores objects?");
+      // The objection is written by somebody who wants the ruling to go their way, so it
+      // may not reach the system message (`spec/AI-GUIDELINES.md` section 1.7).
+      expect(prompt?.system).not.toContain(OBJECTION);
+      expect(prompt?.system).not.toContain(
+        "Which demo service stores objects?",
+      );
+    });
+
+    it("writes nothing to the question, whatever the verdict", async () => {
+      // The acceptance criterion the challenge must not break: the AI never rewrites the
+      // question, and never moves its state either
+      // (`spec/AI-GUIDELINES.md` section 1.10, item 12).
+      for (const mode of ["STANDS", "OWNER_POINT", "WRONG_REVISE"] as const) {
+        const questionId = await seedChallengedQuestion({
+          id: `challenged-${mode}`,
+          currentRevisionId: `challenged-revision-${mode}`,
+        });
+        const before = await questions.findWithCurrentRevision(questionId);
+
+        await challengeFacade(mode).facade.challengeQuestion(
+          AWS_TRACK.slug,
+          questionId,
+          OBJECTION,
+        );
+
+        expect(await questions.findWithCurrentRevision(questionId)).toEqual(
+          before,
+        );
+      }
+    });
+
+    it("adds nothing to the bank and claims no items", async () => {
+      const questionId = await seedChallengedQuestion();
+      const counts = await questions.countsByCertification(AWS_TRACK.id);
+      const { run } = await challengeFacade(
+        "WRONG_REVISE",
+      ).facade.challengeQuestion(AWS_TRACK.slug, questionId, OBJECTION);
+
+      expect(await questions.countsByCertification(AWS_TRACK.id)).toEqual(
+        counts,
+      );
+      expect(await runs.listItemIds(run.id)).toEqual([]);
+    });
+
+    it("reads the latest challenge back, with the dispute it offers", async () => {
+      const questionId = await seedChallengedQuestion();
+      const { facade } = challengeFacade("OWNER_POINT");
+      const { run } = await facade.challengeQuestion(
+        AWS_TRACK.slug,
+        questionId,
+        OBJECTION,
+      );
+      const view = await facade.findQuestionChallenge(questionId);
+
+      expect(view?.run.id).toBe(run.id);
+      expect(view?.challenge?.verdict).toBe("OWNER_HAS_A_POINT");
+      expect(view?.staleRevision).toBe(false);
+      // A DISPUTE recommendation on a question not yet disputed becomes the prefilled
+      // button; the owner's click is what changes the question.
+      expect(view?.offersDispute).toBe(true);
+      expect(view?.revisionNote).toBeNull();
+    });
+
+    it("shows the revision note beside the edit form, and offers no dispute for it", async () => {
+      const questionId = await seedChallengedQuestion();
+      const { facade } = challengeFacade("WRONG_REVISE");
+
+      await facade.challengeQuestion(AWS_TRACK.slug, questionId, OBJECTION);
+
+      const view = await facade.findQuestionChallenge(questionId);
+
+      expect(view?.revisionNote).toMatch(/the stem needs to state/);
+      expect(view?.offersDispute).toBe(false);
+    });
+
+    it("stops offering a dispute once the question is disputed", async () => {
+      const questionId = await seedChallengedQuestion({
+        qualityStatus: "DISPUTED",
+        disputeReason: "already taken out of study",
+      });
+      const { facade } = challengeFacade("OWNER_POINT");
+
+      await facade.challengeQuestion(AWS_TRACK.slug, questionId, OBJECTION);
+
+      expect(
+        (await facade.findQuestionChallenge(questionId))?.offersDispute,
+      ).toBe(false);
+    });
+
+    it("shows only the latest of several challenges", async () => {
+      // A question objected to twice has two runs in the history and one current outcome:
+      // the panel is where the verdict is useful, not where it is archived.
+      const questionId = await seedChallengedQuestion();
+
+      await challengeFacade("STANDS").facade.challengeQuestion(
+        AWS_TRACK.slug,
+        questionId,
+        OBJECTION,
+      );
+
+      const { facade } = challengeFacade("OWNER_POINT");
+      const second = await facade.challengeQuestion(
+        AWS_TRACK.slug,
+        questionId,
+        "and here is a second, different objection",
+      );
+
+      expect((await facade.findQuestionChallenge(questionId))?.run.id).toBe(
+        second.run.id,
+      );
+    });
+
+    it("marks an outcome stale once the question is edited", async () => {
+      const questionId = await seedChallengedQuestion();
+      const { facade } = challengeFacade();
+
+      await facade.challengeQuestion(AWS_TRACK.slug, questionId, OBJECTION);
+      await questions.appendRevision(
+        revisionFixture({
+          id: "revision-after-the-challenge",
+          questionId,
+          revisionNumber: 2,
+          stem: "Which demo service stores objects, revised?",
+        }),
+        START,
+      );
+
+      expect(
+        (await facade.findQuestionChallenge(questionId))?.staleRevision,
+      ).toBe(true);
+    });
+
+    it("refuses to challenge a question already out of study", async () => {
+      // The review's rule rather than the tutor's: a verdict on something the owner has
+      // retired changes nothing they are using.
+      for (const status of ["RETIRED", "ARCHIVED"] as const) {
+        const questionId = await seedChallengedQuestion({
+          id: `challenge-refused-${status}`,
+          currentRevisionId: `challenge-refused-revision-${status}`,
+          lifecycleStatus: status,
+        });
+
+        await expect(
+          challengeFacade().facade.challengeQuestion(
+            AWS_TRACK.slug,
+            questionId,
+            OBJECTION,
+          ),
+        ).rejects.toBeInstanceOf(QuestionNotChallengeableError);
+      }
+    });
+
+    it("refuses an empty objection, and a question from another track", async () => {
+      const questionId = await seedChallengedQuestion();
+
+      await expect(
+        challengeFacade().facade.challengeQuestion(
+          AWS_TRACK.slug,
+          questionId,
+          "   ",
+        ),
+      ).rejects.toBeInstanceOf(QuestionNotChallengeableError);
+      await expect(
+        challengeFacade().facade.challengeQuestion(
+          HSK_TRACK.slug,
+          questionId,
+          OBJECTION,
+        ),
+      ).rejects.toBeInstanceOf(QuestionNotChallengeableError);
+      await expect(
+        challengeFacade().facade.challengeQuestion(
+          "no-such-track",
+          questionId,
+          OBJECTION,
+        ),
+      ).rejects.toBeInstanceOf(CertificationNotFoundError);
+    });
+
+    it("records a failed run rather than throwing when the outcome is inconsistent", async () => {
+      const questionId = await seedChallengedQuestion();
+      const { facade, gateway } = challengeFacade("MALFORMED");
+      const { run, challenge } = await facade.challengeQuestion(
+        AWS_TRACK.slug,
+        questionId,
+        OBJECTION,
+      );
+
+      expect(run.status).toBe("FAILED");
+      expect(run.failureReason).toBe("MALFORMED_OUTPUT");
+      expect(challenge).toBeNull();
+      expect(gateway.turnsTaken).toBe(2);
+      // A failed challenge is not an outcome the panel shows, because only completed runs
+      // are read back.
+      expect(await facade.findQuestionChallenge(questionId)).toBeNull();
+    });
+
+    it("fingerprints the objection without copying it", async () => {
+      const questionId = await seedChallengedQuestion();
+      const { facade } = challengeFacade();
+      const first = await facade.challengeQuestion(
+        AWS_TRACK.slug,
+        questionId,
+        OBJECTION,
+      );
+      const same = await facade.challengeQuestion(
+        AWS_TRACK.slug,
+        questionId,
+        OBJECTION,
+      );
+      const other = await facade.challengeQuestion(
+        AWS_TRACK.slug,
+        questionId,
+        "a different objection about a different reading",
+      );
+
+      expect(same.run.inputHash).toBe(first.run.inputHash);
+      expect(other.run.inputHash).not.toBe(first.run.inputHash);
+      expect(first.run.inputHash).not.toContain("choice-2");
+    });
+
+    it("has nothing to show for a question never challenged", async () => {
+      const questionId = await seedChallengedQuestion();
+
+      expect(
+        await challengeFacade().facade.findQuestionChallenge(questionId),
+      ).toBeNull();
     });
   });
 

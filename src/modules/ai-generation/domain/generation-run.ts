@@ -63,13 +63,30 @@ export function isFakeModelProvider(provider: string): boolean {
  * same question — a review is a judgement the owner may act on, an explanation is
  * teaching — and collapsing them would put explanations in the findings panel.
  */
+/*
+ * `ANSWER_EVALUATION` is the first kind whose subject is something the *owner* wrote rather
+ * than something in their bank: a model is shown one short-answer question and the answer
+ * the owner typed in a session, and says which of the expected concepts the answer covered.
+ * It writes nothing — not the question, and deliberately not the attempt either. The
+ * attempt keeps the owner's own `SELF_ASSESSED` verdict and this run records what the model
+ * thought of it, which is the whole design (`domain/answer-evaluation.ts`).
+ *
+ * `QUESTION_CHALLENGE` is the third kind that judges an existing question, and it is
+ * separate from `QUESTION_REVIEW` because the question it answers is different: a review
+ * decides for itself what to look at, while a challenge adjudicates one specific objection
+ * the owner raised. Collapsing the two would lose which of them a recorded run actually
+ * was, and the challenge's outcome — a verdict about the owner's reading, plus a note about
+ * what a revision would change — does not fit a review's findings.
+ */
 export type GeneratedItemKind =
   | "QUESTION"
   | "FLASHCARD"
   | "ENRICH_VOCABULARY"
   | "OBJECTIVE_IMPORT"
   | "QUESTION_REVIEW"
-  | "TUTOR_EXPLANATION";
+  | "TUTOR_EXPLANATION"
+  | "ANSWER_EVALUATION"
+  | "QUESTION_CHALLENGE";
 
 export const GENERATED_ITEM_KINDS: readonly GeneratedItemKind[] = [
   "QUESTION",
@@ -78,6 +95,8 @@ export const GENERATED_ITEM_KINDS: readonly GeneratedItemKind[] = [
   "OBJECTIVE_IMPORT",
   "QUESTION_REVIEW",
   "TUTOR_EXPLANATION",
+  "ANSWER_EVALUATION",
+  "QUESTION_CHALLENGE",
 ];
 
 /**
@@ -102,6 +121,14 @@ export function proposesForConfirmation(kind: GeneratedItemKind): boolean {
     // written into the bank, including the follow-up question, which is deliberately
     // ephemeral tutoring content rather than a draft (`tutor-exchange.ts`).
     case "TUTOR_EXPLANATION":
+    // Nor is a grading. It is advice the owner reads beside the verdict they recorded
+    // themselves; there is nothing in it waiting to be written anywhere
+    // (`answer-evaluation.ts`).
+    case "ANSWER_EVALUATION":
+    // Nor is a challenge outcome, including its revision note. The note says what a new
+    // revision would have to change; writing that revision is the owner's own edit, which
+    // is the point (`spec/AI-GUIDELINES.md` section 1.10).
+    case "QUESTION_CHALLENGE":
       return false;
     case "OBJECTIVE_IMPORT":
       return true;
@@ -128,6 +155,10 @@ export function revisesExistingItems(kind: GeneratedItemKind): boolean {
     // A tutor answer changes nothing at all about the question, not even its quality
     // state: explaining something is not a judgement about it.
     case "TUTOR_EXPLANATION":
+    // A grading reads one attempt and one question and revises neither.
+    case "ANSWER_EVALUATION":
+    // A challenge judges one revision and never appends another. The owner does that.
+    case "QUESTION_CHALLENGE":
       return false;
     case "ENRICH_VOCABULARY":
       return true;
@@ -275,6 +306,10 @@ export function describeItemKind(kind: GeneratedItemKind): string {
       return "AI question review";
     case "TUTOR_EXPLANATION":
       return "AI tutor answer";
+    case "ANSWER_EVALUATION":
+      return "AI answer grading";
+    case "QUESTION_CHALLENGE":
+      return "AI question challenge";
   }
 }
 
@@ -292,6 +327,10 @@ export function describeItemKindSingular(kind: GeneratedItemKind): string {
       return "reviewed question";
     case "TUTOR_EXPLANATION":
       return "tutor answer";
+    case "ANSWER_EVALUATION":
+      return "graded answer";
+    case "QUESTION_CHALLENGE":
+      return "challenged question";
   }
 }
 

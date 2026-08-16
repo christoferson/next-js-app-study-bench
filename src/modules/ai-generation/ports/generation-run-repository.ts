@@ -85,6 +85,21 @@ export interface GenerationRunRepository {
     questionId: string,
     limit: number,
   ): Promise<readonly GenerationRun[]>;
+  /**
+   * The most recent completed AI challenge of one question, if it has been challenged.
+   *
+   * The latest one rather than a list, unlike the tutor's exchanges: a challenge is a
+   * current judgement about whether the question stands, and the panel showing two
+   * contradictory verdicts side by side would leave the owner nothing to act on. Older
+   * challenges stay readable through the run history, where every run is kept.
+   *
+   * Only `COMPLETED` runs qualify, for the reason the review's query gives: a `FAILED`
+   * challenge has no verdict and a `PENDING` one has not reached a conclusion, and either
+   * would render an empty panel that looks like a finding.
+   */
+  findLatestChallengeForQuestion(
+    questionId: string,
+  ): Promise<GenerationRun | null>;
   /** Inserts a run row. Called with `PENDING` before the provider is used. */
   create(run: GenerationRun): Promise<void>;
   /**

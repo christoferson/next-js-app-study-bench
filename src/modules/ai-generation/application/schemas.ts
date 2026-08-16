@@ -22,6 +22,11 @@ import {
   TUTOR_ASK_KINDS,
   TUTOR_NOTE_LIMIT,
 } from "@/modules/ai-generation/domain/tutor-exchange";
+import { GRADED_ANSWER_LIMIT } from "@/modules/ai-generation/domain/answer-evaluation";
+import {
+  CHALLENGE_REASON_LIMIT,
+  CHALLENGE_REASON_MIN,
+} from "@/modules/ai-generation/domain/question-challenge";
 
 /**
  * Authoritative input schemas for generation requests.
@@ -289,6 +294,62 @@ export const tutorAskSchema = z.object({
 });
 
 export type TutorAskInput = z.output<typeof tutorAskSchema>;
+
+/**
+ * One request to grade a written answer, from a session's feedback screen.
+ *
+ * The answer text travels on the request rather than being read back from the attempt, and
+ * that is the whole shape of the advisory design: the grading is about the text the owner
+ * submitted, the page already has it, and reading it back through a second module would
+ * make the generation facade depend on the study-sessions module for a string it was handed.
+ *
+ * Bounded by `GRADED_ANSWER_LIMIT`, which is the same bound the template truncates to, so
+ * an over-long answer is refused on the form rather than silently cut.
+ */
+export const gradeAnswerSchema = z.object({
+  questionId: z
+    .string()
+    .max(ID_LIMIT)
+    .transform((value) => value.trim()),
+  answerText: z
+    .string()
+    .max(GRADED_ANSWER_LIMIT, {
+      message: `Use ${GRADED_ANSWER_LIMIT} characters or fewer.`,
+    })
+    .transform((value) => value.trim())
+    .refine((value) => value.length > 0, {
+      message: "There is no answer text to grade.",
+    }),
+});
+
+export type GradeAnswerInput = z.output<typeof gradeAnswerSchema>;
+
+/**
+ * One challenge of one question, from the question's own page.
+ *
+ * The reason is required and has a floor as well as a ceiling: "wrong" is not an objection
+ * a model can adjudicate, and spending a call to be told so is worse than a field error.
+ * `CHALLENGE_REASON_MIN` is deliberately low — a real objection can be short — and the
+ * message says what a usable one contains.
+ */
+export const challengeQuestionSchema = z.object({
+  questionId: z
+    .string()
+    .max(ID_LIMIT)
+    .transform((value) => value.trim()),
+  reason: z
+    .string()
+    .max(CHALLENGE_REASON_LIMIT, {
+      message: `Use ${CHALLENGE_REASON_LIMIT} characters or fewer.`,
+    })
+    .transform((value) => value.trim())
+    .refine((value) => value.length >= CHALLENGE_REASON_MIN, {
+      message:
+        "Say what you disagree with and why, in a sentence or two. An objection with no reasoning cannot be judged.",
+    }),
+});
+
+export type ChallengeQuestionInput = z.output<typeof challengeQuestionSchema>;
 
 /**
  * Run-history paging, parsed from the query string.

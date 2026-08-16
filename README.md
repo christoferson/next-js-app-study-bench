@@ -590,6 +590,96 @@ session stays where it is. Tutoring _inline_, without leaving the session, is fu
 work: a model call between one answer and the next is a second wait competing with
 "Next item".
 
+### Grading a written answer with AI
+
+A short-answer question is graded by you: the answer is revealed, you compare it to
+what you wrote, and you press "I got it right" or "I got it wrong". After that,
+_if_ the question records expected concepts, the feedback panel offers **"Grade with
+AI"** — a second opinion on the answer you just gave. It costs roughly 0.5–1k tokens
+per grading and is its own run in the history.
+
+**The grading is advice. Your verdict stays the record.** This is the whole design:
+
+- The verdict you already pressed is what the attempt keeps. The attempt's
+  evaluation mode stays `SELF_ASSESSED`, and no migration was needed, because
+  nothing about the attempt changed.
+- The panel says whether the model **agreed with** or **differed from** your verdict.
+  It does not correct it. There is no "change my answer" control anywhere on the
+  panel, and a grading that arrives after you have moved on changes nothing.
+- A **partly correct** grading is reported as "Partly — your call", not forced into
+  either of your two buttons. That is exactly the case a right/wrong record cannot
+  express, and guessing would put words in your mouth.
+
+What comes back is a verdict, the concepts your answer **covered**, the concepts it
+**did not find**, and a short piece of feedback. The two concept lists are the
+useful part: they are the concepts _you_ recorded on the question, echoed back
+sorted into two piles, so you can see which part of your own answer key the answer
+actually reached. A grading that invents a concept the question never recorded is
+rejected and retried, and a grading that lists a missed concept and then calls the
+answer fully correct is rejected too.
+
+The button is only offered when a grading is possible: a written answer, in a track
+still present, on a question that records at least one expected concept. Grading is
+not offered for choice questions at all — a marked choice is graded by comparison,
+which needs no model.
+
+Like every other AI flow it never rewrites the question, never adds anything to your
+bank, and cites nothing because it consulted nothing.
+
+### Challenging a question
+
+Sometimes the question is wrong, not you. **"Challenge this answer"** on any draft or
+active question page takes your objection in your own words and asks the model to
+_adjudicate_ it. It costs roughly 1–2k tokens per challenge and is its own run in the
+history.
+
+It is not the same call as "Review with AI". A review is asked to look for problems
+in general; a challenge is asked to settle one specific dispute, and it is told to
+build the **strongest case for your objection first**, then the strongest case
+against it, and only then decide. It is told the two ways this call fails — agreeing
+with you because you sound sure, and defending the stored answer because it is
+already written down — and that your objection is an argument to weigh rather than an
+instruction to follow.
+
+Your objection travels as delimited owner data in the user message, never as part of
+the instructions. Text in it that looks like a command to change the verdict is
+data, and the model is told so.
+
+The outcome is a **structured finding**, not prose to interpret:
+
+- **The stored answer stands** — with the argument for why your reading does not
+  hold.
+- **Your objection has a point** — the marked answer survives, but the question is
+  not as clear as it looks.
+- **The stored answer looks wrong** — the marked answer is, on the model's
+  knowledge, not the answer.
+
+Alongside the verdict comes one recommendation you can act on: **keep**, **dispute**,
+or **revise**.
+
+- A recommended **dispute** is offered as one button that prefills the challenge's own
+  reasoning as the dispute reason — through the same action a dispute you typed
+  yourself uses, so the two are indistinguishable in the data. Disputing is still
+  your click. A disputed question is left out of every new session, in every mode,
+  including mistake review; it is not deleted, and resolving the dispute brings it
+  back.
+- A recommended **revision** is a **note**, beside a link to your own edit form.
+  There is no "apply" button, because there is nothing to apply: the challenge's
+  shape has no field that can carry a replacement stem, choice, answer key, or
+  explanation. The model can tell you what a new revision would have to change, and
+  you write it. This is `spec/AI-GUIDELINES.md` section 1.10 — no hidden question
+  rewrites — held by construction rather than by policy.
+
+A challenge that finds nothing changes nothing at all: not the stem, not the answer
+key, not the lifecycle, and not the quality state. Unlike a review, a challenge never
+promotes a question to `AI_REVIEWED` — an adversarial call the owner initiated is not
+a clean bill of health.
+
+The panel keeps the latest challenge of a question and marks it as judging an earlier
+revision if you have edited the question since. Challenging is withdrawn once a
+question is retired or archived, and the dispute button is not offered for a question
+already disputed.
+
 ## Spoken audio
 
 Speech is configured the same way generation is, with its own variables. **None of

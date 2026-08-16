@@ -21,6 +21,8 @@ import {
 } from "@/modules/ai-generation/application/output-schemas";
 import { OBJECTIVE_IMPORT_SCHEMA_NAME } from "@/modules/ai-generation/application/objective-import-schema";
 import { QUESTION_REVIEW_SCHEMA_NAME } from "@/modules/ai-generation/application/question-review-schema";
+import { ANSWER_EVALUATION_SCHEMA_NAME } from "@/modules/ai-generation/application/answer-evaluation-schema";
+import { QUESTION_CHALLENGE_SCHEMA_NAME } from "@/modules/ai-generation/application/question-challenge-schema";
 import { TUTOR_SCHEMA_NAME } from "@/modules/ai-generation/application/tutor-schema";
 import {
   TUTOR_ASK_KINDS,
@@ -115,6 +117,33 @@ export interface FakeLanguageModelGatewayOptions {
    * prompt rather than configured here.
    */
   readonly tutorMode?: "ANSWER" | "MALFORMED";
+  /**
+   * What a synthesised answer grading returns.
+   *
+   * `"COVERED"` marks the answer as covering every concept the question recorded, which is
+   * the path whose recommendation is the `CORRECT` self-grade. `"PARTIAL"` covers the first
+   * concept and misses the rest, which is the path that recommends nothing — a
+   * `PARTIALLY_CORRECT` verdict deliberately leaves the call to the owner. `"MALFORMED"`
+   * returns a grading that cannot be valid whatever the question said, on every turn, so
+   * the failed-grading path is exercised without scripting a payload by hand.
+   *
+   * All three read the concepts out of the prompt rather than inventing them, because
+   * `checkAnswerEvaluation` rejects a concept the question does not have: a fixture that
+   * made them up would turn every grading test into a malformed-output test.
+   */
+  readonly answerEvaluationMode?: "COVERED" | "PARTIAL" | "MALFORMED";
+  /**
+   * What a synthesised challenge outcome returns.
+   *
+   * One mode per branch the challenge panel has: `"STANDS"` upholds the stored answer and
+   * recommends `KEEP`, `"OWNER_POINT"` finds the question ambiguous and recommends
+   * `DISPUTE` — the path that offers the prefilled dispute button — and `"WRONG_REVISE"`
+   * finds the stored answer wrong and recommends `REVISE` with a note, which is the path
+   * that sends the owner to the edit form they already have. `"MALFORMED"` violates
+   * `checkChallengeConsistency` on every turn.
+   */
+  readonly challengeMode?:
+    "STANDS" | "OWNER_POINT" | "WRONG_REVISE" | "MALFORMED";
 }
 
 /** One prompt as the gateway received it, for tests that inspect what was sent. */
@@ -145,6 +174,11 @@ export class FakeLanguageModelGateway implements LanguageModelGateway {
 
   private readonly tutorMode: "ANSWER" | "MALFORMED";
 
+  private readonly answerEvaluationMode: "COVERED" | "PARTIAL" | "MALFORMED";
+
+  private readonly challengeMode:
+    "STANDS" | "OWNER_POINT" | "WRONG_REVISE" | "MALFORMED";
+
   private turn = 0;
 
   private readonly prompts: SentPrompt[] = [];
@@ -157,6 +191,8 @@ export class FakeLanguageModelGateway implements LanguageModelGateway {
     this.objectiveImportMode = options.objectiveImportMode ?? "OUTLINE";
     this.questionReviewMode = options.questionReviewMode ?? "SOUND";
     this.tutorMode = options.tutorMode ?? "ANSWER";
+    this.answerEvaluationMode = options.answerEvaluationMode ?? "COVERED";
+    this.challengeMode = options.challengeMode ?? "STANDS";
   }
 
   /** How many provider turns have been taken, for tests that assert repair. */
@@ -218,6 +254,8 @@ export class FakeLanguageModelGateway implements LanguageModelGateway {
         objectiveImportMode: this.objectiveImportMode,
         questionReviewMode: this.questionReviewMode,
         tutorMode: this.tutorMode,
+        answerEvaluationMode: this.answerEvaluationMode,
+        challengeMode: this.challengeMode,
       });
     }
 
@@ -254,6 +292,16 @@ interface PromptFacts {
   readonly tutorAskKind: TutorAskKind | null;
   /** The choice identifier a choice-by-choice ask named, or empty. */
   readonly tutorChoiceId: string;
+  /** The stem of the question a grading prompt carried, or empty. */
+  readonly gradedStem: string;
+  /** The concepts a grading prompt listed with that question, in order. */
+  readonly gradedConcepts: readonly string[];
+  /** The answer the owner wrote, as a grading prompt carried it. */
+  readonly writtenAnswer: string;
+  /** The stem of the question a challenge prompt carried, or empty. */
+  readonly challengedStem: string;
+  /** The objection the owner raised, as a challenge prompt carried it. */
+  readonly ownerObjection: string;
 }
 
 function synthesizePayload<Value>(
@@ -262,6 +310,9 @@ function synthesizePayload<Value>(
     readonly objectiveImportMode: "OUTLINE" | "MALFORMED";
     readonly questionReviewMode: "SOUND" | "MAJOR_ISSUES" | "MALFORMED";
     readonly tutorMode: "ANSWER" | "MALFORMED";
+    readonly answerEvaluationMode: "COVERED" | "PARTIAL" | "MALFORMED";
+    readonly challengeMode:
+      "STANDS" | "OWNER_POINT" | "WRONG_REVISE" | "MALFORMED";
   },
 ): unknown {
   const facts = readPrompt(request.user);
@@ -281,6 +332,10 @@ function synthesizePayload<Value>(
       return synthesizeReview(facts, modes.questionReviewMode);
     case TUTOR_SCHEMA_NAME:
       return synthesizeTutorAnswer(facts, modes.tutorMode);
+    case ANSWER_EVALUATION_SCHEMA_NAME:
+      return synthesizeEvaluation(facts, modes.answerEvaluationMode);
+    case QUESTION_CHALLENGE_SCHEMA_NAME:
+      return synthesizeChallenge(facts, modes.challengeMode);
     default:
       // A schema this gateway has no fixture for is a wiring mistake, not a
       // provider problem, so it is loud.
@@ -712,6 +767,107 @@ function synthesizeTutorAnswer(
     : { kind, text };
 }
 
+/**
+ * A grading of the answer the prompt carried, against the concepts it listed.
+ *
+ * Extractive twice over, and both halves are load-bearing. The concepts are echoed from the
+ * prompt because `checkAnswerEvaluation` refuses a concept the question does not record — so
+ * a facade that forgot to send the revision produces a grading naming nothing, and one that
+ * forgot the concepts produces empty lists. The feedback quotes the start of the owner's own
+ * answer, so a facade that forgot to send *that* is visible too, which is the mistake a
+ * grading fixture most needs to catch: a grading of an answer nobody supplied would still
+ * validate.
+ */
+function synthesizeEvaluation(
+  facts: PromptFacts,
+  mode: "COVERED" | "PARTIAL" | "MALFORMED",
+): unknown {
+  const concepts = facts.gradedConcepts;
+  const excerpt = facts.writtenAnswer.slice(0, 60);
+  const [first, ...rest] = concepts;
+
+  switch (mode) {
+    case "COVERED":
+      return {
+        verdict: concepts.length === 0 ? "PARTIALLY_CORRECT" : "CORRECT",
+        conceptsCovered: [...concepts],
+        conceptsMissed: [],
+        feedback: `Demo grading by the fake gateway: your answer, which begins "${excerpt}", mentions everything the question asks for. No model was called.`,
+      };
+    case "PARTIAL":
+      return {
+        verdict: "PARTIALLY_CORRECT",
+        conceptsCovered: first === undefined ? [] : [first],
+        conceptsMissed: [...rest],
+        feedback: `Demo grading by the fake gateway: your answer, which begins "${excerpt}", covers part of what the question asks for. No model was called.`,
+      };
+    case "MALFORMED":
+      // Wrong in two independent ways — a CORRECT verdict with a concept missed, and a
+      // concept that belongs to no question — so it stays invalid if either rule is
+      // relaxed, and no repair can rescue it.
+      return {
+        verdict: "CORRECT",
+        conceptsCovered: [],
+        conceptsMissed: ["a concept this question never recorded"],
+        feedback: "Malformed demo grading.",
+      };
+  }
+}
+
+/**
+ * An outcome for the objection the prompt carried.
+ *
+ * Extractive in the same way and for the same reason: the reasoning quotes the start of the
+ * owner's objection, so a facade that never sent it produces reasoning with nothing in it
+ * and a failing test — which matters more here than anywhere else, because a challenge that
+ * adjudicated no objection would still be a valid-looking verdict.
+ *
+ * Each mode satisfies `checkChallengeConsistency`, or for `MALFORMED` violates it in a way
+ * no repair can rescue.
+ */
+function synthesizeChallenge(
+  facts: PromptFacts,
+  mode: "STANDS" | "OWNER_POINT" | "WRONG_REVISE" | "MALFORMED",
+): unknown {
+  const objection = facts.ownerObjection.slice(0, 60);
+  const excerpt = facts.challengedStem.slice(0, 60);
+  const lede = `Demo challenge outcome from the fake gateway, for the objection beginning "${objection}" against "${excerpt}". No model was called and nothing was looked up.`;
+
+  switch (mode) {
+    case "STANDS":
+      return {
+        verdict: "STORED_ANSWER_STANDS",
+        reasoning: `${lede} Taking your objection at its strongest, it would hold if the demo scenario were different; as the question is written, the marked answer is the one it calls for.`,
+        recommendation: "KEEP",
+        suggestedRevisionNote: null,
+      };
+    case "OWNER_POINT":
+      return {
+        verdict: "OWNER_HAS_A_POINT",
+        reasoning: `${lede} Your reading is defensible and so is the stored answer, which makes the question ambiguous rather than either of you wrong.`,
+        recommendation: "DISPUTE",
+        suggestedRevisionNote: null,
+      };
+    case "WRONG_REVISE":
+      return {
+        verdict: "STORED_ANSWER_WRONG",
+        reasoning: `${lede} Your objection holds: the answer this question marks correct is not the one the stem describes.`,
+        recommendation: "REVISE",
+        suggestedRevisionNote:
+          "Demo note from the fake gateway: the stem needs to state the missing condition, and the answer key needs to move to the option your objection named.",
+      };
+    case "MALFORMED":
+      // Wrong in two independent ways — KEEP on a STORED_ANSWER_WRONG verdict, and a note
+      // alongside KEEP — so it stays invalid if either rule is relaxed.
+      return {
+        verdict: "STORED_ANSWER_WRONG",
+        reasoning: "Malformed demo challenge outcome.",
+        recommendation: "KEEP",
+        suggestedRevisionNote: "Malformed note.",
+      };
+  }
+}
+
 /** How each synthesised answer opens, so the fixture is visibly per-ask. */
 function describeDemoAsk(
   kind: Exclude<TutorAskKind, "FOLLOW_UP_QUESTION">,
@@ -777,7 +933,44 @@ function readPrompt(user: string): PromptFacts {
     tutorAskKind: readTutorAskKind(user),
     tutorChoiceId:
       matchLine(user, /^Return that identifier, (\S+?), as choiceId\b/m) ?? "",
+    gradedStem: readStem(user, "owner_question_being_marked"),
+    gradedConcepts: readExpectedConcepts(user, "owner_question_being_marked"),
+    writtenAnswer: readDelimitedBlock(user, "owner_written_answer"),
+    challengedStem: readStem(user, "owner_question_being_challenged"),
+    ownerObjection: readDelimitedBlock(user, "owner_objection"),
   };
+}
+
+/**
+ * The expected concepts listed inside one delimited question, in order.
+ *
+ * Read from inside the block for the reason `readStem` is: a bullet elsewhere in the
+ * message is not a concept. `storedQuestionLines` writes them as `- concept` lines under a
+ * heading, so the heading is found first and the bullets after it are taken until the list
+ * stops — which means a template that stops listing concepts produces an empty list here,
+ * a grading that names none, and a failing test rather than an invented pass.
+ */
+function readExpectedConcepts(user: string, tag: string): readonly string[] {
+  const lines = readDelimitedBlock(user, tag).split("\n");
+  const start = lines.findIndex((line) =>
+    line.startsWith("Concepts a correct written answer must mention:"),
+  );
+
+  if (start === -1) {
+    return [];
+  }
+
+  const concepts: string[] = [];
+
+  for (const line of lines.slice(start + 1)) {
+    if (!line.startsWith("- ")) {
+      break;
+    }
+
+    concepts.push(line.slice(2).trim());
+  }
+
+  return concepts;
 }
 
 /**

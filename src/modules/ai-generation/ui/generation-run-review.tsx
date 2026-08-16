@@ -403,6 +403,28 @@ function subjectRunKind(kind: GeneratedItemKind): {
         itemsNote:
           "A tutor answer writes nothing into the bank — not even a follow-up question it wrote — so there is nothing here to accept or reject. The answer itself is on the question it was about.",
       };
+    case "ANSWER_EVALUATION":
+      return {
+        provenance: "Marked from model knowledge",
+        lede: "Marked from the model's own knowledge, against the concepts the question itself records, with no source consulted and nothing verified. It changed nothing: the attempt keeps the verdict you recorded yourself, and this run is what the model thought of it.",
+        term: "Marked",
+        link: "One question — open it",
+        anchor: "",
+        itemsHeading: "What it marked",
+        itemsNote:
+          "A grading writes nothing — not into the bank, and deliberately not onto the attempt either. It was advice on the feedback screen of one session.",
+      };
+    case "QUESTION_CHALLENGE":
+      return {
+        provenance: "Adjudicated from model knowledge",
+        lede: "Judged from the model's own knowledge, with no source consulted, nothing verified, and nothing cited. It weighed one objection you raised against the answer as stored, and changed nothing: disputing the question or writing a new revision is your own action.",
+        term: "Challenged",
+        link: "One question — read the outcome on it",
+        anchor: "#challenge",
+        itemsHeading: "What it judged",
+        itemsNote:
+          "A challenge writes nothing into the bank, including any revision it suggested — that note is for you to act on. Its verdict is on the question it was about.",
+      };
     case "QUESTION":
     case "FLASHCARD":
     case "ENRICH_VOCABULARY":

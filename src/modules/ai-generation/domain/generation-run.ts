@@ -86,7 +86,8 @@ export type GeneratedItemKind =
   | "QUESTION_REVIEW"
   | "TUTOR_EXPLANATION"
   | "ANSWER_EVALUATION"
-  | "QUESTION_CHALLENGE";
+  | "QUESTION_CHALLENGE"
+  | "SOURCE_VERIFICATION";
 
 export const GENERATED_ITEM_KINDS: readonly GeneratedItemKind[] = [
   "QUESTION",
@@ -97,6 +98,7 @@ export const GENERATED_ITEM_KINDS: readonly GeneratedItemKind[] = [
   "TUTOR_EXPLANATION",
   "ANSWER_EVALUATION",
   "QUESTION_CHALLENGE",
+  "SOURCE_VERIFICATION",
 ];
 
 /**
@@ -129,6 +131,10 @@ export function proposesForConfirmation(kind: GeneratedItemKind): boolean {
     // revision would have to change; writing that revision is the owner's own edit, which
     // is the point (`spec/AI-GUIDELINES.md` section 1.10).
     case "QUESTION_CHALLENGE":
+    // Nor is a source check. A SUPPORTED verdict becomes a "mark source-checked" button and
+    // a CONTRADICTED one becomes a prefilled dispute; both are the owner's click on the
+    // question's own actions, so there is nothing here waiting to be applied.
+    case "SOURCE_VERIFICATION":
       return false;
     case "OBJECTIVE_IMPORT":
       return true;
@@ -159,6 +165,10 @@ export function revisesExistingItems(kind: GeneratedItemKind): boolean {
     case "ANSWER_EVALUATION":
     // A challenge judges one revision and never appends another. The owner does that.
     case "QUESTION_CHALLENGE":
+    // A source check reads one revision and appends none. It may change the question's
+    // quality status to SOURCE_CHECKED when the owner accepts it, which is a judgement
+    // about the item rather than a revision of it.
+    case "SOURCE_VERIFICATION":
       return false;
     case "ENRICH_VOCABULARY":
       return true;
@@ -310,6 +320,8 @@ export function describeItemKind(kind: GeneratedItemKind): string {
       return "AI answer grading";
     case "QUESTION_CHALLENGE":
       return "AI question challenge";
+    case "SOURCE_VERIFICATION":
+      return "Source check";
   }
 }
 
@@ -331,6 +343,8 @@ export function describeItemKindSingular(kind: GeneratedItemKind): string {
       return "graded answer";
     case "QUESTION_CHALLENGE":
       return "challenged question";
+    case "SOURCE_VERIFICATION":
+      return "source-checked question";
   }
 }
 

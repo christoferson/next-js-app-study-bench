@@ -398,6 +398,49 @@ export class QuestionNotChallengeableError extends DomainError {
 }
 
 /**
+ * This request cannot be grounded on the sources it named.
+ *
+ * Its own error because the reasons are about the *request* and belong on the generate
+ * form's source control, not on a run: grounded generation with nothing selected, a source
+ * that belongs to another track or has been archived, or a selection whose newest snapshots
+ * hold no passages at all. Every one of them is refused before a model is called, because
+ * a "grounded" batch built from no excerpts would be a model-knowledge batch wearing a
+ * label it has not earned (`spec/AI-GUIDELINES.md` section 1.2).
+ */
+export class GroundingUnavailableError extends DomainError {
+  readonly code = "GROUNDING_UNAVAILABLE";
+
+  constructor(readonly detail: string) {
+    super(detail);
+  }
+
+  fieldMessages(): Readonly<Record<string, readonly string[]>> {
+    return { sourceIds: [this.detail] };
+  }
+}
+
+/**
+ * This question cannot be checked against the owner's sources.
+ *
+ * Separate from `GroundingUnavailableError` because it is refused on a different page for
+ * different reasons — the question is gone from this track, or the track has no active
+ * source whose passages could answer the question — and because it has no form field to
+ * land on. Like the review's refusal, it is a refusal rather than a no-op: a check costs a
+ * model call.
+ */
+export class QuestionNotSourceCheckableError extends DomainError {
+  readonly code = "QUESTION_NOT_SOURCE_CHECKABLE";
+
+  constructor(readonly detail: string) {
+    super(detail);
+  }
+
+  fieldMessages(): Readonly<Record<string, readonly string[]>> {
+    return { "": [this.detail] };
+  }
+}
+
+/**
  * A provider failure reduced to a category.
  *
  * Not a `DomainError`: it never reaches a form. The facade catches it, records

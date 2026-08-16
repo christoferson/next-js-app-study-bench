@@ -62,6 +62,29 @@ import type {
 export interface CheckContext {
   /** Objective identifiers that exist in the target track. */
   readonly objectiveIds: readonly ObjectiveId[];
+  /**
+   * The grounding the batch was given, when it was given any.
+   *
+   * Omitted for a model-knowledge batch, which is not the same as present-and-empty: a
+   * grounded batch with no excerpts is a request that should never have been made, and the
+   * facade refuses it before a model is called. Here, absence means "no excerpt claim is
+   * meaningful", so a claimed index is treated as a fabricated citation.
+   */
+  readonly grounding?: GroundingCheckContext;
+}
+
+/**
+ * What a grounded or hybrid batch may cite, and how strictly.
+ *
+ * `mode` rather than a boolean, because the two grounded modes differ in exactly one rule
+ * and it is the rule that defines them: a `SOURCE_GROUNDED` question must name at least one
+ * supporting excerpt, and a `HYBRID` question need not. Everything else — indexes must be
+ * in range — is shared.
+ */
+export interface GroundingCheckContext {
+  readonly mode: "SOURCE_GROUNDED" | "HYBRID";
+  /** How many excerpts were sent, so `1..excerptCount` are the citable indexes. */
+  readonly excerptCount: number;
 }
 
 const STEM_MIN_LENGTH = 10;
@@ -107,7 +130,7 @@ export function checkQuestionDrafts(
   const known = new Set(context.objectiveIds);
 
   for (const [index, draft] of drafts.entries()) {
-    const reason = questionRejection(draft, known);
+    const reason = questionRejection(draft, known, context.grounding);
 
     if (reason === null) {
       accepted.push(draft);
@@ -151,6 +174,7 @@ export function checkFlashcardDrafts(
 function questionRejection(
   draft: GeneratedQuestionDraft,
   known: ReadonlySet<ObjectiveId>,
+  grounding: GroundingCheckContext | undefined,
 ): string | null {
   // Required fields.
   if (draft.stem.trim().length === 0) {
@@ -225,7 +249,63 @@ function questionRejection(
     return officialProblem;
   }
 
+  const groundingProblem = groundingRejection(
+    draft.supportingChunkIndexes,
+    grounding,
+  );
+
+  if (groundingProblem !== null) {
+    return groundingProblem;
+  }
+
   return assertNoFabricatedSources(draft.tags);
+}
+
+/**
+ * Whether this question's excerpt citations are usable.
+ *
+ * The `SPEC.md` section 11.3 rule "source IDs exist when provided", now that there is a
+ * mode in which they are provided. Three refusals, and each is a different mistake:
+ *
+ * - **A citation with no grounding.** A model-knowledge batch was shown no excerpts, so an
+ *   index cannot refer to anything; a draft that claims one has fabricated a citation,
+ *   which is the failure `assertNoFabricatedSources` exists to prevent in the tags.
+ * - **An index out of range.** The model was shown four excerpts and named the seventh.
+ *   The claim is discarded with the draft rather than narrowed, because a question whose
+ *   stated evidence does not exist is a question whose evidence is unknown — and an
+ *   evidence panel built by dropping the bad index would show the owner support the model
+ *   never actually claimed.
+ * - **A grounded question supported by nothing.** This is the mode's whole promise. A
+ *   `SOURCE_GROUNDED` question that names no excerpt was written from the model's own
+ *   knowledge with a source library in the room, which is a hybrid question mislabelled —
+ *   and the label is what the owner would trust. `HYBRID` is exempt by design: naming no
+ *   excerpt there is the honest answer for a question whose framing is the model's own.
+ */
+function groundingRejection(
+  claimed: readonly number[],
+  grounding: GroundingCheckContext | undefined,
+): string | null {
+  if (grounding === undefined) {
+    return claimed.length === 0
+      ? null
+      : "The question cites source excerpts, but this request sent none.";
+  }
+
+  for (const index of claimed) {
+    if (
+      !Number.isInteger(index) ||
+      index < 1 ||
+      index > grounding.excerptCount
+    ) {
+      return `The question cites excerpt ${String(index)}, which was not one of the ${grounding.excerptCount} sent.`;
+    }
+  }
+
+  if (grounding.mode === "SOURCE_GROUNDED" && claimed.length === 0) {
+    return "The question names no supporting excerpt, so it is not grounded in the chosen sources.";
+  }
+
+  return null;
 }
 
 function flashcardRejection(

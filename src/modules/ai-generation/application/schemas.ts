@@ -66,16 +66,18 @@ export const itemKindSchema = enumOf(
  * that does not belong to the track is not rejected here — the facade scopes the
  * offered objectives to the track, so an unknown one simply selects nothing.
  */
-const objectiveIdsSchema = z
-  .array(z.string().max(ID_LIMIT, { message: "That objective is not valid." }))
-  .optional()
-  .transform((values): readonly string[] => {
-    const ids = (values ?? [])
-      .map((value) => value.trim())
-      .filter((value) => value.length > 0);
+function idListSchema(message: string) {
+  return z
+    .array(z.string().max(ID_LIMIT, { message }))
+    .optional()
+    .transform((values): readonly string[] => {
+      const ids = (values ?? [])
+        .map((value) => value.trim())
+        .filter((value) => value.length > 0);
 
-    return [...new Set(ids)];
-  });
+      return [...new Set(ids)];
+    });
+}
 
 /**
  * A multi-select over a closed list of content types.
@@ -134,7 +136,7 @@ export const generationRequestSchema = z.object({
     min: MIN_DIFFICULTY,
     max: MAX_DIFFICULTY,
   }),
-  objectiveIds: objectiveIdsSchema,
+  objectiveIds: idListSchema("That objective is not valid."),
   additionalInstructions: optionalText(ADDITIONAL_INSTRUCTIONS_LIMIT),
   questionTypes: typeListSchema(QUESTION_TYPES),
   cardTypes: typeListSchema(CARD_TYPES),
@@ -148,6 +150,37 @@ export const generationRequestSchema = z.object({
    * failing a request the owner has just paid the wait for.
    */
   personaId: optionalText(ID_LIMIT),
+  /**
+   * Where the content comes from (`SPEC.md` section 26.2).
+   *
+   * Only the three modes generation can honestly produce are offered — `MANUAL` is the
+   * owner's own writing and the rest belong to milestones that do not exist. Defaulting
+   * to `MODEL_KNOWLEDGE` keeps every existing caller and every existing test correct,
+   * and it is the safe default in the sense that matters: it is the mode that claims the
+   * least.
+   *
+   * The pairing rule — grounded needs at least one source, and the sources must be the
+   * track's and active — is the facade's, not this schema's. It needs the track.
+   */
+  generationMode: z
+    .string()
+    .optional()
+    .transform((value): "MODEL_KNOWLEDGE" | "SOURCE_GROUNDED" | "HYBRID" => {
+      const chosen = (value ?? "").trim();
+
+      return chosen === "SOURCE_GROUNDED" || chosen === "HYBRID"
+        ? chosen
+        : "MODEL_KNOWLEDGE";
+    }),
+  /**
+   * Which of the owner's sources this batch may be built from.
+   *
+   * Same treatment as `objectiveIds`: blanks dropped, duplicates collapsed, unknown
+   * identifiers left for the facade — which scopes them to the track and refuses ones
+   * that are not there, because a source silently ignored would produce a batch grounded
+   * on less than the owner chose.
+   */
+  sourceIds: idListSchema("That source is not valid."),
   /**
    * Set when the owner has seen the duplicate-batch notice and asked for the
    * batch anyway (`SPEC.md` section 11.6).

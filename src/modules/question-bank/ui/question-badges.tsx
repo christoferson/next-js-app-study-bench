@@ -90,13 +90,13 @@ export function ProvenanceBadge({
   generationRunId,
   alwaysShow = false,
 }: ProvenanceBadgeProps) {
-  if (generationMode !== "MODEL_KNOWLEDGE") {
+  const label = modelWrittenLabel(generationMode);
+
+  if (label === null) {
     return alwaysShow ? (
       <span className="badge">{describeGenerationMode(generationMode)}</span>
     ) : null;
   }
-
-  const label = "AI generated — model knowledge";
 
   if (generationRunId === null) {
     return <span className="badge">{label}</span>;
@@ -110,4 +110,40 @@ export function ProvenanceBadge({
       {label}
     </Link>
   );
+}
+
+/**
+ * What a model-written item says about itself, or `null` when a model did not write it.
+ *
+ * Three modes are model-written, and they make three *different* claims — which is the
+ * reason this is a function rather than one label with the mode appended:
+ *
+ * - `MODEL_KNOWLEDGE` — nothing was consulted, so the badge says so.
+ * - `SOURCE_GROUNDED` — written from passages of the owner's own imported documents,
+ *   which the question's evidence section quotes. It says *your sources*, never
+ *   "verified" and never "official": a source the owner imported is only as good as the
+ *   document it came from, and StudyBench publishes no exam material (`SPEC.md`
+ *   section 3).
+ * - `HYBRID` — part grounded, part not, and the badge has to say the second half or it
+ *   would let the grounded half vouch for the ungrounded one.
+ *
+ * The remaining modes fall through to `null` and are rendered as a plain mode name on a
+ * detail page. `MANUAL` is the owner's own writing; the other three are set by
+ * milestones that do not exist yet, and inventing a claim for them now would be a claim
+ * nothing has earned.
+ */
+function modelWrittenLabel(mode: GenerationMode): string | null {
+  switch (mode) {
+    case "MODEL_KNOWLEDGE":
+      return "AI generated — model knowledge";
+    case "SOURCE_GROUNDED":
+      return "AI generated — from your sources";
+    case "HYBRID":
+      return "AI generated — hybrid, part from your sources";
+    case "MANUAL":
+    case "IMPORTED":
+    case "VARIANT":
+    case "WEB_RESEARCH":
+      return null;
+  }
 }

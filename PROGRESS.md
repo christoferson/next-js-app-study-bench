@@ -6,11 +6,10 @@ D8 — Source Library and Grounded Generation
 
 ## Status
 
-D7 completed 2026-08-16 (three slices: AI review, tutor, grading +
-challenge). D8 authorized and in progress in two slices: slice 1 (source
-library foundation) completed 2026-08-16; slice 2 (grounded/hybrid
-generation, evidence display, source verification, outdated detection)
-remains.
+D8 completed 2026-08-16 in two slices (slice 1: source library foundation;
+slice 2: grounded/hybrid generation, source evidence, source verification,
+outdated detection). Awaiting owner direction (remaining milestones: D9
+print packs, D11 speech input, D12 PWA, D13 production).
 
 ## Completed milestones
 
@@ -24,11 +23,11 @@ remains.
   packs deferred to D9, listening question type and audio card type
   deferred, S3 storage deferred to D13)
 - D7 — AI Tutor and Question Quality Workflow (2026-08-16, three slices)
+- D8 — Source Library and Grounded Generation (2026-08-16, two slices)
 
 ## In progress
 
-- D8 — Source Library and Grounded Generation (slice 1 done 2026-08-16;
-  slice 2 pending)
+- None
 
 ## Planned milestones
 
@@ -480,6 +479,34 @@ remains.
   Single-track sources (SPEC lists certificationIds plural — multi-track
   linking deferred). Slice 2 pending: grounded/hybrid generation, evidence
   display, source verification, outdated-question detection.
+- 2026-08-16 (D8 slice 2, completes D8): grounded + hybrid generation and
+  source verification. Migration `0015`: `question_source_links`
+  (question CASCADE, chunk RESTRICT — deleting a snapshot under live
+  evidence fails loudly) + item-kind CHECK widened for SOURCE_VERIFICATION
+  (provenance-preserving rebuild). Generation gains a mode
+  (MODEL_KNOWLEDGE | SOURCE_GROUNDED | HYBRID) and source selection; chunk
+  selection is deterministic lexical ranking (objective-mapped first, then
+  token overlap, CJK-aware tokenization, caps ~10 chunks / ~12k chars — no
+  vector DB per SPEC). `question-source-grounded` template v1: excerpts
+  numbered in the user message inside delimiters, system message declares
+  them data; grounded questions must cite ≥1 excerpt index (validated in
+  range — ids are never sent to the model); grounded mode forbids
+  gap-filling from model knowledge and may return fewer than requested;
+  hybrid is labeled HYBRID. Drafts persist with generationMode, chunk
+  links, and run snapshot ids in one transaction. Question pages display
+  "Source evidence" (quoted chunks with source title/date). "Check
+  against my sources" records a SOURCE_VERIFICATION run
+  (SUPPORTED/PARTIALLY_SUPPORTED/NOT_SUPPORTED/CONTRADICTED): SUPPORTED
+  offers an explicit "Mark source-checked" (owner clicks, never
+  automatic); CONTRADICTED offers a prefilled dispute; NOT_SUPPORTED
+  offers neither (silence is not disagreement). Outdated detection is
+  computed, not stored: questions linked to superseded snapshots get a
+  notice with a manual "Mark as outdated" button. Purge and question
+  delete clear links explicitly. Live-verified: one grounded call cited
+  in-range excerpts from invented passages model knowledge could not fake
+  (~2.7k tokens). Known gaps: refresh-flag path tested via fixtures, not
+  a genuinely changed live web source; single-model single-call citation
+  evidence.
 - Known deferred items: ORDERING question type (needed for HSK Writing
   Part 1 word-ordering drills), homograph numbering normalization at import,
   enrichment of the remaining ~1,500 vocabulary words pending owner quality

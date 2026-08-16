@@ -22,6 +22,7 @@ import {
 import { FakeLanguageModelGateway } from "@/modules/ai-generation/infrastructure/fake-language-model-gateway";
 import { SqliteGenerationRunRepository } from "@/modules/ai-generation/infrastructure/sqlite-generation-run-repository";
 import { SqliteGenerationUnitOfWork } from "@/modules/ai-generation/infrastructure/sqlite-generation-unit-of-work";
+import { SqliteSourceGroundingRepository } from "@/modules/ai-generation/infrastructure/sqlite-source-grounding-repository";
 
 /**
  * Server-only composition root for AI generation.
@@ -81,6 +82,7 @@ export function createGenerationFacade(
     certifications: new SqliteCertificationRepository(database),
     objectives: new SqliteObjectiveRepository(database),
     personas: new SqlitePersonaRepository(database),
+    grounding: new SqliteSourceGroundingRepository(database),
     unitOfWork: new SqliteGenerationUnitOfWork(database, runner),
     gateway: gateway ?? configured.generation,
     // A caller that overrode only the writing gateway gets that same gateway for

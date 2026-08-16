@@ -8,12 +8,19 @@ import {
 import { getGenerationFacade } from "@/modules/ai-generation/composition";
 import {
   acceptQuestionReviewAction,
+  acceptSourceVerificationAction,
   askTutorAction,
   challengeQuestionAction,
   reviewQuestionAction,
+  verifyQuestionAgainstSourcesAction,
 } from "@/modules/ai-generation/ui/actions";
 import { QuestionChallengePanel } from "@/modules/ai-generation/ui/question-challenge-panel";
 import { QuestionReviewPanel } from "@/modules/ai-generation/ui/question-review-panel";
+import {
+  SourceEvidence,
+  hasOutdatedEvidence,
+} from "@/modules/ai-generation/ui/source-evidence";
+import { SourceVerificationPanel } from "@/modules/ai-generation/ui/source-verification-panel";
 import { TutorPanel } from "@/modules/ai-generation/ui/tutor-panel";
 import {
   contentChoices,
@@ -24,6 +31,7 @@ import { getQuestionBankFacade } from "@/modules/question-bank/composition";
 import {
   disputeQuestionAction,
   linkObjectiveAction,
+  markQuestionOutdatedAction,
   unlinkObjectiveAction,
 } from "@/modules/question-bank/ui/actions";
 import {
@@ -71,7 +79,15 @@ export default async function QuestionDetailPage({
   // Read-aloud was removed from question pages by owner decision (2026-08-15):
   // question audio belongs to future listening-comprehension study, not the
   // management view. Vocabulary card audio is unaffected.
-  const [attempts, aiReview, tutorExchanges, aiChallenge] = await Promise.all([
+  const [
+    attempts,
+    aiReview,
+    tutorExchanges,
+    aiChallenge,
+    evidence,
+    sourceCheck,
+    checkableSourceCount,
+  ] = await Promise.all([
     getStudyFacade().listAttemptsForQuestion(question.id),
     // The latest completed review of this question, or `null` if it has never been
     // reviewed. A cheap read that makes the findings panel part of the question
@@ -86,6 +102,16 @@ export default async function QuestionDetailPage({
     // client island, and a server read keeps the outcome durable across the reload the
     // challenge action revalidates.
     getGenerationFacade().findQuestionChallenge(question.id),
+    // The passages this question was built from, if any. Loaded for every question rather
+    // than only for grounded ones: a question can gain evidence and its mode alone does not
+    // say whether it has any, so the presence of links is what the page reads.
+    getGenerationFacade().findQuestionEvidence(question.id),
+    // The latest source check, or null if this question has never been checked.
+    getGenerationFacade().findSourceVerification(question.id),
+    // Whether this track has anything to check against at all. A count rather than the
+    // sources themselves: the check has no source picker, so the page only needs to know
+    // whether the button would have somewhere to look.
+    getGenerationFacade().countCheckableSources(certification.slug),
   ]);
   // Matches `isReviewableLifecycle` in the facade, which re-checks it: a retired or
   // archived question is out of study, so reviewing it would spend a model call on
@@ -291,6 +317,54 @@ export default async function QuestionDetailPage({
         <AttemptHistory attempts={attempts} revisions={view.revisions} />
       </CollapsibleSection>
 
+      {/* Before the AI panels, because it is the owner's own material rather than a model's
+          opinion of it: someone deciding whether a question is right should read the passages
+          it was built from before reading anything written about it. Folded once there is more
+          than a screenful, like the other record sections. */}
+      {evidence.length > 0 ? (
+        <CollapsibleSection
+          id="evidence"
+          title="Source evidence"
+          open={openWhenShort(evidence.length)}
+          count={
+            evidence.length === 1 ? "1 passage" : `${evidence.length} passages`
+          }
+          note="The passages of your own sources this question was built from, quoted as they were sent to the model. Each names the source and when it was read."
+        >
+          {hasOutdatedEvidence(evidence) ? (
+            <div className="empty-state" role="status">
+              <p>
+                This question was built on an older snapshot of at least one of
+                its sources. That source has been read again since, so the
+                passages below may no longer be what the document says.
+              </p>
+              <p>
+                Nothing has been changed for you. If the question no longer
+                holds, mark it outdated and it leaves study until you revise it.
+              </p>
+              <form action={markQuestionOutdatedAction}>
+                <input
+                  type="hidden"
+                  name="slug"
+                  value={certification.slug}
+                  readOnly
+                />
+                <input
+                  type="hidden"
+                  name="questionId"
+                  value={question.id}
+                  readOnly
+                />
+                <button type="submit" className="button-quiet">
+                  Mark as outdated
+                </button>
+              </form>
+            </div>
+          ) : null}
+          <SourceEvidence evidence={evidence} />
+        </CollapsibleSection>
+      ) : null}
+
       {/* Above Manage rather than inside it: a review is evidence the owner reads before
           deciding, and the decisions it argues for — approve, dispute — are the controls
           in the section below. */}
@@ -311,6 +385,36 @@ export default async function QuestionDetailPage({
           reviewAction={reviewQuestionAction}
           disputeAction={disputeQuestionAction}
           acceptAction={acceptQuestionReviewAction}
+        />
+      </section>
+
+      {/* Directly after the AI review, because the two answer one question from opposite
+          evidence — what the model believes, and what the owner's own documents say — and the
+          second is the one that can contradict the first.
+
+          `id="source-check"` is the anchor a run-history row links to. */}
+      <section
+        aria-labelledby="source-check-heading"
+        className="section"
+        id="source-check"
+        style={{ scrollMarginTop: "1rem" }}
+      >
+        <div className="section-heading">
+          <h2 id="source-check-heading">Check against my sources</h2>
+          <p className="section-note">
+            A model reads passages of the documents you imported and says
+            whether they support this question&apos;s answer. It answers from
+            those passages only, and it changes nothing.
+          </p>
+        </div>
+        <SourceVerificationPanel
+          slug={certification.slug}
+          questionId={question.id}
+          checkable={checkableSourceCount > 0}
+          view={sourceCheck}
+          verifyAction={verifyQuestionAgainstSourcesAction}
+          disputeAction={disputeQuestionAction}
+          acceptAction={acceptSourceVerificationAction}
         />
       </section>
 

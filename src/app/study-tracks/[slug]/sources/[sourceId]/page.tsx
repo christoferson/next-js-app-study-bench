@@ -5,6 +5,7 @@ import {
   CollapsibleSection,
   openWhenShort,
 } from "@/shared/ui/collapsible-section";
+import { getGenerationFacade } from "@/modules/ai-generation/composition";
 import { getSourceFacade } from "@/modules/sources/composition";
 import { SNAPSHOT_PREVIEW_CHARS } from "@/modules/sources/application/source-facade";
 import {
@@ -55,6 +56,11 @@ export default async function SourcePage({
 
   const { certification, source } = view;
   const isArchived = source.status === "ARCHIVED";
+  // Asked of the generation module because it owns the evidence links. The page composes the
+  // two modules rather than either one importing the other, which is where cross-module
+  // reads belong (`spec/ARCHITECTURE.md` section 2).
+  const outdatedQuestions =
+    await getGenerationFacade().countQuestionsOnSupersededSnapshots(source.id);
 
   return (
     <main className="page">
@@ -127,6 +133,29 @@ export default async function SourcePage({
           <p className="empty-state" role="status">
             The page had changed. A new snapshot was recorded beside the old
             one, which is kept.
+          </p>
+        ) : null}
+
+        {/* The consequence of a refresh, stated whenever it holds rather than only after
+            the refresh that caused it: the owner may come back days later, and the questions
+            are still built on text this document no longer contains.
+
+            Deliberately no bulk action. Whether a question still holds depends on what
+            changed, which only reading it can settle, so this points at the questions and
+            stops there — nothing is flagged or retired automatically (`SPEC.md` 26.2). */}
+        {outdatedQuestions > 0 ? (
+          <p className="empty-state" role="status">
+            {outdatedQuestions === 1
+              ? "1 question was written from"
+              : `${outdatedQuestions} questions were written from`}{" "}
+            an older snapshot of this source. Their evidence is still readable,
+            but this document has changed since. Each of those questions says so
+            on its own page, above its evidence, with the button to mark it
+            outdated.{" "}
+            <Link href={`/study-tracks/${certification.slug}/questions`}>
+              Open the question bank
+            </Link>{" "}
+            to review them. Nothing has been changed for you.
           </p>
         ) : null}
 

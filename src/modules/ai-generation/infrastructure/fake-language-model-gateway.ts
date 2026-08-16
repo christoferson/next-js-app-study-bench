@@ -23,6 +23,7 @@ import { OBJECTIVE_IMPORT_SCHEMA_NAME } from "@/modules/ai-generation/applicatio
 import { QUESTION_REVIEW_SCHEMA_NAME } from "@/modules/ai-generation/application/question-review-schema";
 import { ANSWER_EVALUATION_SCHEMA_NAME } from "@/modules/ai-generation/application/answer-evaluation-schema";
 import { QUESTION_CHALLENGE_SCHEMA_NAME } from "@/modules/ai-generation/application/question-challenge-schema";
+import { SOURCE_VERIFICATION_SCHEMA_NAME } from "@/modules/ai-generation/application/source-verification-schema";
 import { TUTOR_SCHEMA_NAME } from "@/modules/ai-generation/application/tutor-schema";
 import {
   TUTOR_ASK_KINDS,
@@ -144,6 +145,22 @@ export interface FakeLanguageModelGatewayOptions {
    */
   readonly challengeMode?:
     "STANDS" | "OWNER_POINT" | "WRONG_REVISE" | "MALFORMED";
+  /**
+   * What a synthesised source check returns.
+   *
+   * One mode per branch the verification panel has: `"SUPPORTED"` is the path that offers
+   * the `SOURCE_CHECKED` promotion, `"NOT_SUPPORTED"` is the ordinary answer for an
+   * incomplete source library and offers nothing, `"CONTRADICTED"` is the path that offers
+   * the prefilled dispute, and `"MALFORMED"` returns a verdict that is not a verdict on
+   * every turn.
+   *
+   * Every mode reads the excerpts out of the prompt and cites them by the numbers it was
+   * given, so a facade that never sent the passages produces a check that cites nothing —
+   * which is the mistake this fixture exists to catch, because a verification of no
+   * evidence would otherwise still validate.
+   */
+  readonly sourceVerificationMode?:
+    "SUPPORTED" | "NOT_SUPPORTED" | "CONTRADICTED" | "MALFORMED";
 }
 
 /** One prompt as the gateway received it, for tests that inspect what was sent. */
@@ -179,6 +196,9 @@ export class FakeLanguageModelGateway implements LanguageModelGateway {
   private readonly challengeMode:
     "STANDS" | "OWNER_POINT" | "WRONG_REVISE" | "MALFORMED";
 
+  private readonly sourceVerificationMode:
+    "SUPPORTED" | "NOT_SUPPORTED" | "CONTRADICTED" | "MALFORMED";
+
   private turn = 0;
 
   private readonly prompts: SentPrompt[] = [];
@@ -193,6 +213,7 @@ export class FakeLanguageModelGateway implements LanguageModelGateway {
     this.tutorMode = options.tutorMode ?? "ANSWER";
     this.answerEvaluationMode = options.answerEvaluationMode ?? "COVERED";
     this.challengeMode = options.challengeMode ?? "STANDS";
+    this.sourceVerificationMode = options.sourceVerificationMode ?? "SUPPORTED";
   }
 
   /** How many provider turns have been taken, for tests that assert repair. */
@@ -256,6 +277,7 @@ export class FakeLanguageModelGateway implements LanguageModelGateway {
         tutorMode: this.tutorMode,
         answerEvaluationMode: this.answerEvaluationMode,
         challengeMode: this.challengeMode,
+        sourceVerificationMode: this.sourceVerificationMode,
       });
     }
 
@@ -302,6 +324,18 @@ interface PromptFacts {
   readonly challengedStem: string;
   /** The objection the owner raised, as a challenge prompt carried it. */
   readonly ownerObjection: string;
+  /**
+   * The numbered source excerpts a grounded prompt carried, in the order they were sent.
+   *
+   * Read out of `<owner_source_excerpts>` and keyed by the number the template wrote, so a
+   * fixture that cites an excerpt cites one that was actually sent. Empty for every
+   * ungrounded prompt, which is what makes "cite nothing when nothing was sent" the
+   * fixture's default rather than a rule it has to remember.
+   */
+  readonly sourceExcerpts: readonly {
+    readonly index: number;
+    readonly text: string;
+  }[];
 }
 
 function synthesizePayload<Value>(
@@ -313,6 +347,8 @@ function synthesizePayload<Value>(
     readonly answerEvaluationMode: "COVERED" | "PARTIAL" | "MALFORMED";
     readonly challengeMode:
       "STANDS" | "OWNER_POINT" | "WRONG_REVISE" | "MALFORMED";
+    readonly sourceVerificationMode:
+      "SUPPORTED" | "NOT_SUPPORTED" | "CONTRADICTED" | "MALFORMED";
   },
 ): unknown {
   const facts = readPrompt(request.user);
@@ -336,6 +372,8 @@ function synthesizePayload<Value>(
       return synthesizeEvaluation(facts, modes.answerEvaluationMode);
     case QUESTION_CHALLENGE_SCHEMA_NAME:
       return synthesizeChallenge(facts, modes.challengeMode);
+    case SOURCE_VERIFICATION_SCHEMA_NAME:
+      return synthesizeSourceVerification(facts, modes.sourceVerificationMode);
     default:
       // A schema this gateway has no fixture for is a wiring mistake, not a
       // provider problem, so it is loud.
@@ -353,12 +391,25 @@ function synthesizeQuestions(facts: PromptFacts): readonly unknown[] {
     const position = index + 1;
     const type = types[index % types.length] ?? "SINGLE_CHOICE";
     const objectiveIds = pickObjective(facts.objectiveIds, index);
+    // One excerpt per question, rotating through the ones that were sent. Cited by the
+    // number the prompt gave, so a grounded batch produces questions that pass the
+    // grounding check and an ungrounded one cites nothing at all — which is what makes the
+    // two modes distinguishable through one fixture. Nothing is cited when nothing was
+    // sent, so a model-knowledge batch is unchanged by grounding existing.
+    const cited =
+      facts.sourceExcerpts.length === 0
+        ? null
+        : (facts.sourceExcerpts[index % facts.sourceExcerpts.length] ?? null);
     const common = {
       questionType: type,
       difficulty: (index % 5) + 1,
       tags: ["demo", "fake-gateway"],
       objectiveIds,
-      explanation: `Demo explanation ${position}. Option one is the fictional best answer for this made-up situation; the others are wrong because the demo says so.`,
+      explanation:
+        cited === null
+          ? `Demo explanation ${position}. Option one is the fictional best answer for this made-up situation; the others are wrong because the demo says so.`
+          : `Demo explanation ${position}, from excerpt ${cited.index} of the owner's own sources, which begins "${cited.text.slice(0, 80)}". Option one is the fictional best answer; nothing outside the excerpts was used.`,
+      ...(cited === null ? {} : { supportingExcerptIndexes: [cited.index] }),
     };
 
     if (type === "SHORT_ANSWER") {
@@ -868,6 +919,75 @@ function synthesizeChallenge(
   }
 }
 
+/**
+ * A verdict on the excerpts the prompt carried.
+ *
+ * Extractive in the way that matters most for this kind: the summary quotes the start of the
+ * first excerpt, and the per-excerpt assessments cite the numbers the prompt gave. So a
+ * facade that never sent the passages produces a check citing nothing and quoting nothing,
+ * and a facade that sent them under the wrong delimiters produces the same — which is the
+ * failure a source check must never pass silently, because a verdict with no evidence behind
+ * it still validates and would still be shown to the owner as "checked against my sources".
+ *
+ * Every mode says in words that only the excerpts were consulted, because that is the claim
+ * a real check has to be able to make and a fixture that omitted it would let the panel ship
+ * without it (`spec/AI-GUIDELINES.md` section 1.2).
+ */
+function synthesizeSourceVerification(
+  facts: PromptFacts,
+  mode: "SUPPORTED" | "NOT_SUPPORTED" | "CONTRADICTED" | "MALFORMED",
+): unknown {
+  const excerpts = facts.sourceExcerpts;
+  const first = excerpts[0];
+  const quoted = (first?.text ?? "").slice(0, 60);
+  const stem = facts.reviewedStem.slice(0, 60);
+  const lede = `Demo source check from the fake gateway for "${stem}", against ${excerpts.length === 1 ? "one passage" : `${excerpts.length} passages`} beginning "${quoted}". No model was called and nothing outside the excerpts was consulted.`;
+
+  if (mode === "MALFORMED") {
+    // Not a verdict and not a summary, on every turn, so no repair can rescue it.
+    return { verdict: "PROBABLY_FINE", summary: "", excerpts: [] };
+  }
+
+  if (mode === "CONTRADICTED") {
+    return {
+      verdict: "CONTRADICTED",
+      summary: `${lede} The passage states the fictional opposite of the answer this question marks correct.`,
+      excerpts: excerpts.map((excerpt, index) => ({
+        excerptIndex: excerpt.index,
+        relevance: index === 0 ? "CONTRADICTS" : "UNRELATED",
+        note:
+          index === 0
+            ? "Demo note: this passage says something incompatible with the marked answer."
+            : null,
+      })),
+    };
+  }
+
+  if (mode === "NOT_SUPPORTED") {
+    return {
+      verdict: "NOT_SUPPORTED",
+      summary: `${lede} None of these passages addresses what the question asks, so they are silent about it rather than disagreeing with it.`,
+      excerpts: excerpts.map((excerpt) => ({
+        excerptIndex: excerpt.index,
+        relevance: "UNRELATED",
+        note: null,
+      })),
+    };
+  }
+
+  return {
+    // With no excerpts there is nothing that could support the answer, so the fixture says
+    // so rather than claiming support it was shown no basis for.
+    verdict: excerpts.length === 0 ? "NOT_SUPPORTED" : "SUPPORTED",
+    summary: `${lede} The passages state what the question marks correct.`,
+    excerpts: excerpts.map((excerpt) => ({
+      excerptIndex: excerpt.index,
+      relevance: "SUPPORTS",
+      note: "Demo note: this passage states the marked answer.",
+    })),
+  };
+}
+
 /** How each synthesised answer opens, so the fixture is visibly per-ask. */
 function describeDemoAsk(
   kind: Exclude<TutorAskKind, "FOLLOW_UP_QUESTION">,
@@ -938,7 +1058,41 @@ function readPrompt(user: string): PromptFacts {
     writtenAnswer: readDelimitedBlock(user, "owner_written_answer"),
     challengedStem: readStem(user, "owner_question_being_challenged"),
     ownerObjection: readDelimitedBlock(user, "owner_objection"),
+    sourceExcerpts: readSourceExcerpts(user),
   };
+}
+
+/**
+ * The numbered excerpts inside the source block, in order.
+ *
+ * Each is introduced by `[Excerpt N] from "title"` and followed by its text, so the number
+ * is read from the prompt rather than assumed from position: a template that renumbered its
+ * excerpts would produce citations that follow the renumbering, and one that stopped
+ * numbering them produces no citations at all.
+ */
+function readSourceExcerpts(
+  user: string,
+): readonly { readonly index: number; readonly text: string }[] {
+  const block = readDelimitedBlock(user, "owner_source_excerpts");
+  const excerpts: { index: number; text: string }[] = [];
+  let current: { index: number; text: string } | null = null;
+
+  for (const line of block.split("\n")) {
+    const header = /^\[Excerpt (\d+)\] from /.exec(line);
+
+    if (header?.[1] !== undefined) {
+      current = { index: Number(header[1]), text: "" };
+      excerpts.push(current);
+      continue;
+    }
+
+    if (current !== null && line.trim().length > 0) {
+      current.text =
+        current.text.length === 0 ? line : `${current.text}\n${line}`;
+    }
+  }
+
+  return excerpts;
 }
 
 /**
@@ -1005,10 +1159,18 @@ function readTutorAskKind(user: string): TutorAskKind | null {
   );
 }
 
+/**
+ * How many items the prompt asked for.
+ *
+ * `up to N` as well as `N`, because a grounded batch is asked for at most that many and
+ * fewer if the excerpts will not support them. The fake always writes the full number: how
+ * many a real model would decide the passages justify is a judgement no fixture can make,
+ * and a fake that quietly returned fewer would make every grounded count assertion soft.
+ */
 function readCount(user: string): number {
   const raw = matchLine(
     user,
-    /^(?:Write|Enrich) (\d+) (?:question|flashcard|word)s?\.$/m,
+    /^(?:Write|Enrich) (?:up to )?(\d+) (?:question|flashcard|word)s?(?:\.| from the excerpts)/m,
   );
   const parsed = Number(raw ?? "");
 

@@ -3,6 +3,7 @@ import type { ObjectiveRepository } from "@/modules/certifications/ports/objecti
 import type { QuestionRepository } from "@/modules/question-bank/ports/question-repository";
 import type { FlashcardRepository } from "@/modules/flashcards/ports/flashcard-repository";
 import type { GenerationRunRepository } from "./generation-run-repository";
+import type { SourceGroundingRepository } from "./source-grounding-repository";
 
 /**
  * Repositories bound to one generation transaction.
@@ -23,6 +24,13 @@ export interface GenerationTransactionRepositories {
   readonly flashcards: FlashcardRepository;
   readonly certifications: CertificationRepository;
   readonly objectives: ObjectiveRepository;
+  /**
+   * Evidence links, written in the same transaction as the questions they belong to.
+   *
+   * A question stored without its links would be a source-grounded question with no
+   * evidence, which is the one thing grounded generation exists to prevent.
+   */
+  readonly grounding: SourceGroundingRepository;
 }
 
 export interface GenerationUnitOfWork {

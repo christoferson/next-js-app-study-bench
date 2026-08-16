@@ -2,6 +2,7 @@ import { ANSWER_EVALUATION_ITEM_COUNT } from "./answer-evaluation";
 import type { GeneratedItemKind } from "./generation-run";
 import { QUESTION_CHALLENGE_ITEM_COUNT } from "./question-challenge";
 import { QUESTION_REVIEW_ITEM_COUNT } from "./question-review";
+import { SOURCE_VERIFICATION_ITEM_COUNT } from "./source-verification";
 import { TUTOR_ITEM_COUNT } from "./tutor-exchange";
 
 /**
@@ -78,6 +79,11 @@ export function maxItemsFor(kind: GeneratedItemKind): number {
     // challenges, each recorded with the reason it was about.
     case "QUESTION_CHALLENGE":
       return QUESTION_CHALLENGE_ITEM_COUNT;
+    // One question, checked against sources once. Verifying a whole bank would be a
+    // different request shape — and a bill the owner should see before they agree to it —
+    // rather than a bigger number here.
+    case "SOURCE_VERIFICATION":
+      return SOURCE_VERIFICATION_ITEM_COUNT;
   }
 }
 
@@ -155,6 +161,11 @@ function tokensPerItem(kind: GeneratedItemKind): number {
     // A challenge has to argue both readings before deciding, which is two arguments plus
     // a conclusion, so it needs about what a review needs.
     case "QUESTION_CHALLENGE":
+      return 2_500;
+    // A verification is a verdict, a paragraph of reasoning, and a short note per excerpt.
+    // Roughly a review's budget, because the reasoning has to say what each passage does
+    // and does not establish, which is the part the owner actually reads.
+    case "SOURCE_VERIFICATION":
       return 2_500;
   }
 }

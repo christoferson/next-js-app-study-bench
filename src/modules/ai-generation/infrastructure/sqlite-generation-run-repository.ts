@@ -181,6 +181,30 @@ export class SqliteGenerationRunRepository implements GenerationRunRepository {
     return row === undefined ? null : toGenerationRun(row);
   }
 
+  /**
+   * The newest completed source check of one question.
+   *
+   * The fifth query on the same `(subject_question_id, started_at)` index, with the same
+   * three conditions and a different kind. By now the `item_kind` filter is the only thing
+   * keeping five kinds of run out of each other's panels.
+   */
+  async findLatestSourceVerificationForQuestion(
+    questionId: string,
+  ): Promise<GenerationRun | null> {
+    const row = this.database
+      .prepare(
+        `SELECT ${RUN_COLUMNS} FROM generation_runs
+         WHERE subject_question_id = ?
+           AND item_kind = 'SOURCE_VERIFICATION'
+           AND status = 'COMPLETED'
+         ORDER BY started_at DESC, id DESC
+         LIMIT 1`,
+      )
+      .get(questionId) as GenerationRunRow | undefined;
+
+    return row === undefined ? null : toGenerationRun(row);
+  }
+
   async create(run: GenerationRun): Promise<void> {
     this.database
       .prepare(
@@ -397,6 +421,9 @@ function itemSourceFor(kind: GeneratedItemKind): {
     // Nor does a challenge. Its outcome may say a revision is needed, but the revision is
     // the owner's own edit, so no row anywhere belongs to this run.
     case "QUESTION_CHALLENGE":
+    // Nor does a source check. It reads one question and some of the owner's own passages
+    // and writes nothing; the quality status it may lead to is set by the owner's accept.
+    case "SOURCE_VERIFICATION":
       return null;
     case "QUESTION":
       return { table: "questions", condition: "generation_run_id = ?" };

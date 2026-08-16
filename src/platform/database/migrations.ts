@@ -1544,4 +1544,210 @@ CREATE INDEX source_objective_links_objective_idx
   ON source_objective_links (objective_id);
 `,
   },
+  {
+    id: "0015",
+    description:
+      "grounded generation: question evidence links and SOURCE_VERIFICATION runs",
+    sql: `
+-- Grounded generation (D8 slice 2, \`SPEC.md\` sections 10.3 and 26). Two changes: the
+-- table that records which passages a question was built from, and one more run kind.
+--
+-- **question_source_links is the acceptance criterion "a question references exact
+-- chunks" as a schema.** One row per chunk a question was actually built from, pointing
+-- at the chunk rather than at the source or the snapshot. Pointing at the snapshot would
+-- say "this question came from the 3 June reading of the exam guide", which is provenance;
+-- pointing at the chunk says "it came from *these two paragraphs* of it", which is
+-- evidence the owner can read back. The snapshot is reachable from the chunk, so nothing
+-- is lost by being specific.
+--
+-- Three consequences of that choice, all deliberate:
+--
+-- 1. **RESTRICT on the chunk.** A chunk is immutable and is only ever deleted with its
+--    snapshot, so this is not a constraint anything normally meets: it exists so that
+--    deleting a snapshot out from under a question's evidence fails loudly rather than
+--    silently emptying the evidence panel. Nothing in the application deletes a snapshot.
+-- 2. **CASCADE on the question.** A deleted question's evidence is not evidence of
+--    anything. The bank's own delete path clears these rows explicitly as well (see
+--    \`SqliteQuestionRepository.delete\`), for the reason it clears objective links
+--    explicitly: the intent should be readable in the delete, not inferred from cascade
+--    order. Certification purge does the same.
+-- 3. **No text copy.** The link stores no excerpt of its own. The chunk holds the text and
+--    the chunk cannot change, so a copy could only ever be a second version of the same
+--    string, and the one thing worse than no evidence is evidence that disagrees with the
+--    document.
+--
+-- What is *not* here is a stored "outdated" flag. Whether a question was built on a
+-- superseded snapshot is a question about the current state of its source, and it is
+-- answered by a join — chunk to snapshot, snapshot to source, is there a newer snapshot —
+-- rather than by a column something has to remember to set. A stored flag would need a
+-- writer on the refresh path and would be wrong for every question written before that
+-- writer existed. The quality status OUTDATED stays the owner's own decision, offered as
+-- a button next to the computed notice (\`SPEC.md\` section 26.2, "outdated-question
+-- detection"; the detection is the notice, not an automatic downgrade).
+CREATE TABLE question_source_links (
+  question_id TEXT NOT NULL REFERENCES questions (id) ON DELETE CASCADE,
+  source_chunk_id TEXT NOT NULL
+    REFERENCES source_chunks (id) ON DELETE RESTRICT,
+  created_at TEXT NOT NULL,
+  -- One link per passage. A model that names the same excerpt twice supports the
+  -- question once.
+  PRIMARY KEY (question_id, source_chunk_id)
+) STRICT;
+
+-- "What was this question built from", for the evidence panel and the staleness check.
+CREATE INDEX question_source_links_question_idx
+  ON question_source_links (question_id);
+
+-- "Which questions were built from this passage", which is how the outdated notice and
+-- the source page's affected-question count are answered.
+CREATE INDEX question_source_links_chunk_idx
+  ON question_source_links (source_chunk_id);
+
+-- SOURCE_VERIFICATION: a run that checks a stored question against the owner's own
+-- sources and writes nothing.
+--
+-- Its own kind rather than a QUESTION_REVIEW with sources attached, because the question
+-- it answers is different. A review asks "is this question well made?" from the model's
+-- knowledge; a verification asks "do these passages support the answer this question
+-- marks correct?" — and the answer is only as good as the excerpts it was shown. Reading
+-- the two back as one kind would lose which of them a verdict came from, which matters
+-- most in the case the feature exists for: a question the model thinks is sound and the
+-- owner's exam guide contradicts.
+--
+-- Like every judging kind before it, it proposes nothing. A CONTRADICTED verdict becomes a
+-- prefilled dispute button and a SUPPORTED one becomes a "mark source-checked" button;
+-- both are the owner's click on the question's own actions, so applied_at stays NULL
+-- forever (\`spec/AI-GUIDELINES.md\` section 1.10).
+--
+-- This migration is 0013 again with one value added, and the link backup is repeated for
+-- the reason 0006 first gave: questions.generation_run_id, flashcards.generation_run_id
+-- and flashcard_revisions.generation_run_id all reference this table ON DELETE SET NULL,
+-- so a bare DROP TABLE would make the whole bank forget its provenance, and
+-- PRAGMA foreign_keys = OFF is a no-op inside the transaction the runner wraps each
+-- migration in.
+CREATE TABLE generation_link_backup_0015 (
+  item_table TEXT NOT NULL,
+  item_id TEXT NOT NULL,
+  generation_run_id TEXT NOT NULL
+) STRICT;
+
+INSERT INTO generation_link_backup_0015 (item_table, item_id, generation_run_id)
+  SELECT 'questions', id, generation_run_id
+    FROM questions WHERE generation_run_id IS NOT NULL;
+
+INSERT INTO generation_link_backup_0015 (item_table, item_id, generation_run_id)
+  SELECT 'flashcards', id, generation_run_id
+    FROM flashcards WHERE generation_run_id IS NOT NULL;
+
+INSERT INTO generation_link_backup_0015 (item_table, item_id, generation_run_id)
+  SELECT 'flashcard_revisions', id, generation_run_id
+    FROM flashcard_revisions WHERE generation_run_id IS NOT NULL;
+
+-- Identical to the 0013 definition apart from the widened item_kind CHECK. Repeated in
+-- full rather than patched, for the reason 0006 gives: a rebuilt table is defined by the
+-- statement that creates it.
+CREATE TABLE generation_runs_0015 (
+  id TEXT PRIMARY KEY,
+  certification_id TEXT NOT NULL
+    REFERENCES certifications (id) ON DELETE CASCADE,
+  -- SOURCE_VERIFICATION writes no bank item and proposes nothing to apply. It reads one
+  -- stored question and a handful of the owner's own source passages, and says whether
+  -- the second support the first.
+  item_kind TEXT NOT NULL
+    CHECK (item_kind IN ('QUESTION', 'FLASHCARD', 'ENRICH_VOCABULARY',
+      'OBJECTIVE_IMPORT', 'QUESTION_REVIEW', 'TUTOR_EXPLANATION',
+      'ANSWER_EVALUATION', 'QUESTION_CHALLENGE', 'SOURCE_VERIFICATION')),
+  generation_mode TEXT NOT NULL
+    CHECK (generation_mode IN ('MANUAL', 'MODEL_KNOWLEDGE', 'SOURCE_GROUNDED',
+      'HYBRID', 'IMPORTED', 'VARIANT', 'WEB_RESEARCH')),
+  model_provider TEXT NOT NULL,
+  model_id TEXT NOT NULL,
+  persona_id TEXT NOT NULL,
+  persona_version INTEGER NOT NULL CHECK (persona_version >= 1),
+  prompt_template_id TEXT NOT NULL,
+  prompt_template_version INTEGER NOT NULL CHECK (prompt_template_version >= 1),
+  input_hash TEXT NOT NULL,
+  -- Finally written by something. Every run before this milestone recorded '[]' because
+  -- no run had consulted a source; a grounded, hybrid, or verifying run records the
+  -- snapshot ids its excerpts came from, which is what makes "what was this run shown"
+  -- answerable after the source has moved on (\`SPEC.md\` section 11.5).
+  selected_source_snapshot_ids TEXT NOT NULL,
+  requested_item_count INTEGER NOT NULL CHECK (requested_item_count >= 1),
+  successful_item_count INTEGER NOT NULL CHECK (successful_item_count >= 0),
+  failed_item_count INTEGER NOT NULL CHECK (failed_item_count >= 0),
+  usage_metadata TEXT,
+  failure_reason TEXT,
+  proposed_payload TEXT,
+  applied_at TEXT,
+  subject_question_id TEXT
+    REFERENCES questions (id) ON DELETE SET NULL,
+  subject_revision_id TEXT
+    REFERENCES question_revisions (id) ON DELETE SET NULL,
+  started_at TEXT NOT NULL,
+  completed_at TEXT,
+  status TEXT NOT NULL
+    CHECK (status IN ('PENDING', 'COMPLETED', 'PARTIAL', 'FAILED')),
+  CHECK ((status = 'PENDING') = (completed_at IS NULL)),
+  CHECK (applied_at IS NULL OR proposed_payload IS NOT NULL),
+  CHECK (subject_revision_id IS NULL OR subject_question_id IS NOT NULL)
+) STRICT;
+
+INSERT INTO generation_runs_0015 (id, certification_id, item_kind,
+    generation_mode, model_provider, model_id, persona_id, persona_version,
+    prompt_template_id, prompt_template_version, input_hash,
+    selected_source_snapshot_ids, requested_item_count, successful_item_count,
+    failed_item_count, usage_metadata, failure_reason, proposed_payload,
+    applied_at, subject_question_id, subject_revision_id, started_at,
+    completed_at, status)
+  SELECT id, certification_id, item_kind, generation_mode, model_provider,
+         model_id, persona_id, persona_version, prompt_template_id,
+         prompt_template_version, input_hash, selected_source_snapshot_ids,
+         requested_item_count, successful_item_count, failed_item_count,
+         usage_metadata, failure_reason, proposed_payload, applied_at,
+         subject_question_id, subject_revision_id, started_at,
+         completed_at, status
+    FROM generation_runs;
+
+DROP TABLE generation_runs;
+
+ALTER TABLE generation_runs_0015 RENAME TO generation_runs;
+
+CREATE INDEX generation_runs_track_idx
+  ON generation_runs (certification_id, started_at);
+
+CREATE INDEX generation_runs_input_hash_idx
+  ON generation_runs (certification_id, input_hash);
+
+CREATE INDEX generation_runs_subject_idx
+  ON generation_runs (subject_question_id, started_at);
+
+-- The links the DROP nulled, restored from the backup.
+UPDATE questions
+  SET generation_run_id = (
+    SELECT b.generation_run_id FROM generation_link_backup_0015 b
+      WHERE b.item_table = 'questions' AND b.item_id = questions.id)
+  WHERE id IN (
+    SELECT item_id FROM generation_link_backup_0015
+      WHERE item_table = 'questions');
+
+UPDATE flashcards
+  SET generation_run_id = (
+    SELECT b.generation_run_id FROM generation_link_backup_0015 b
+      WHERE b.item_table = 'flashcards' AND b.item_id = flashcards.id)
+  WHERE id IN (
+    SELECT item_id FROM generation_link_backup_0015
+      WHERE item_table = 'flashcards');
+
+UPDATE flashcard_revisions
+  SET generation_run_id = (
+    SELECT b.generation_run_id FROM generation_link_backup_0015 b
+      WHERE b.item_table = 'flashcard_revisions'
+        AND b.item_id = flashcard_revisions.id)
+  WHERE id IN (
+    SELECT item_id FROM generation_link_backup_0015
+      WHERE item_table = 'flashcard_revisions');
+
+DROP TABLE generation_link_backup_0015;
+`,
+  },
 ];

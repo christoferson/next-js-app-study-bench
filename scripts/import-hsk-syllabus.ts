@@ -52,28 +52,71 @@ import type { RootImportResult } from "@/import/hsk-syllabus-importer";
 
 /** Where the owner's extracted text and their notes are expected. */
 const SOURCE_DIRECTORY = "external/sources";
-const SYLLABUS_FILE = "hsk3-level5-syllabus.txt";
-const GRAMMAR_FILE = "HSK_3_LEVEL_5_GRAMMAR.json";
-const THEMES_FILE = "HSK_3_LEVEL_5_TOPICS.txt";
 
-const SOURCE_FILES: readonly string[] = [
-  SYLLABUS_FILE,
-  GRAMMAR_FILE,
-  THEMES_FILE,
-];
+/**
+ * Defaults are the HSK 5 documents this script was written for. Another level
+ * is imported by naming its track and files (owner request, 2026-08-16):
+ *
+ *   npm run import:hsk-syllabus -- --track hsk-4-chinese \
+ *     --syllabus hsk4-syllabus.txt --grammar HSK_4_GRAMMAR.json \
+ *     --themes HSK_4_TOPICS.txt
+ *
+ * Any file flag may be omitted to use the HSK 5 default; --themes may be set
+ * to "none" when no theme notes exist for the level (themes are the one
+ * unofficial, optional input).
+ */
+interface CliOptions {
+  readonly track: string | undefined;
+  readonly syllabusFile: string;
+  readonly grammarFile: string;
+  readonly themesFile: string | null;
+}
+
+function parseCliOptions(argv: readonly string[]): CliOptions {
+  const values = new Map<string, string>();
+
+  for (let index = 0; index < argv.length; index += 1) {
+    const flag = argv[index];
+
+    if (flag?.startsWith("--")) {
+      const value = argv[index + 1];
+
+      if (value === undefined || value.startsWith("--")) {
+        throw new Error(`Flag ${flag} needs a value.`);
+      }
+
+      values.set(flag.slice(2), value);
+      index += 1;
+    }
+  }
+
+  const themes = values.get("themes") ?? "HSK_3_LEVEL_5_TOPICS.txt";
+
+  return {
+    track: values.get("track"),
+    syllabusFile: values.get("syllabus") ?? "hsk3-level5-syllabus.txt",
+    grammarFile: values.get("grammar") ?? "HSK_3_LEVEL_5_GRAMMAR.json",
+    themesFile: themes === "none" ? null : themes,
+  };
+}
 
 async function main(): Promise<void> {
-  const structure = parseHskExamStructure(readSource(SYLLABUS_FILE));
+  const options = parseCliOptions(process.argv.slice(2));
+  const structure = parseHskExamStructure(readSource(options.syllabusFile));
 
   assertHskExamStructureSize(structure);
 
-  const grammar = parseHskGrammarOutline(readSource(GRAMMAR_FILE));
+  const grammar = parseHskGrammarOutline(readSource(options.grammarFile));
 
   assertHskGrammarOutlineSize(grammar);
 
-  const themes = parseHskThemeOutline(readSource(THEMES_FILE));
+  let themes: HskThemeOutline | null = null;
 
-  assertHskThemeOutlineSize(themes);
+  if (options.themesFile !== null) {
+    themes = parseHskThemeOutline(readSource(options.themesFile));
+    assertHskThemeOutlineSize(themes);
+  }
+
   reportParse(structure, grammar, themes);
 
   const plan = planHskSyllabusObjectives({ structure, grammar, themes });
@@ -93,7 +136,12 @@ async function main(): Promise<void> {
       database,
       new SqliteTransactionRunner(database),
     );
-    const result = await importHskSyllabusObjectives(facades, plan, reportRoot);
+    const result = await importHskSyllabusObjectives(
+      facades,
+      plan,
+      reportRoot,
+      options.track,
+    );
 
     console.log(
       `${result.slug}: ${result.objectivesCreated} objective(s) created across ${result.roots.length} root(s).`,
@@ -119,10 +167,12 @@ function readSource(name: string): string {
       [
         `Could not read ${SOURCE_DIRECTORY}/${name}.`,
         "",
-        "This import reads three files the owner keeps outside version control:",
-        ...SOURCE_FILES.map((file) => `  ${SOURCE_DIRECTORY}/${file}`),
+        "This import reads the owner's files from outside version control:",
+        `  a syllabus text (--syllabus, default hsk3-level5-syllabus.txt)`,
+        `  a grammar appendix JSON (--grammar, default HSK_3_LEVEL_5_GRAMMAR.json)`,
+        `  optional theme notes (--themes, default HSK_3_LEVEL_5_TOPICS.txt; pass "none" to skip)`,
         "",
-        `Place all three there and run the import again. The ${SOURCE_DIRECTORY.split("/")[0] ?? "external"}/ directory is gitignored: its contents are never committed.`,
+        `Place the named file under ${SOURCE_DIRECTORY}/ and run the import again. The directory is gitignored: its contents are never committed.`,
       ].join("\n"),
     );
   }
@@ -132,7 +182,7 @@ function readSource(name: string): string {
 function reportParse(
   structure: HskExamStructure,
   grammar: HskGrammarOutline,
-  themes: HskThemeOutline,
+  themes: HskThemeOutline | null,
 ): void {
   console.log(
     `Examination: ${structure.skills.length} skills, ${structure.skills.reduce((total, skill) => total + skill.parts.length, 0)} parts, ${structure.totalItemCount} items.`,
@@ -141,7 +191,9 @@ function reportParse(
     `Grammar appendix: ${grammar.pointCount} points in ${grammar.groups.length} categories.`,
   );
   console.log(
-    `Notes: ${themes.topics.entries.length} topic areas, ${themes.tasks.entries.length} language tasks (unofficial).`,
+    themes === null
+      ? "Notes: none (themes skipped)."
+      : `Notes: ${themes.topics.entries.length} topic areas, ${themes.tasks.entries.length} language tasks (unofficial).`,
   );
 }
 

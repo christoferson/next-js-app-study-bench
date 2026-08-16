@@ -124,8 +124,9 @@ describe("runMigrations", () => {
       // tables from migration 0003, in D5 with the session and attempt tables
       // from migration 0004, in D6 with the generation-run table from
       // migration 0005, in D10 with `media_assets` from migration 0007, in
-      // the personas slice with `personas` from migration 0009, and in D8 slice 1
-      // with the four source-library tables from migration 0014.
+      // the personas slice with `personas` from migration 0009, in D8 slice 1
+      // with the four source-library tables from migration 0014, and in D8 slice 2
+      // with `question_source_links` from migration 0015.
       expect(tables.map((table) => table.name)).toEqual([
         "certification_objectives",
         "certifications",
@@ -139,6 +140,7 @@ describe("runMigrations", () => {
         "question_attempts",
         "question_objective_links",
         "question_revisions",
+        "question_source_links",
         "questions",
         "review_schedules",
         "schema_migrations",

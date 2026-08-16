@@ -118,4 +118,98 @@ describe.skipIf(!ENABLED)("Bedrock, live", () => {
       ].join(" | "),
     );
   });
+
+  it("grounds a question in supplied excerpts and cites them by number", async () => {
+    // The one thing no fake can answer about grounded generation: whether a real model,
+    // shown numbered passages, actually cites them in range. The fake's citations are
+    // written by the fixture, so a schema that permitted nonsense and a prompt that
+    // never asked for numbers would both pass the default suite.
+    //
+    // The passages are invented on purpose. If the model answers from its own knowledge
+    // of AWS instead of from the excerpts it cannot produce these names, so a question
+    // about a "Demo Vault storage class" is itself evidence the grounding took.
+    const config = resolveLanguageModelConfig();
+    const gateway = new BedrockLanguageModelGateway({
+      modelId: config.modelId,
+      region: config.region,
+    });
+    const persona = personaForStudyType("TECHNICAL_CERTIFICATION");
+    const excerpts = [
+      {
+        index: 1,
+        sourceTitle: "Demo Storage Study Notes",
+        text: "Demo Vault is the archival storage class of the fictional Demo Storage service. An object placed in Demo Vault cannot be read directly: it must first be promoted to the Demo Standard class, and promotion takes up to twelve hours to complete.",
+      },
+      {
+        index: 2,
+        sourceTitle: "Demo Storage Study Notes",
+        text: "Demo Standard is the default storage class of Demo Storage. Objects in Demo Standard are readable immediately and are billed at four times the monthly rate of Demo Vault.",
+      },
+    ];
+    const prompt = renderPrompt("QUESTION", {
+      persona,
+      trackName: "Live Smoke Demo Track",
+      examCode: null,
+      objectives: [],
+      groundingMode: "SOURCE_GROUNDED",
+      excerpts,
+      spec: {
+        itemCount: ITEM_COUNT,
+        objectiveIds: [],
+        difficulty: 2,
+        additionalInstructions: null,
+        questionTypes: ["SINGLE_CHOICE"],
+        cardTypes: [],
+      },
+    });
+
+    // The security boundary, asserted against the real rendering rather than a fixture:
+    // no excerpt text may reach the system message (`spec/AI-GUIDELINES.md` 1.7).
+    for (const excerpt of excerpts) {
+      expect(prompt.system).not.toContain(excerpt.text);
+      expect(prompt.user).toContain(excerpt.text);
+    }
+
+    const result = await gateway.generateStructured({
+      system: prompt.system,
+      user: prompt.user,
+      schemaName: QUESTION_SCHEMA_NAME,
+      schemaDescription:
+        "Records the practice questions written for this request.",
+      schema: questionOutputJsonSchema(["SINGLE_CHOICE"], excerpts.length),
+      validate: (value) =>
+        validateQuestionOutput(value, {
+          contentLanguage: persona.contentLanguage,
+        }),
+      maxOutputTokens: maxOutputTokensFor("QUESTION", ITEM_COUNT),
+    });
+
+    expect(result.value.length).toBeGreaterThanOrEqual(1);
+
+    // Every question cites at least one excerpt, and every citation is a number that was
+    // actually given. This is the grounded contract the facade's checks enforce.
+    for (const draft of result.value) {
+      expect(draft.supportingChunkIndexes ?? []).not.toEqual([]);
+
+      for (const index of draft.supportingChunkIndexes ?? []) {
+        expect(index).toBeGreaterThanOrEqual(1);
+        expect(index).toBeLessThanOrEqual(excerpts.length);
+      }
+    }
+
+    console.log(
+      [
+        `model: ${gateway.modelId}`,
+        `grounded questions: ${result.value.length}`,
+        `citations: ${result.value
+          .map((draft) => (draft.supportingChunkIndexes ?? []).join("+"))
+          .join(", ")}`,
+        `usage: ${
+          result.usage === null
+            ? "not reported"
+            : `${result.usage.inputTokens} in, ${result.usage.outputTokens} out, ${result.usage.totalTokens} total`
+        }`,
+      ].join(" | "),
+    );
+  });
 });

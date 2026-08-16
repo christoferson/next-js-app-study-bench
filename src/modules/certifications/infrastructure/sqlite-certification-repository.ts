@@ -160,6 +160,14 @@ export class SqliteCertificationRepository implements CertificationRepository {
       `DELETE FROM question_revisions WHERE question_id IN
          (SELECT id FROM questions WHERE certification_id = :id)`,
     );
+    // Source-evidence links before the questions they belong to. They CASCADE from the
+    // question, so this is not what makes them go; it is here because they RESTRICT on the
+    // chunk side and the purge should say what it removes rather than depending on which
+    // side of a link the cascade fires from. The sources themselves cascade from the track.
+    run(
+      `DELETE FROM question_source_links WHERE question_id IN
+         (SELECT id FROM questions WHERE certification_id = :id)`,
+    );
     run(`DELETE FROM questions WHERE certification_id = :id`);
     run(`DELETE FROM generation_runs WHERE certification_id = :id`);
     // Children before parents: the self-referencing FK is RESTRICT. Deepest

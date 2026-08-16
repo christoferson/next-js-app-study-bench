@@ -102,6 +102,8 @@ export async function requestGenerationAction(
       cardTypes: readStrings(form, "cardTypes"),
       personaId: readString(form, "personaId"),
       generateAnyway: readString(form, "generateAnyway"),
+      generationMode: readString(form, "generationMode"),
+      sourceIds: readStrings(form, "sourceIds"),
     });
     const facade = getGenerationFacade();
     const result =
@@ -396,6 +398,84 @@ export async function acceptQuestionReviewAction(
     await getGenerationFacade().acceptQuestionReview(slug, input.questionId);
 
     revalidatePath(`${trackPath(slug)}/questions/${input.questionId}`);
+  } catch (error) {
+    if (isDomainError(error)) {
+      return toInvalidFormState(error, form);
+    }
+    throw error;
+  }
+
+  return { status: "idle", fieldErrors: {}, values: {} };
+}
+
+/**
+ * Checks one question against the owner's own sources and stays on its page.
+ *
+ * No redirect, for the review's reason: the verdict belongs beside the question it is about.
+ *
+ * A provider failure is not a form error — the panel keeps showing the last check that did
+ * arrive and the spent call is readable in the run history. What does become a form error is
+ * a check that cannot be made at all (`QuestionNotSourceCheckableError`): a question that is
+ * gone from this track, or a track whose sources hold nothing relevant to it. That is a fact
+ * about the request, and it is the message that tells the owner to import a source rather
+ * than to try again.
+ */
+export async function verifyQuestionAgainstSourcesAction(
+  _state: FormState,
+  form: FormData,
+): Promise<FormState> {
+  const slug = readString(form, "slug");
+
+  try {
+    const input = parseInput(reviewQuestionSchema, {
+      questionId: readString(form, "questionId"),
+    });
+
+    await getGenerationFacade().verifyQuestionAgainstSources(
+      slug,
+      input.questionId,
+    );
+
+    revalidatePath(`${trackPath(slug)}/questions/${input.questionId}`);
+  } catch (error) {
+    if (isDomainError(error)) {
+      return toInvalidFormState(error, form);
+    }
+    throw error;
+  }
+
+  // The run history gains a row whatever the outcome was, including a failure.
+  revalidatePath(runsPath(slug));
+
+  return { status: "idle", fieldErrors: {}, values: {} };
+}
+
+/**
+ * The owner accepts a supported source check: the explicit → SOURCE_CHECKED click.
+ *
+ * Separate from `acceptQuestionReviewAction` even though both promote a quality status from
+ * an AI judgement, because they promote to *different* statuses on different evidence, and a
+ * shared action would have to be told which — at which point the caller is choosing the
+ * promotion, which is exactly the decision the facade owns.
+ */
+export async function acceptSourceVerificationAction(
+  _state: FormState,
+  form: FormData,
+): Promise<FormState> {
+  const slug = readString(form, "slug");
+
+  try {
+    const input = parseInput(reviewQuestionSchema, {
+      questionId: readString(form, "questionId"),
+    });
+
+    await getGenerationFacade().acceptSourceVerification(
+      slug,
+      input.questionId,
+    );
+
+    revalidatePath(`${trackPath(slug)}/questions/${input.questionId}`);
+    revalidatePath(`${trackPath(slug)}/questions`);
   } catch (error) {
     if (isDomainError(error)) {
       return toInvalidFormState(error, form);

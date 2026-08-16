@@ -49,6 +49,9 @@ function questionDraft(
     tags: ["demo"],
     language: null,
     objectiveIds: [],
+    // Empty by default because most of this file is about model-knowledge drafts, which
+    // cite nothing. The grounding tests override it.
+    supportingChunkIndexes: [],
     ...overrides,
   };
 }
@@ -328,6 +331,136 @@ describe("checkQuestionDrafts", () => {
     );
 
     expect(result.rejected).toEqual([]);
+  });
+});
+
+/**
+ * Excerpt citations, per grounded mode.
+ *
+ * The `SPEC.md` section 11.3 rule "source IDs exist when provided", now that there is a
+ * mode in which they are provided. The mode difference is the point of these tests: a
+ * `SOURCE_GROUNDED` question must name an excerpt and a `HYBRID` one need not, and the
+ * label is what the owner would trust.
+ */
+describe("excerpt citations", () => {
+  /** The batch cited nothing because it was shown nothing. */
+  const UNGROUNDED: CheckContext = { objectiveIds: [] };
+  const GROUNDED: CheckContext = {
+    objectiveIds: [],
+    grounding: { mode: "SOURCE_GROUNDED", excerptCount: 3 },
+  };
+  const HYBRID: CheckContext = {
+    objectiveIds: [],
+    grounding: { mode: "HYBRID", excerptCount: 3 },
+  };
+
+  /** The single reason a one-draft batch was refused, under a given grounding. */
+  function groundingRefusal(
+    draft: GeneratedQuestionDraft,
+    context: CheckContext,
+  ): string {
+    const { accepted, rejected } = checkQuestionDrafts([draft], context);
+
+    expect(accepted).toHaveLength(0);
+    expect(rejected).toHaveLength(1);
+
+    return rejected[0]?.reason ?? "";
+  }
+
+  it("refuses a citation from a batch that was shown no excerpts", () => {
+    // Absence of grounding is not the same as an empty excerpt list: a model-knowledge
+    // batch cannot have a meaningful index, so a claimed one is a fabricated citation.
+    expect(
+      groundingRefusal(
+        questionDraft({ supportingChunkIndexes: [1] }),
+        UNGROUNDED,
+      ),
+    ).toMatch(/cites source excerpts, but this request sent none/i);
+  });
+
+  it("accepts an ungrounded draft that cites nothing", () => {
+    const result = checkQuestionDrafts([questionDraft()], UNGROUNDED);
+
+    expect(result.rejected).toEqual([]);
+    expect(result.accepted).toHaveLength(1);
+  });
+
+  it("refuses a grounded question that names no supporting excerpt", () => {
+    // The mode's whole promise. A grounded question with no citation was written from
+    // model knowledge with a source library in the room.
+    expect(
+      groundingRefusal(questionDraft({ supportingChunkIndexes: [] }), GROUNDED),
+    ).toMatch(/names no supporting excerpt/i);
+  });
+
+  it("accepts a hybrid question that names no supporting excerpt", () => {
+    // The mode difference, and the reason `mode` is not a boolean: naming no excerpt is
+    // the honest answer for a question whose framing is genuinely the model's own.
+    const result = checkQuestionDrafts(
+      [questionDraft({ supportingChunkIndexes: [] })],
+      HYBRID,
+    );
+
+    expect(result.rejected).toEqual([]);
+    expect(result.accepted).toHaveLength(1);
+  });
+
+  it.each([
+    ["zero", 0],
+    ["negative", -1],
+    ["fractional", 1.5],
+    ["past the count sent", 4],
+  ])("refuses a %s excerpt index", (_shape, index) => {
+    for (const context of [GROUNDED, HYBRID]) {
+      expect(
+        groundingRefusal(
+          questionDraft({ supportingChunkIndexes: [index] }),
+          context,
+        ),
+      ).toMatch(/which was not one of the 3 sent/i);
+    }
+  });
+
+  it("discards the whole draft rather than dropping the bad index quietly", () => {
+    // A question whose stated evidence does not exist is a question whose evidence is
+    // unknown. An evidence panel built by narrowing the list would show the owner
+    // support the model never claimed.
+    const result = checkQuestionDrafts(
+      [questionDraft({ supportingChunkIndexes: [1, 99] })],
+      GROUNDED,
+    );
+
+    expect(result.accepted).toEqual([]);
+    expect(result.rejected).toHaveLength(1);
+    expect(result.rejected[0]?.reason).toMatch(/excerpt 99/);
+  });
+
+  it("accepts an in-range citation in either mode", () => {
+    for (const context of [GROUNDED, HYBRID]) {
+      const result = checkQuestionDrafts(
+        [questionDraft({ supportingChunkIndexes: [1, 3] })],
+        context,
+      );
+
+      expect(result.rejected).toEqual([]);
+      expect(result.accepted).toHaveLength(1);
+    }
+  });
+
+  it("keeps the grounded drafts when one cites nothing", () => {
+    const result = checkQuestionDrafts(
+      [
+        questionDraft({ supportingChunkIndexes: [1] }),
+        questionDraft({ supportingChunkIndexes: [] }),
+        questionDraft({ supportingChunkIndexes: [2, 3] }),
+      ],
+      GROUNDED,
+    );
+
+    expect(result.accepted).toHaveLength(2);
+    expect(result.rejected).toEqual([
+      { position: 2, reason: expect.stringMatching(/no supporting excerpt/i) },
+    ]);
   });
 });
 

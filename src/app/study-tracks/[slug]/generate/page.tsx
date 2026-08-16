@@ -58,10 +58,11 @@ export default async function GeneratePage({
         <p className="eyebrow">Generate with AI</p>
         <h1>{view.certification.name}</h1>
         <p className="lede">
-          A model writes a small batch from its own knowledge. Everything it
-          writes is saved as a draft for you to read, edit, and activate — or
-          reject. Nothing generated here is official exam material, and no
-          source is consulted.
+          A model writes a small batch, either from its own knowledge or from
+          passages of the sources you have imported. Everything it writes is
+          saved as a draft for you to read, edit, and activate — or reject.
+          Nothing generated here is official exam material, whichever it was
+          built from.
         </p>
         {/* Above the form rather than beside the model name in it: whether the
             output will be real is the first thing to know about this page, and the
@@ -107,6 +108,9 @@ export default async function GeneratePage({
           persona={view.persona}
           personaChoices={view.personaChoices}
           assignedPersonaId={view.assignedPersonaId}
+          sources={view.sources}
+          maxGroundingChunks={view.maxGroundingChunks}
+          maxGroundingCharacters={view.maxGroundingCharacters}
           slug={view.certification.slug}
         />
       </section>

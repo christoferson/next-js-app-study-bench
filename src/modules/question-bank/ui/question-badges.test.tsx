@@ -119,6 +119,90 @@ describe("ProvenanceBadge", () => {
       unmount();
     }
   });
+
+  it("says a grounded item came from the owner's own sources", () => {
+    // The claim that separates this mode from model knowledge: there are passages behind
+    // it, and the evidence panel on the question page quotes them.
+    render(
+      <ProvenanceBadge
+        slug="demo"
+        generationMode="SOURCE_GROUNDED"
+        generationRunId="run-1"
+      />,
+    );
+
+    expect(badgeText()).toBe("AI generated — from your sources");
+  });
+
+  it("discloses the ungrounded half of a hybrid item", () => {
+    // "Hybrid" alone would let the grounded half vouch for the rest, so the badge says
+    // *part* from your sources.
+    render(
+      <ProvenanceBadge
+        slug="demo"
+        generationMode="HYBRID"
+        generationRunId="run-1"
+      />,
+    );
+
+    const label = badgeText();
+
+    expect(label).toMatch(/hybrid/i);
+    expect(label).toMatch(/part from your sources/);
+  });
+
+  it("never calls a grounded or hybrid item official or verified", () => {
+    // An acceptance criterion of the grounded milestone, and asserted for all three
+    // model-written modes: a source the owner imported is only as good as the document it
+    // came from, and StudyBench publishes no exam material (`SPEC.md` section 3).
+    for (const mode of [
+      "MODEL_KNOWLEDGE",
+      "SOURCE_GROUNDED",
+      "HYBRID",
+    ] as const) {
+      const { unmount } = render(
+        <ProvenanceBadge
+          slug="demo"
+          generationMode={mode}
+          generationRunId="run-1"
+        />,
+      );
+
+      expect(badgeText()).not.toMatch(/official|verified/i);
+      unmount();
+    }
+  });
+
+  it("links a grounded item to its run, and states the mode without one", () => {
+    // The same two shapes the model-knowledge tests above assert, checked for the new
+    // modes because each carries a different label through the same branch.
+    const grounded = render(
+      <ProvenanceBadge
+        slug="demo"
+        generationMode="SOURCE_GROUNDED"
+        generationRunId="run-4"
+      />,
+    );
+
+    expect(
+      screen.getByRole("link", { name: "AI generated — from your sources" }),
+    ).toHaveAttribute("href", "/study-tracks/demo/generation-runs/run-4");
+
+    grounded.unmount();
+
+    render(
+      <ProvenanceBadge
+        slug="demo"
+        generationMode="HYBRID"
+        generationRunId={null}
+      />,
+    );
+
+    expect(
+      screen.getByText("AI generated — hybrid, part from your sources"),
+    ).toBeVisible();
+    expect(screen.queryByRole("link")).toBeNull();
+  });
 });
 
 function isNotModelKnowledge(mode: GenerationMode): boolean {

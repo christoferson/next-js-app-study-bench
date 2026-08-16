@@ -164,6 +164,26 @@ const questionItemSchema = z.object({
   difficulty: modelDifficulty,
   tags: modelTags,
   objectiveIds: modelObjectiveIds,
+  /**
+   * Which excerpts the model says support this question.
+   *
+   * Nullish-tolerant and defaulting to empty, like every other list here: a
+   * model-knowledge batch sends no excerpts and the field is then correctly absent, so
+   * requiring it would fail every ungrounded response. Whether an empty list is
+   * *acceptable* is not this schema's call — the deterministic checks decide that from the
+   * mode, and reject a grounded question that names none.
+   *
+   * Bounds only. The numbers are not checked against the excerpts actually sent, because
+   * that is a fact about the request rather than about the shape of the answer, and the
+   * checks own it.
+   */
+  supportingExcerptIndexes: z
+    .array(z.number())
+    .max(MAX_LIST_ENTRIES, {
+      message: `cite ${MAX_LIST_ENTRIES} excerpts or fewer`,
+    })
+    .nullish()
+    .transform((values): readonly number[] => values ?? []),
 });
 
 const questionResponseSchema = z.object({
@@ -317,6 +337,7 @@ export function validateQuestionOutput(
       tags: item.tags,
       language: context.contentLanguage,
       objectiveIds: item.objectiveIds,
+      supportingChunkIndexes: item.supportingExcerptIndexes,
     })),
   };
 }
@@ -381,6 +402,15 @@ export function validateEnrichmentOutput(
  */
 export function questionOutputJsonSchema(
   allowedTypes: readonly QuestionType[],
+  /**
+   * How many source excerpts the request sent, or `0` for a model-knowledge batch.
+   *
+   * Drives whether the answer shape describes a citation field at all. Zero excerpts means
+   * the field is absent from the schema, so an ungrounded batch is not shown a field it
+   * would have to be told not to use — the same reasoning that builds the choice fields
+   * from the allowed types.
+   */
+  excerptCount = 0,
 ): JsonSchema {
   const types = allowedTypes.length > 0 ? allowedTypes : QUESTION_TYPES;
 
@@ -462,6 +492,20 @@ export function questionOutputJsonSchema(
               maxItems: MAX_LIST_ENTRIES,
               items: { type: "string" },
             },
+            ...(excerptCount > 0
+              ? {
+                  supportingExcerptIndexes: {
+                    type: "array",
+                    description: `Which numbered excerpts from the request support this question. Use the excerpt numbers 1 to ${excerptCount} exactly as they were given. Never a number outside that range, and never an excerpt you did not use.`,
+                    maxItems: MAX_LIST_ENTRIES,
+                    items: {
+                      type: "integer",
+                      minimum: 1,
+                      maximum: excerptCount,
+                    },
+                  },
+                }
+              : {}),
           },
         },
       },

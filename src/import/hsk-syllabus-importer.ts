@@ -123,21 +123,26 @@ export class HskSyllabusImportError extends Error {
 export function planHskSyllabusObjectives(sources: {
   readonly structure: HskExamStructure;
   readonly grammar: HskGrammarOutline;
-  readonly themes: HskThemeOutline;
+  /** Optional: theme notes are the one unofficial input and a level may have none. */
+  readonly themes: HskThemeOutline | null;
 }): readonly PlannedObjective[] {
   return [
     ...sources.structure.skills.map(planSkill),
     planGrammar(sources.grammar),
-    planThemes(
-      TOPICS_ROOT_TITLE,
-      "Topic areas the owner's own notes suggest the examination draws its passages and audio from. Unofficial: proposed by a chatbot citing third-party study sites, not published by the examining body.",
-      sources.themes.topics.entries,
-    ),
-    planThemes(
-      TASKS_ROOT_TITLE,
-      "Communication tasks the owner's own notes suggest the examination asks a candidate to perform. Unofficial: proposed by a chatbot citing third-party study sites, not published by the examining body.",
-      sources.themes.tasks.entries,
-    ),
+    ...(sources.themes === null
+      ? []
+      : [
+          planThemes(
+            TOPICS_ROOT_TITLE,
+            "Topic areas the owner's own notes suggest the examination draws its passages and audio from. Unofficial: proposed by a chatbot citing third-party study sites, not published by the examining body.",
+            sources.themes.topics.entries,
+          ),
+          planThemes(
+            TASKS_ROOT_TITLE,
+            "Communication tasks the owner's own notes suggest the examination asks a candidate to perform. Unofficial: proposed by a chatbot citing third-party study sites, not published by the examining body.",
+            sources.themes.tasks.entries,
+          ),
+        ]),
   ];
 }
 
@@ -257,23 +262,26 @@ export function describeSkillKind(kind: HskExamSkillKind): string {
 }
 
 /**
- * Writes the plan onto the HSK track, root by root.
+ * Writes the plan onto an HSK track, root by root.
  *
- * The track must already exist: this import extends the one `import:real`
- * created and never creates a track of its own, so a missing track is a clear
- * failure rather than a silent second import path for the same content.
+ * The track must already exist: this import extends a track the owner already
+ * has and never creates one of its own, so a missing track is a clear failure
+ * rather than a silent second import path for the same content. The slug
+ * defaults to the HSK 5 track `import:real` creates, and may name any other
+ * language track (owner request, 2026-08-16: reuse this importer per level).
  */
 export async function importHskSyllabusObjectives(
   deps: RealImportDependencies,
   plan: readonly PlannedObjective[],
   onRoot?: (result: RootImportResult) => void,
+  trackSlug?: CertificationSlug,
 ): Promise<HskSyllabusImportResult> {
-  const slug = REAL_TRACK_SLUGS.hsk5Chinese;
+  const slug = trackSlug ?? REAL_TRACK_SLUGS.hsk5Chinese;
   const certification = await deps.certifications.findEditFormBySlug(slug);
 
   if (certification === null) {
     throw new HskSyllabusImportError(
-      `There is no study track at "${slug}", so there is nothing to add the syllabus to. Run the vocabulary import first.`,
+      `There is no study track at "${slug}", so there is nothing to add the syllabus to. Create the track first (or run the vocabulary import for the default HSK 5 track).`,
     );
   }
 

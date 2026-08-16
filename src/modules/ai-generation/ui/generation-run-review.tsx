@@ -425,6 +425,21 @@ function subjectRunKind(kind: GeneratedItemKind): {
         itemsNote:
           "A challenge writes nothing into the bank, including any revision it suggested — that note is for you to act on. Its verdict is on the question it was about.",
       };
+    case "SOURCE_VERIFICATION":
+      return {
+        provenance: "Checked against your sources",
+        // The one lede on this page that does not say "nothing was looked up", because
+        // something was: passages of documents the owner imported. It says what *was*
+        // consulted instead, and is careful about the limit of that — a verdict is only as
+        // strong as the excerpts the check was given.
+        lede: "Checked against passages of your own imported sources, which the run records below. The verdict is about those passages only: sources that say nothing about a question are silence rather than disagreement. It changed nothing — marking the question source-checked, or disputing it, is your own action.",
+        term: "Checked",
+        link: "One question — read the check on it",
+        anchor: "#source-check",
+        itemsHeading: "What it checked",
+        itemsNote:
+          "A source check writes nothing into the bank. Its verdict is on the question it was about.",
+      };
     case "QUESTION":
     case "FLASHCARD":
     case "ENRICH_VOCABULARY":

@@ -72,6 +72,29 @@ describe("module dependency direction", () => {
   it("keeps certifications unaware of ai-generation", () => {
     expect(offenders("certifications", "modules/ai-generation")).toEqual([]);
   });
+
+  it("reads the source library through its own port, not through the sources module", () => {
+    // `sources ← ai-generation`, so generation may depend on the source library — but the
+    // grounding adapter deliberately does not import its aggregates either. It queries the
+    // `sources`, `source_snapshots`, and `source_chunks` tables directly and returns its
+    // own `GroundingCandidate` and `GroundingSourceSummary` shapes, so a change to the
+    // `Source` type cannot ripple into the ranker or the evidence panel
+    // (`spec/ARCHITECTURE.md` section 7 — a port is owned by the module that needs it).
+    //
+    // Test files are exempt: a facade test seeds rows through the real source adapter on
+    // purpose, because writing them with hand-rolled SQL would test the fixture instead of
+    // the queries.
+    const importers = sourceFiles(join(MODULES, "ai-generation"))
+      .filter((file) => !/\.test\.tsx?$/.test(file))
+      .filter((file) =>
+        importSpecifiers(file).some((specifier) =>
+          specifier.includes("modules/sources"),
+        ),
+      )
+      .map((file) => relative(process.cwd(), file).split(sep).join("/"));
+
+    expect(importers).toEqual([]);
+  });
 });
 
 describe("ai-generation internal boundaries", () => {

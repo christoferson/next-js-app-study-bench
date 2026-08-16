@@ -403,6 +403,34 @@ export class QuestionBankFacade {
     );
   }
 
+  /**
+   * Marks a question outdated, which is the owner's own call.
+   *
+   * Offered next to the "built on an older snapshot of this source" notice on the question's
+   * page (`SPEC.md` section 26.2). Deliberately *not* applied by the refresh that produced
+   * the newer snapshot: a refresh often changes nothing that matters to a question, and
+   * downgrading every question of a refreshed source automatically would make refreshing a
+   * source something the owner learns to avoid. The detection is the notice; this is the
+   * decision.
+   *
+   * `assertCanApprove` is reused rather than a rule of its own, because it says exactly what
+   * needs saying here too: a disputed question already carries a stronger judgement and a
+   * reason attached to it, and overwriting that with "outdated" would lose the reason. The
+   * owner resolves the dispute first.
+   */
+  async markQuestionOutdated(questionId: QuestionId): Promise<void> {
+    const question = await this.requireQuestion(questionId);
+
+    assertCanApprove(question);
+
+    await this.deps.questions.setQualityStatus(
+      questionId,
+      "OUTDATED",
+      null,
+      this.deps.clock.now(),
+    );
+  }
+
   /** Records a dispute with the owner's reason; lifecycle is unaffected. */
   async disputeQuestion(questionId: QuestionId, reason: string): Promise<void> {
     const question = await this.requireQuestion(questionId);

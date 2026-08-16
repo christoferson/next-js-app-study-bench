@@ -58,6 +58,21 @@ export interface GeneratedQuestionDraft {
   readonly tags: readonly string[];
   readonly language: string | null;
   readonly objectiveIds: readonly ObjectiveId[];
+  /**
+   * Which excerpts the model says support this question, as the 1-based indexes it was
+   * shown (`domain/source-grounding.ts`).
+   *
+   * Always present and empty for a model-knowledge batch, where no excerpt was sent, so
+   * there is no optional field for a caller to forget. What an empty list *means* depends
+   * on the mode and is decided by the deterministic checks: for `SOURCE_GROUNDED` a
+   * question supported by nothing is not grounded and is rejected, and for `HYBRID` it is
+   * a legitimate question whose framing came from the model's own knowledge.
+   *
+   * Indexes rather than chunk identifiers because the identifiers are never sent. A model
+   * that invents an index can only name a passage that was in front of it or a number out
+   * of range; it cannot make its output cite a document it was never shown.
+   */
+  readonly supportingChunkIndexes: readonly number[];
 }
 
 /** One generated flashcard, before any check has run. */

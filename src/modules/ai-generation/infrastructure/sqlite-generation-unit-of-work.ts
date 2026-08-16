@@ -9,6 +9,7 @@ import type {
   GenerationUnitOfWork,
 } from "@/modules/ai-generation/ports/unit-of-work";
 import { SqliteGenerationRunRepository } from "./sqlite-generation-run-repository";
+import { SqliteSourceGroundingRepository } from "./sqlite-source-grounding-repository";
 
 /**
  * SQLite unit of work for generation.
@@ -36,6 +37,7 @@ export class SqliteGenerationUnitOfWork implements GenerationUnitOfWork {
       flashcards: new SqliteFlashcardRepository(database),
       certifications: new SqliteCertificationRepository(database),
       objectives: new SqliteObjectiveRepository(database),
+      grounding: new SqliteSourceGroundingRepository(database),
     };
   }
 

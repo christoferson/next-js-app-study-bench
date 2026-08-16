@@ -157,6 +157,23 @@ export async function approveQuestionAction(form: FormData): Promise<void> {
   revalidateQuestion(form);
 }
 
+/**
+ * Marks a question outdated: the owner's click on the older-snapshot notice.
+ *
+ * A plain action rather than one with form state, like the other quality transitions on this
+ * page — there is nothing to type and nothing to validate, so a failed transition (a disputed
+ * question) surfaces the same way approving one does.
+ */
+export async function markQuestionOutdatedAction(
+  form: FormData,
+): Promise<void> {
+  await getQuestionBankFacade().markQuestionOutdated(
+    readString(form, "questionId"),
+  );
+
+  revalidateQuestion(form);
+}
+
 export async function disputeQuestionAction(
   _state: FormState,
   form: FormData,

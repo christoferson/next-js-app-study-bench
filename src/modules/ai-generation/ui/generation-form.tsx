@@ -34,6 +34,7 @@ import {
 } from "@/modules/ai-generation/domain/generation-limits";
 import type { EffectivePersona } from "@/modules/ai-generation/domain/personas";
 import type { StoredPersona } from "@/modules/ai-generation/domain/stored-persona";
+import type { GroundingSourceSummary } from "@/modules/ai-generation/ports/source-grounding-repository";
 
 interface GenerationFormProps {
   readonly action: (state: FormState, form: FormData) => Promise<FormState>;
@@ -62,6 +63,54 @@ interface GenerationFormProps {
    * something to confirm (`spec/UI-GUIDELINES.md`: no dead controls).
    */
   readonly generateAnyway?: boolean;
+  /**
+   * Active sources of this track, offered as grounding.
+   *
+   * Empty renders the "import one first" state rather than hiding the choice: a form that
+   * silently lacked the option would never tell the owner grounded generation exists.
+   */
+  readonly sources?: readonly GroundingSourceSummary[];
+  readonly maxGroundingChunks?: number;
+  readonly maxGroundingCharacters?: number;
+}
+
+/** The three modes the form offers, in the order they claim more. */
+const GENERATION_MODES: readonly GenerationRequestMode[] = [
+  "MODEL_KNOWLEDGE",
+  "SOURCE_GROUNDED",
+  "HYBRID",
+];
+
+type GenerationRequestMode = "MODEL_KNOWLEDGE" | "SOURCE_GROUNDED" | "HYBRID";
+
+/**
+ * What each mode means, in the owner's terms rather than the enum's.
+ *
+ * Written as a claim about where the facts come from, because that is the only difference
+ * that matters to someone deciding: the first makes things up from what the model knows, the
+ * second may only use what the owner's documents say, and the third mixes them and labels
+ * which is which.
+ */
+function describeMode(mode: GenerationRequestMode): string {
+  switch (mode) {
+    case "MODEL_KNOWLEDGE":
+      return "From the model's own knowledge";
+    case "SOURCE_GROUNDED":
+      return "From my sources only";
+    case "HYBRID":
+      return "Hybrid — facts from my sources, scenarios from the model";
+  }
+}
+
+function modeHint(mode: GenerationRequestMode): string {
+  switch (mode) {
+    case "MODEL_KNOWLEDGE":
+      return "No document is consulted. Fast and unrestricted, and nothing it writes can be traced back to anything you have read.";
+    case "SOURCE_GROUNDED":
+      return "Every fact must come from passages of the sources you pick, and each question records which passages. If your sources cannot support the number you asked for, you get fewer.";
+    case "HYBRID":
+      return "Facts from your sources; the situation a question is set in and the wrong answers from the model. Each question records which passages carry its facts.";
+  }
 }
 
 /**
@@ -91,6 +140,9 @@ export function GenerationForm({
   modelProvider,
   modelId,
   generateAnyway = false,
+  sources = [],
+  maxGroundingChunks = 0,
+  maxGroundingCharacters = 0,
 }: GenerationFormProps) {
   const [state, formAction, isPending] = useActionState(
     action,
@@ -99,10 +151,22 @@ export function GenerationForm({
   const [itemKind, setItemKind] = useState<GeneratedItemKind>(
     readKind(state.values.itemKind) ?? "QUESTION",
   );
+  // Controlled, because the source picker exists only for the two grounded modes and the
+  // submit is blocked without a source while grounded. Everything else stays uncontrolled so
+  // the browser keeps typed text through a rejected submission.
+  const [mode, setMode] = useState<GenerationRequestMode>(
+    readMode(state.values.generationMode) ?? "MODEL_KNOWLEDGE",
+  );
+  const [chosenSources, setChosenSources] = useState<readonly string[]>([]);
   const initial = (field: string, fallback: string): string =>
     state.values[field] ?? fallback;
   const formErrors = formLevelErrors(state);
   const countErrors = fieldErrors(state, "itemCount");
+  // Grounding is a question-only choice: the link table points at questions, and there is no
+  // evidence panel on a card. Switching to flashcards therefore drops back to model
+  // knowledge rather than sending a mode the facade would ignore.
+  const grounding = itemKind === "QUESTION" && mode !== "MODEL_KNOWLEDGE";
+  const missingSource = grounding && chosenSources.length === 0;
 
   return (
     <form action={formAction} className="form" noValidate>
@@ -237,6 +301,98 @@ export function GenerationForm({
         </fieldset>
       )}
 
+      {/* Question-only, and after the type choice because "what should it write" comes before
+          "what should it write from". The hidden field keeps the submitted mode honest when
+          the picker is not on screen: a flashcard batch always posts MODEL_KNOWLEDGE. */}
+      {itemKind === "QUESTION" ? (
+        <fieldset className="choice-set">
+          <legend>What should it write from?</legend>
+          <ul className="choice-list">
+            {GENERATION_MODES.map((option) => (
+              <li className="choice-row" key={option}>
+                <label className="choice-label">
+                  <input
+                    type="radio"
+                    name="generationMode"
+                    value={option}
+                    checked={mode === option}
+                    onChange={() => setMode(option)}
+                  />
+                  <span>{describeMode(option)}</span>
+                </label>
+                <p className="field-hint">{modeHint(option)}</p>
+              </li>
+            ))}
+          </ul>
+          <FieldErrors
+            id="generationMode-errors"
+            messages={fieldErrors(state, "generationMode")}
+          />
+        </fieldset>
+      ) : (
+        <input
+          type="hidden"
+          name="generationMode"
+          value="MODEL_KNOWLEDGE"
+          readOnly
+        />
+      )}
+
+      {grounding ? (
+        <fieldset className="choice-set">
+          <legend>
+            Which sources? <span className="field-required">Required</span>
+          </legend>
+          {sources.length === 0 ? (
+            <p className="empty-state">
+              This track has no sources yet. Grounded questions are built from
+              documents you have imported, so{" "}
+              <Link href={`/study-tracks/${slug}/sources`}>
+                import a source
+              </Link>{" "}
+              first — or switch back to the model&apos;s own knowledge above.
+            </p>
+          ) : (
+            <>
+              <p className="field-hint">
+                Passages are chosen from the newest content of each source you
+                tick, preferring sources you mapped to the objectives above. At
+                most {maxGroundingChunks} passages and{" "}
+                {maxGroundingCharacters.toLocaleString("en-GB")} characters are
+                sent, so a large document contributes its most relevant parts
+                rather than all of it.
+              </p>
+              <ul className="choice-list">
+                {sources.map((source) => (
+                  <li className="choice-row" key={source.id}>
+                    <label className="choice-label">
+                      <input
+                        type="checkbox"
+                        name="sourceIds"
+                        value={source.id}
+                        checked={chosenSources.includes(source.id)}
+                        onChange={(event) => {
+                          setChosenSources((current) =>
+                            event.target.checked
+                              ? [...current, source.id]
+                              : current.filter((id) => id !== source.id),
+                          );
+                        }}
+                      />
+                      <span>{source.title}</span>
+                    </label>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+          <FieldErrors
+            id="sourceIds-errors"
+            messages={fieldErrors(state, "sourceIds")}
+          />
+        </fieldset>
+      ) : null}
+
       <fieldset className="choice-set">
         <legend>Objectives</legend>
         <p className="field-hint">
@@ -340,19 +496,32 @@ export function GenerationForm({
 
       <p className="field-hint">
         Persona: {persona.label}, version {persona.version}. Model:{" "}
-        <code>{modelId}</code> via {modelProvider}. Everything generated is
-        saved as a draft for you to review, from the model&apos;s own knowledge
-        — never as official exam material.
+        <code>{modelId}</code> via {modelProvider}.{" "}
+        {grounding
+          ? "Everything generated is saved as a draft for you to review, built from passages of your own sources and labelled with which ones — never as official exam material."
+          : "Everything generated is saved as a draft for you to review, from the model's own knowledge — never as official exam material."}
       </p>
 
       <div className="form-actions">
-        <button type="submit" className="button" disabled={isPending}>
+        <button
+          type="submit"
+          className="button"
+          disabled={isPending || missingSource}
+        >
           {isPending ? "Generating…" : "Generate"}
         </button>
         <Link className="button-quiet" href={`/study-tracks/${slug}`}>
           Cancel
         </Link>
       </div>
+
+      {missingSource ? (
+        <p className="field-hint" role="status">
+          {sources.length === 0
+            ? "Import a source, or switch back to the model's own knowledge, to generate."
+            : "Tick at least one source to generate from."}
+        </p>
+      ) : null}
 
       {isPending ? (
         <p className="field-hint" role="status">
@@ -374,6 +543,14 @@ function difficultyOptions(): readonly number[] {
 
 function readKind(value: string | undefined): GeneratedItemKind | null {
   return value === "QUESTION" || value === "FLASHCARD" ? value : null;
+}
+
+function readMode(value: string | undefined): GenerationRequestMode | null {
+  return value === "MODEL_KNOWLEDGE" ||
+    value === "SOURCE_GROUNDED" ||
+    value === "HYBRID"
+    ? value
+    : null;
 }
 
 /** "a, b and c" — a readable list rather than a comma-joined one. */

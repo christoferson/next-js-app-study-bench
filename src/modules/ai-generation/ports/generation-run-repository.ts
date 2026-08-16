@@ -100,6 +100,21 @@ export interface GenerationRunRepository {
   findLatestChallengeForQuestion(
     questionId: string,
   ): Promise<GenerationRun | null>;
+  /**
+   * The most recent completed source check of one question, if it has been checked.
+   *
+   * The latest one, for the challenge's reason: a check is a current verdict about whether
+   * the owner's own documents support the stored answer, and a panel showing an old
+   * SUPPORTED beside a new CONTRADICTED would leave nothing to act on. Every check stays in
+   * the run history.
+   *
+   * The excerpts a check consulted are recorded on its own row —
+   * `selected_source_snapshot_ids` — so an old check remains explicable even after the
+   * sources have been refreshed.
+   */
+  findLatestSourceVerificationForQuestion(
+    questionId: string,
+  ): Promise<GenerationRun | null>;
   /** Inserts a run row. Called with `PENDING` before the provider is used. */
   create(run: GenerationRun): Promise<void>;
   /**

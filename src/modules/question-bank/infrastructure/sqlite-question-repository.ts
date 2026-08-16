@@ -377,6 +377,11 @@ export class SqliteQuestionRepository implements QuestionRepository {
    * so the revision rows cannot go while the root still points at one. Revisions
    * and links then cascade from the root, and the explicit deletes keep the
    * intent readable rather than relying on cascade order.
+   *
+   * Source-evidence links go too. They are `ON DELETE CASCADE` from the question, so this
+   * delete is not what makes the row go; it is here because the chunk side is
+   * `ON DELETE RESTRICT` and the intent — a deleted question's evidence is evidence of
+   * nothing — belongs next to the other links rather than only in a migration.
    */
   async delete(id: QuestionId): Promise<void> {
     const cleared = this.database
@@ -387,6 +392,9 @@ export class SqliteQuestionRepository implements QuestionRepository {
       throw new QuestionNotFoundError(id);
     }
 
+    this.database
+      .prepare(`DELETE FROM question_source_links WHERE question_id = ?`)
+      .run(id);
     this.database
       .prepare(`DELETE FROM question_objective_links WHERE question_id = ?`)
       .run(id);

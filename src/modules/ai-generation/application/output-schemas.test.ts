@@ -583,4 +583,96 @@ describe("provider-facing JSON schemas", () => {
 
     expect(tags).toMatch(/never a url/i);
   });
+
+  it("describes the citation field only when the request sent excerpts", () => {
+    // Built from the excerpt count for the reason the choice fields are built from the
+    // allowed types: an ungrounded batch is not shown a field it must then be told not
+    // to use.
+    const grounded = questionOutputJsonSchema(["SINGLE_CHOICE"], 4).properties
+      ?.questions?.items?.properties;
+    const ungrounded = questionOutputJsonSchema(["SINGLE_CHOICE"], 0).properties
+      ?.questions?.items?.properties;
+
+    expect(grounded?.supportingExcerptIndexes).toBeDefined();
+    expect(ungrounded?.supportingExcerptIndexes).toBeUndefined();
+    // The default is the ungrounded one, so every existing call site is unchanged.
+    expect(
+      questionOutputJsonSchema(["SINGLE_CHOICE"]).properties?.questions?.items
+        ?.properties?.supportingExcerptIndexes,
+    ).toBeUndefined();
+  });
+
+  it("bounds the citation field to the excerpts actually sent", () => {
+    const field = questionOutputJsonSchema(["SINGLE_CHOICE"], 4).properties
+      ?.questions?.items?.properties?.supportingExcerptIndexes;
+
+    expect(field?.items?.minimum).toBe(1);
+    expect(field?.items?.maximum).toBe(4);
+    expect(field?.description ?? "").toMatch(
+      /Use the excerpt numbers 1 to 4 exactly as they were given/,
+    );
+  });
+});
+
+describe("supporting excerpt citations", () => {
+  it("reads the cited excerpt numbers through to the draft", () => {
+    // Named `supportingExcerptIndexes` on the wire and `supportingChunkIndexes` on the
+    // draft: the model is shown excerpt numbers and never a chunk identifier.
+    const result = validQuestions([
+      questionPayloadItem({ supportingExcerptIndexes: [1, 3] }),
+    ]);
+
+    expect(result.ok).toBe(true);
+
+    if (result.ok) {
+      expect(result.value[0]?.supportingChunkIndexes).toEqual([1, 3]);
+    }
+  });
+
+  it("treats an absent and a null citation list as the same answer", () => {
+    // A model-knowledge batch sends no excerpts, so the field is correctly missing and
+    // an ungrounded response must still validate.
+    for (const indexes of [undefined, null]) {
+      const item = questionPayloadItem();
+
+      if (indexes === null) {
+        item.supportingExcerptIndexes = null;
+      }
+
+      const result = validQuestions([item]);
+
+      expect(result.ok).toBe(true);
+
+      if (result.ok) {
+        expect(result.value[0]?.supportingChunkIndexes).toEqual([]);
+      }
+    }
+  });
+
+  it("passes an out-of-range number through for the checks to refuse", () => {
+    // Whether a number names an excerpt that was sent is a fact about the request, not
+    // about the shape of the answer, so the deterministic checks own it.
+    const result = validQuestions([
+      questionPayloadItem({ supportingExcerptIndexes: [0, -2, 99] }),
+    ]);
+
+    expect(result.ok).toBe(true);
+
+    if (result.ok) {
+      expect(result.value[0]?.supportingChunkIndexes).toEqual([0, -2, 99]);
+    }
+  });
+
+  it("refuses a citation list longer than the entry cap", () => {
+    const indexes = Array.from({ length: 13 }, (_unused, i) => i + 1);
+    const result = validQuestions([
+      questionPayloadItem({ supportingExcerptIndexes: indexes }),
+    ]);
+
+    expect(result.ok).toBe(false);
+
+    if (!result.ok) {
+      expect(result.errors.join(" ")).toMatch(/cite 12 excerpts or fewer/);
+    }
+  });
 });

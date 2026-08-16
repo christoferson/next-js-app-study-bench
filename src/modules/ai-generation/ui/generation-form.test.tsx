@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { isDomainError } from "@/shared/domain-error";
 import { parseInput } from "@/shared/parse-input";
@@ -10,6 +10,11 @@ import type { Objective } from "@/modules/certifications/domain/objective";
 import { generationRequestSchema } from "@/modules/ai-generation/application/schemas";
 import type { GenerationRequestInput } from "@/modules/ai-generation/application/schemas";
 import { MAX_BATCH_ITEMS } from "@/modules/ai-generation/domain/generation-limits";
+import {
+  MAX_GROUNDING_CHARACTERS,
+  MAX_GROUNDING_CHUNKS,
+} from "@/modules/ai-generation/domain/source-grounding";
+import type { GroundingSourceSummary } from "@/modules/ai-generation/ports/source-grounding-repository";
 import { personaForStudyType } from "@/modules/ai-generation/domain/personas";
 import type { Persona } from "@/modules/ai-generation/domain/personas";
 import type { StoredPersona } from "@/modules/ai-generation/domain/stored-persona";
@@ -44,6 +49,8 @@ function validatingAction(
           questionTypes: readAll("questionTypes"),
           cardTypes: readAll("cardTypes"),
           personaId: read("personaId"),
+          generationMode: read("generationMode"),
+          sourceIds: readAll("sourceIds"),
           generateAnyway: read("generateAnyway"),
         }),
       );
@@ -75,6 +82,11 @@ const STORED_PERSONAS: readonly StoredPersona[] = [
   }),
 ];
 
+const SOURCES: readonly GroundingSourceSummary[] = [
+  { id: "source-1", title: "Official exam guide", sourceType: "EXAM_GUIDE" },
+  { id: "source-2", title: "My VPC notes", sourceType: "NOTE" },
+];
+
 function renderForm(
   options: {
     readonly action?: ReturnType<typeof validatingAction>;
@@ -83,6 +95,7 @@ function renderForm(
     readonly generateAnyway?: boolean;
     readonly personaChoices?: readonly StoredPersona[];
     readonly assignedPersonaId?: string | null;
+    readonly sources?: readonly GroundingSourceSummary[];
   } = {},
 ): void {
   render(
@@ -103,6 +116,9 @@ function renderForm(
       {...(options.generateAnyway === undefined
         ? {}
         : { generateAnyway: options.generateAnyway })}
+      {...(options.sources === undefined ? {} : { sources: options.sources })}
+      maxGroundingChunks={MAX_GROUNDING_CHUNKS}
+      maxGroundingCharacters={MAX_GROUNDING_CHARACTERS}
     />,
   );
 }
@@ -281,6 +297,9 @@ describe("GenerationForm", () => {
         // No select is rendered when the owner has stored no persona, so the request
         // carries nothing and the facade falls back to the track's own assignment.
         personaId: null,
+        // The mode that claims the least, chosen by nobody touching the radio.
+        generationMode: "MODEL_KNOWLEDGE",
+        sourceIds: [],
         generateAnyway: false,
       });
     });
@@ -507,6 +526,174 @@ describe("GenerationForm", () => {
 
       await waitFor(() => {
         expect(screen.getByText("Use 1000 characters or fewer.")).toBeVisible();
+      });
+    });
+  });
+
+  describe("what it writes from", () => {
+    const MODEL_KNOWLEDGE = "From the model's own knowledge";
+    const GROUNDED = "From my sources only";
+    const HYBRID_MODE =
+      "Hybrid — facts from my sources, scenarios from the model";
+
+    /** The hidden field, for the kind that has no radio to read. */
+    function submittedMode(): string | null {
+      return (
+        document.querySelector<HTMLInputElement>(
+          'input[type="hidden"][name="generationMode"]',
+        )?.value ?? null
+      );
+    }
+
+    it("offers the three modes for a question batch", () => {
+      renderForm({ sources: SOURCES });
+
+      for (const name of [MODEL_KNOWLEDGE, GROUNDED, HYBRID_MODE]) {
+        expect(screen.getByRole("radio", { name })).toBeInTheDocument();
+      }
+      // The mode that claims the least is the one the form opens on.
+      expect(
+        screen.getByRole("radio", { name: MODEL_KNOWLEDGE }),
+      ).toBeChecked();
+    });
+
+    it("offers no mode at all for a flashcard batch and posts model knowledge", async () => {
+      // A card carries no evidence panel and the link table points at questions, so
+      // grounding is a question-only choice. The hidden field keeps the submitted mode
+      // honest rather than leaving the facade to infer it.
+      renderForm({ sources: SOURCES });
+
+      const user = userEvent.setup();
+
+      await user.click(screen.getByRole("radio", { name: "Flashcards" }));
+
+      expect(screen.queryByRole("radio", { name: GROUNDED })).toBeNull();
+      expect(screen.queryByRole("radio", { name: HYBRID_MODE })).toBeNull();
+      expect(submittedMode()).toBe("MODEL_KNOWLEDGE");
+    });
+
+    it("offers no source picker until a grounded mode is chosen", () => {
+      renderForm({ sources: SOURCES });
+
+      expect(
+        screen.queryByRole("checkbox", { name: "Official exam guide" }),
+      ).toBeNull();
+    });
+
+    it("points at the sources page when the track has nothing to ground on", async () => {
+      // The choice is still offered and then explained, rather than hidden: a form that
+      // silently lacked the option would never tell the owner grounded generation exists.
+      renderForm({ sources: [] });
+
+      const user = userEvent.setup();
+
+      await user.click(screen.getByRole("radio", { name: GROUNDED }));
+
+      expect(screen.getByText(/This track has no sources yet\./)).toBeVisible();
+      expect(
+        screen.getByRole("link", { name: "import a source" }),
+      ).toHaveAttribute("href", "/study-tracks/demo/sources");
+      // The empty state instead of an empty list of boxes, not as well as one.
+      expect(
+        within(
+          screen.getByRole("group", { name: /Which sources\?/ }),
+        ).queryAllByRole("checkbox"),
+      ).toEqual([]);
+    });
+
+    it("blocks the submit while a grounded mode has no source ticked", async () => {
+      renderForm({ sources: SOURCES });
+
+      const user = userEvent.setup();
+      const generate = screen.getByRole("button", { name: "Generate" });
+
+      expect(generate).toBeEnabled();
+
+      await user.click(screen.getByRole("radio", { name: GROUNDED }));
+
+      expect(generate).toBeDisabled();
+      // Said in words next to the blocked button, because a disabled control that does
+      // not explain itself is a dead end (`spec/UI-GUIDELINES.md`).
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "Tick at least one source to generate from.",
+      );
+
+      await user.click(
+        screen.getByRole("checkbox", { name: "Official exam guide" }),
+      );
+
+      expect(generate).toBeEnabled();
+      expect(screen.queryByRole("status")).toBeNull();
+    });
+
+    it("tells the owner to import instead when there is no source to tick", async () => {
+      renderForm({ sources: [] });
+
+      const user = userEvent.setup();
+
+      await user.click(screen.getByRole("radio", { name: HYBRID_MODE }));
+
+      expect(screen.getByRole("button", { name: "Generate" })).toBeDisabled();
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "Import a source, or switch back to the model's own knowledge, to generate.",
+      );
+    });
+
+    it("states the passage and character caps that will be sent", async () => {
+      // The owner is told that a large document contributes its most relevant parts,
+      // not all of it, so a short batch from a long guide is not a surprise.
+      renderForm({ sources: SOURCES });
+
+      const user = userEvent.setup();
+
+      await user.click(screen.getByRole("radio", { name: GROUNDED }));
+
+      expect(
+        screen.getByText(
+          new RegExp(
+            `At most ${MAX_GROUNDING_CHUNKS} passages and ${MAX_GROUNDING_CHARACTERS.toLocaleString(
+              "en-GB",
+            )} characters are sent`,
+          ),
+        ),
+      ).toBeVisible();
+    });
+
+    it("promises evidence rather than the model's own knowledge while grounded", async () => {
+      renderForm({ sources: SOURCES });
+
+      const user = userEvent.setup();
+
+      await user.click(screen.getByRole("radio", { name: GROUNDED }));
+
+      const note = screen.getByText(/saved as a draft for you to review/);
+
+      expect(note).toHaveTextContent("built from passages of your own sources");
+      expect(note).toHaveTextContent("never as official exam material");
+    });
+
+    it("posts every ticked source under the one name", async () => {
+      // One name for all the boxes, so a batch can be grounded on several documents.
+      const onValid = vi.fn();
+
+      renderForm({ action: validatingAction(onValid), sources: SOURCES });
+
+      const user = userEvent.setup();
+
+      await user.click(screen.getByRole("radio", { name: HYBRID_MODE }));
+      await user.click(
+        screen.getByRole("checkbox", { name: "Official exam guide" }),
+      );
+      await user.click(screen.getByRole("checkbox", { name: "My VPC notes" }));
+      await user.click(screen.getByRole("button", { name: "Generate" }));
+
+      await waitFor(() => {
+        expect(onValid).toHaveBeenCalledTimes(1);
+      });
+
+      expect(onValid.mock.calls[0]?.[0]).toMatchObject({
+        generationMode: "HYBRID",
+        sourceIds: ["source-1", "source-2"],
       });
     });
   });

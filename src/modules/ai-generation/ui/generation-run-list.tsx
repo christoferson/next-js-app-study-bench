@@ -143,6 +143,16 @@ function subjectRunKind(kind: GeneratedItemKind): {
           "The question this challenge was about has since been deleted.",
         anchor: "#challenge",
       };
+    case "SOURCE_VERIFICATION":
+      return {
+        // The one kind whose provenance line does *not* say "from model knowledge", because
+        // it is the one kind where something was actually looked up.
+        provenance: "Checked against your sources",
+        outcome: "one question checked",
+        link: "Read the check on the question",
+        deleted: "The question this check was about has since been deleted.",
+        anchor: "#source-check",
+      };
     case "QUESTION":
     case "FLASHCARD":
     case "ENRICH_VOCABULARY":

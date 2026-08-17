@@ -284,7 +284,7 @@ const ENRICHMENT_TEMPLATE_VERSION = 1;
  * other three state ("write from your own knowledge, cite nothing") into its opposite
  * ("take nothing from your own knowledge").
  */
-const OBJECTIVE_IMPORT_TEMPLATE_VERSION = 1;
+const OBJECTIVE_IMPORT_TEMPLATE_VERSION = 2;
 
 /**
  * Version 1 of the objective-merge template.
@@ -1554,9 +1554,16 @@ function renderObjectiveImportPrompt(context: PromptContext): RenderedPrompt {
       "",
       "You are reading one document a person uploaded and extracting the study outline it states: the objectives, domains, tasks, or topics it lists, as a tree. You are not writing study material, not explaining the subject, and not assessing the document.",
       "",
+      // The owner's own wording (2026-08-17), after v1's genre-level exclusions
+      // made the model skip exam-structure sections as "logistics" and return
+      // empty for examination syllabi.
+      'Before extracting: Evaluate the document section by section, not as a single genre. A document can mix logistics content and outline content in different parts — e.g., an exam-procedures section and a separate section describing what the exam covers (skills tested, structure, topics, tasks). Do not let the dominant genre of the document (such as "this is an exam-procedures document") cause you to skip a section that does state an outline. Only apply the empty-list rule if, after checking every section, none of them state an outline.',
+      "",
+      'What counts as outline content for this domain: treat as outline content any stated breakdown of what the exam or course covers or tests — including test sections/parts and what each one requires the learner to do, skills or components tested (e.g., listening, reading, writing), topics, and task types — even if the document doesn\'t label it "outline" or "objectives." A description of exam structure and content (what is tested) is outline content; a description of exam procedure (how the test session is run) is not.',
+      "",
       "Extraction rules:",
       ...bullets([
-        "Return only objectives the document actually states. If the document lists no outline, return an empty list rather than composing one.",
+        "Return only objectives the document actually states. If, after checking every section, the document lists no outline anywhere, return an empty list rather than composing one.",
         "Do not add objectives from your own knowledge of this subject, even when you are confident the document has left something out.",
         "Copy each objective's code and title as the document words them. Fix only obvious extraction damage — a word split across a line break, a ligature, a stray page number — and never reword, translate, expand, or summarise a title.",
         "Copy a weight only when the document states one for that objective, as the number of percent it gives. Do not distribute, infer, or balance weights.",
@@ -1564,7 +1571,7 @@ function renderObjectiveImportPrompt(context: PromptContext): RenderedPrompt {
         `Return at most ${MAX_IMPORT_NODES} objectives in total. If the document is finer-grained than that, keep the levels it presents as its structure and merge the finest-grained items into their parent's description.`,
         "Give an objective a description only when the document says something about it beyond its title. Leave it out otherwise; an invented description is worse than none.",
         "Two objectives in the same group must not share a code. If the document repeats one, keep the first and merge the rest into it.",
-        "Ignore front matter, revision history, copyright notices, registration instructions, exam logistics, and appendices that are not part of the outline.",
+        'Ignore front matter, revision history, copyright notices, and appendices that are not part of the outline. Ignore exam-logistics content specifically — registration steps, ID/materials requirements, proctor scripts and announcements, timing reminders, and answer-sheet filling procedure — but do not use "logistics" to exclude a section that states what the exam tests or how it is structured/scored.',
       ]),
       "",
       "You must not:",

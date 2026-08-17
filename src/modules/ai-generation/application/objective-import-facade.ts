@@ -763,6 +763,70 @@ export class ObjectiveImportFacade {
     };
   }
 
+  /**
+   * The extracted text of one upload, exactly as the import pipeline would see
+   * it (extraction + normalization), for the owner to inspect on screen.
+   *
+   * Owner request (2026-08-17): show what the extractor produces before anything
+   * interprets it. Reads nothing but the upload, writes nothing, calls no model.
+   */
+  async previewUploadText(upload: UploadedDocument): Promise<{
+    readonly filename: string;
+    readonly characterCount: number;
+    readonly text: string;
+  }> {
+    const text = normalizeExtractedText(await this.readUploadText(upload));
+
+    return {
+      filename: upload.filename,
+      characterCount: text.length,
+      text,
+    };
+  }
+
+  /**
+   * The exact prompt the AI extraction would send — system and user messages —
+   * rendered through the same code path `extractObjectives` uses, without
+   * calling anything (owner request, 2026-08-17: run it manually elsewhere).
+   */
+  async previewImportPrompt(
+    slug: CertificationSlug,
+    input: ObjectiveImportRequestInput,
+    documentText: string,
+  ): Promise<{ readonly system: string; readonly user: string }> {
+    const certification = await this.deps.certifications.findBySlug(slug);
+
+    if (certification === null) {
+      throw new CertificationNotFoundError(slug);
+    }
+    const objectives = await this.deps.unitOfWork.transaction(
+      async ({ objectives: repository }) =>
+        repository.listByCertification(certification.id),
+    );
+    const persona = await resolveEffectivePersona(
+      this.deps.personas,
+      certification,
+      input.personaId,
+    );
+    const prompt = renderPrompt("OBJECTIVE_IMPORT", {
+      persona,
+      trackName: certification.name,
+      examCode: certification.examCode,
+      objectives: objectives.map(toPromptObjective),
+      spec: {
+        itemCount: OBJECTIVE_IMPORT_ITEM_COUNT,
+        objectiveIds: [],
+        difficulty: null,
+        additionalInstructions: input.additionalInstructions,
+        questionTypes: [],
+        cardTypes: [],
+      },
+      syllabusText: documentText,
+    });
+
+    return { system: prompt.system, user: prompt.user };
+  }
+
   /** One upload as text: extracted for a PDF, decoded for anything else. */
   private async readUploadText(upload: UploadedDocument): Promise<string> {
     if (upload.bytes.byteLength === 0) {

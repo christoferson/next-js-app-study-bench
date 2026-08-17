@@ -71,7 +71,52 @@ export async function extractObjectivesAction(
       additionalInstructions: readString(form, "additionalInstructions"),
       personaId: readString(form, "personaId"),
     });
-    const documents = await readDocuments(form);
+    const documents =
+      readString(form, "confirmedExtraction") === "1"
+        ? readConfirmedDocuments(form)
+        : await readDocuments(form);
+
+    // Troubleshooting checkpoint (owner request, 2026-08-17): uploaded files
+    // STOP here on the first submit. The extracted text is returned to the form
+    // for the owner to read; the continue submit carries that exact text back
+    // (file inputs cannot be re-populated), so what the owner saw is
+    // byte-for-byte what the strategy receives. Pasted-only submissions pass
+    // straight through — pasted text is already visible.
+    if (
+      documents.length > 0 &&
+      readString(form, "confirmedExtraction") !== "1"
+    ) {
+      const facade = getObjectiveImportFacade();
+      const previews = await Promise.all(
+        documents.map(async (document) => ({
+          ...(await facade.previewUploadText(document)),
+          role: document.role,
+        })),
+      );
+      // The exact prompt the AI strategy would send, for the owner to run
+      // manually elsewhere. Rendered through the same code path as the real
+      // call. Deterministic strategies send no prompt; nothing is shown.
+      const prompt =
+        input.strategyKey === "GENERIC_OUTLINE"
+          ? await facade.previewImportPrompt(
+              slug,
+              input,
+              previews.map((preview) => preview.text).join("\n\n"),
+            )
+          : null;
+
+      return {
+        status: "invalid",
+        fieldErrors: {},
+        values: {
+          strategyKey: input.strategyKey,
+          additionalInstructions: input.additionalInstructions ?? "",
+          personaId: input.personaId ?? "",
+          extractedPreview: JSON.stringify(previews),
+          ...(prompt === null ? {} : { promptPreview: JSON.stringify(prompt) }),
+        },
+      };
+    }
     const result = await getObjectiveImportFacade().extractObjectives(
       slug,
       input,
@@ -201,6 +246,33 @@ async function readDocuments(
       };
     }),
   );
+}
+
+/**
+ * The continue step's documents: the extracted text the owner just read,
+ * resubmitted as hidden fields. Encoded back to bytes so the rest of the
+ * pipeline is unchanged; the kind is PLAIN_TEXT because extraction already
+ * happened — running a PDF extractor on extracted text would be wrong.
+ */
+function readConfirmedDocuments(form: FormData): UploadedDocument[] {
+  const raw = readString(form, "extractedPreview");
+
+  if (raw.length === 0) {
+    return [];
+  }
+
+  const parsed = JSON.parse(raw) as readonly {
+    filename: string;
+    text: string;
+    role: string | null;
+  }[];
+
+  return parsed.map((entry) => ({
+    filename: entry.filename,
+    bytes: new TextEncoder().encode(entry.text),
+    kind: "PLAIN_TEXT" as DocumentKind,
+    role: readRole(entry.role ?? undefined),
+  }));
 }
 
 /** A chosen role, or `null` when the owner left it on automatic. */

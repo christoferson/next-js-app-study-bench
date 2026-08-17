@@ -1958,3 +1958,16 @@ code {
   /* Nothing to widen: the clip row is one line at every width, which is the point of
      replacing the player with a glyph. */
 }
+
+/* Raw extracted text, shown exactly as the import pipeline reads it. */
+.extraction-preview-text {
+  max-height: 24rem;
+  overflow: auto;
+  padding: var(--space-3);
+  background-color: var(--color-panel);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  font-size: 0.8125rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}

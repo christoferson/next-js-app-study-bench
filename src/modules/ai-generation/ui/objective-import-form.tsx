@@ -69,6 +69,34 @@ interface ObjectiveImportFormProps {
  * confirm step is the reason this feature is safe to use on a track that already has
  * objectives.
  */
+/**
+ * The exact system and user messages the AI extraction would send, in copyable
+ * textareas (owner request, 2026-08-17: run the prompt manually on another LLM).
+ */
+function PromptPreview({ payload }: { readonly payload: string }) {
+  const prompt = JSON.parse(payload) as { system: string; user: string };
+
+  return (
+    <div className="field">
+      <h3>Exact prompt that would be sent</h3>
+      <label htmlFor="prompt-preview-system">System message</label>
+      <textarea
+        id="prompt-preview-system"
+        readOnly
+        rows={8}
+        value={prompt.system}
+      />
+      <label htmlFor="prompt-preview-user">User message</label>
+      <textarea
+        id="prompt-preview-user"
+        readOnly
+        rows={12}
+        value={prompt.user}
+      />
+    </div>
+  );
+}
+
 export function ObjectiveImportForm({
   action,
   slug,
@@ -384,9 +412,50 @@ export function ObjectiveImportForm({
             } are left exactly as they are; anything you apply is added after them, and anything you already have is skipped rather than duplicated.`}
       </p>
 
+      {/* Extraction checkpoint: after a file upload the action returns the
+          extracted text here instead of calling anything. The owner reads it,
+          then the continue submit carries this exact text forward. */}
+      {typeof state.values.extractedPreview === "string" &&
+      state.values.extractedPreview.length > 0 ? (
+        <div className="field">
+          <h3>Extracted text — read before continuing</h3>
+          {(
+            JSON.parse(state.values.extractedPreview) as readonly {
+              filename: string;
+              characterCount: number;
+              text: string;
+            }[]
+          ).map((preview) => (
+            <div key={preview.filename}>
+              <p className="field-hint">
+                {preview.filename} —{" "}
+                {preview.characterCount.toLocaleString("en-GB")} characters.
+                This exact text is what the import will read.
+              </p>
+              <pre className="extraction-preview-text">{preview.text}</pre>
+            </div>
+          ))}
+          {typeof state.values.promptPreview === "string" ? (
+            <PromptPreview payload={state.values.promptPreview} />
+          ) : null}
+          <input
+            type="hidden"
+            name="extractedPreview"
+            value={state.values.extractedPreview}
+            readOnly
+          />
+          <input type="hidden" name="confirmedExtraction" value="1" readOnly />
+        </div>
+      ) : null}
+
       <div className="form-actions">
         <button type="submit" className="button" disabled={isPending}>
-          {isPending ? "Reading…" : "Extract outline"}
+          {isPending
+            ? "Reading…"
+            : typeof state.values.extractedPreview === "string" &&
+                state.values.extractedPreview.length > 0
+              ? "Looks right — continue the import"
+              : "Extract outline"}
         </button>
         <Link className="button-quiet" href={`/study-tracks/${slug}`}>
           Cancel

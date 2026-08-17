@@ -255,7 +255,7 @@ describe("prompt template identifiers", () => {
     expect(templateVersionForItemKind("QUESTION")).toBe(2);
     expect(templateVersionForItemKind("FLASHCARD")).toBe(3);
     expect(templateVersionForItemKind("ENRICH_VOCABULARY")).toBe(1);
-    expect(templateVersionForItemKind("OBJECTIVE_IMPORT")).toBe(1);
+    expect(templateVersionForItemKind("OBJECTIVE_IMPORT")).toBe(2);
     expect(templateVersionForItemKind("QUESTION_REVIEW")).toBe(1);
     expect(templateVersionForItemKind("TUTOR_EXPLANATION")).toBe(1);
   });

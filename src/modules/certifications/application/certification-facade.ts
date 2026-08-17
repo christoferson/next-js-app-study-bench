@@ -430,6 +430,69 @@ export class CertificationFacade {
     await this.deps.objectives.restore(objectiveId, this.deps.clock.now());
   }
 
+  /**
+   * Archives every active objective of one track in one act.
+   *
+   * The alternative is the owner pressing Archive 117 times on an imported HSK
+   * syllabus, which is the same intent expressed 117 times and 117 chances to
+   * stop half-way. One transaction, so the tree is never observed part-archived.
+   *
+   * Archived objectives are left alone rather than restamped, and the count
+   * returned is of objectives that actually changed — zero when there was nothing
+   * active, which is not an error: the end state the owner asked for already
+   * holds.
+   */
+  async archiveAllObjectives(
+    certificationId: CertificationId,
+  ): Promise<number> {
+    await this.requireCertification(certificationId);
+
+    return this.deps.unitOfWork.transaction(async ({ objectives }) =>
+      objectives.archiveAllByCertification(
+        certificationId,
+        this.deps.clock.now(),
+      ),
+    );
+  }
+
+  /** Restores every archived objective of one track. The inverse of the above. */
+  async restoreAllObjectives(
+    certificationId: CertificationId,
+  ): Promise<number> {
+    await this.requireCertification(certificationId);
+
+    return this.deps.unitOfWork.transaction(async ({ objectives }) =>
+      objectives.restoreAllByCertification(
+        certificationId,
+        this.deps.clock.now(),
+      ),
+    );
+  }
+
+  /**
+   * Permanently removes every objective of one track, whatever its status.
+   *
+   * For the outline that came out wrong — an import against the wrong exam guide,
+   * a structure the owner has decided to redraw. Archiving is the wrong tool
+   * there: an archived objective still occupies the tree and still has to be
+   * scrolled past. This clears the outline so a new one can be written.
+   *
+   * **The bank survives.** Questions, flashcards, and sources lose their
+   * objective mappings and nothing else — the outline is a view over the bank,
+   * not the bank. Unlike a track purge there is no archive-first requirement,
+   * because nothing studyable is destroyed; the disclosure and its count are the
+   * confirmation.
+   *
+   * One transaction: the mappings and the objectives are one removal.
+   */
+  async deleteAllObjectives(certificationId: CertificationId): Promise<number> {
+    await this.requireCertification(certificationId);
+
+    return this.deps.unitOfWork.transaction(async ({ objectives }) =>
+      objectives.purgeAllByCertification(certificationId),
+    );
+  }
+
   private async requireCertification(
     id: CertificationId,
   ): Promise<Certification> {

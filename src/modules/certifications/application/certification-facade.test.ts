@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { SqliteDatabase } from "@/platform/database/sqlite";
 import {
+  CertificationNotFoundError,
   CyclicObjectiveParentError,
   InvalidParentObjectiveError,
   ObjectiveNotFoundError,
@@ -162,6 +163,49 @@ function seedDependentRows(
      VALUES ('a-1', 's-1', 'q-1', 'qr-1', '{"type":"SHORT_ANSWER","text":"x"}', 1,
        'CONFIDENT', ?, 'SELF_ASSESSED')`,
     [now],
+  );
+}
+
+/**
+ * One more link into each of the three objective link tables, plus the source the
+ * third one needs. Used by the bulk-delete tests, which have to show that clearing
+ * a mapping leaves the mapped content in place — so the rows on the far side of
+ * each link must exist before the delete runs.
+ */
+function seedObjectiveLinks(
+  database: SqliteDatabase,
+  certificationId: string,
+  objectiveIds: readonly string[],
+): void {
+  const now = "2026-08-17T00:00:00.000Z";
+  const run = (sql: string, params: unknown[]): void => {
+    database.prepare(sql).run(...params);
+  };
+
+  run(
+    `INSERT INTO sources (id, certification_id, title, source_type, authority,
+       original_location, status, created_at, updated_at)
+     VALUES ('src-1', ?, 'Demo exam guide', 'PASTED_TEXT', 'USER_AUTHORED', NULL,
+       'ACTIVE', ?, ?)`,
+    [certificationId, now, now],
+  );
+
+  const [first, second] = objectiveIds;
+
+  run(
+    `INSERT INTO question_objective_links (question_id, objective_id, created_at)
+     VALUES ('q-1', ?, ?)`,
+    [first, now],
+  );
+  run(
+    `INSERT INTO flashcard_objective_links (flashcard_id, objective_id, created_at)
+     VALUES ('f-1', ?, ?)`,
+    [second, now],
+  );
+  run(
+    `INSERT INTO source_objective_links (source_id, objective_id, created_at)
+     VALUES ('src-1', ?, ?)`,
+    [second, now],
   );
 }
 
@@ -682,6 +726,177 @@ describe("CertificationFacade", () => {
       const view = await facade.findDetailBySlug(track.slug);
       expect(view?.activeObjectiveCount).toBe(1);
       expect(view?.archivedObjectiveCount).toBe(0);
+    });
+  });
+
+  /**
+   * The whole-outline actions, which exist because an imported syllabus is too
+   * large to act on one row at a time.
+   */
+  describe("bulk objective actions", () => {
+    /** A three-level tree: two roots, a child under the first, a grandchild under that. */
+    async function seedTree(certificationId: string): Promise<{
+      readonly root: string;
+      readonly child: string;
+      readonly grandchild: string;
+      readonly other: string;
+    }> {
+      const root = await facade.addObjective(
+        certificationId,
+        objectiveInput({ title: "Root" }),
+      );
+      const child = await facade.addObjective(
+        certificationId,
+        objectiveInput({ title: "Child", parentObjectiveId: root.id }),
+      );
+      const grandchild = await facade.addObjective(
+        certificationId,
+        objectiveInput({ title: "Grandchild", parentObjectiveId: child.id }),
+      );
+      const other = await facade.addObjective(
+        certificationId,
+        objectiveInput({ title: "Other root" }),
+      );
+
+      return {
+        root: root.id,
+        child: child.id,
+        grandchild: grandchild.id,
+        other: other.id,
+      };
+    }
+
+    function countRows(table: string): number {
+      const row = database
+        .prepare(`SELECT COUNT(*) AS n FROM ${table}`)
+        .get() as { n: number };
+
+      return row.n;
+    }
+
+    it("archives every active objective and restores them again", async () => {
+      const track = await facade.createCertification(CERTIFICATION_INPUT);
+      await seedTree(track.id);
+
+      const archived = await facade.archiveAllObjectives(track.id);
+
+      expect(archived).toBe(4);
+      const afterArchive = await facade.findDetailBySlug(track.slug);
+      expect(afterArchive?.activeObjectiveCount).toBe(0);
+      expect(afterArchive?.archivedObjectiveCount).toBe(4);
+
+      const restored = await facade.restoreAllObjectives(track.id);
+
+      expect(restored).toBe(4);
+      const afterRestore = await facade.findDetailBySlug(track.slug);
+      expect(afterRestore?.activeObjectiveCount).toBe(4);
+      expect(afterRestore?.archivedObjectiveCount).toBe(0);
+    });
+
+    it("archives only what is still active", async () => {
+      const track = await facade.createCertification(CERTIFICATION_INPUT);
+      const tree = await seedTree(track.id);
+      await facade.archiveObjective(tree.other);
+
+      await expect(facade.archiveAllObjectives(track.id)).resolves.toBe(3);
+      await expect(facade.archiveAllObjectives(track.id)).resolves.toBe(0);
+    });
+
+    it("leaves another track's objectives alone", async () => {
+      const track = await facade.createCertification(CERTIFICATION_INPUT);
+      const other = await facade.createCertification({
+        ...CERTIFICATION_INPUT,
+        name: "Other Track",
+      });
+      await seedTree(track.id);
+      const kept = await facade.addObjective(
+        other.id,
+        objectiveInput({ title: "Kept" }),
+      );
+
+      await facade.archiveAllObjectives(track.id);
+      await facade.deleteAllObjectives(track.id);
+
+      const view = await facade.findDetailBySlug(other.slug);
+      expect(view?.activeObjectiveCount).toBe(1);
+      expect(view?.objectiveTree[0]?.objective.id).toBe(kept.id);
+    });
+
+    it("rejects bulk actions on a track that does not exist", async () => {
+      await expect(
+        facade.archiveAllObjectives("no-such-track"),
+      ).rejects.toBeInstanceOf(CertificationNotFoundError);
+      await expect(
+        facade.restoreAllObjectives("no-such-track"),
+      ).rejects.toBeInstanceOf(CertificationNotFoundError);
+      await expect(
+        facade.deleteAllObjectives("no-such-track"),
+      ).rejects.toBeInstanceOf(CertificationNotFoundError);
+    });
+
+    it("deletes a multi-level tree leaf-first, whatever each status is", async () => {
+      const track = await facade.createCertification(CERTIFICATION_INPUT);
+      const tree = await seedTree(track.id);
+      // Mixed statuses, because the delete is unconditional on status while the
+      // two archive actions are not.
+      await facade.archiveObjective(tree.child);
+      await facade.archiveObjective(tree.grandchild);
+
+      const deleted = await facade.deleteAllObjectives(track.id);
+
+      // Four objectives across three levels, and RESTRICT on parent_objective_id
+      // would have thrown had the loop deleted a parent before its child.
+      expect(deleted).toBe(4);
+      expect(countRows("certification_objectives")).toBe(0);
+      const view = await facade.findDetailBySlug(track.slug);
+      expect(view?.objectiveTree).toEqual([]);
+      expect(view?.certification.id).toBe(track.id);
+    });
+
+    it("clears objective mappings without deleting the mapped content", async () => {
+      const track = await facade.createCertification(CERTIFICATION_INPUT);
+      const tree = await seedTree(track.id);
+      // The question, flashcard, and session rows, then a link from each of the
+      // three link tables onto objectives at different depths of the tree.
+      seedDependentRows(database, track.id, tree.root);
+      seedObjectiveLinks(database, track.id, [tree.child, tree.grandchild]);
+
+      expect(countRows("question_objective_links")).toBe(2);
+      expect(countRows("flashcard_objective_links")).toBe(1);
+      expect(countRows("source_objective_links")).toBe(1);
+
+      await facade.deleteAllObjectives(track.id);
+
+      for (const table of [
+        "certification_objectives",
+        "question_objective_links",
+        "flashcard_objective_links",
+        "source_objective_links",
+      ]) {
+        expect(`${table}:${countRows(table)}`).toBe(`${table}:0`);
+      }
+      // The content the mappings pointed at is untouched: an objective is an
+      // outline over the bank, not the bank.
+      for (const table of [
+        "questions",
+        "question_revisions",
+        "flashcards",
+        "flashcard_revisions",
+        "sources",
+        "study_sessions",
+        "question_attempts",
+      ]) {
+        expect(`${table}:${countRows(table)}`).toBe(`${table}:1`);
+      }
+    });
+
+    it("deletes nothing and reports zero for a track with no objectives", async () => {
+      const track = await facade.createCertification(CERTIFICATION_INPUT);
+
+      await expect(facade.deleteAllObjectives(track.id)).resolves.toBe(0);
+      await expect(facade.archiveAllObjectives(track.id)).resolves.toBe(0);
+      await expect(facade.restoreAllObjectives(track.id)).resolves.toBe(0);
+      await expect(facade.findDetailBySlug(track.slug)).resolves.not.toBeNull();
     });
   });
 

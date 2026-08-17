@@ -32,6 +32,27 @@ const SYLLABUS = [
   "◎ 第一部分，共10题。考生做这一部分的题。",
 ].join("\n");
 
+/**
+ * The same syllabus as a `pdf.js` extraction writes it.
+ *
+ * `unpdf` puts a space either side of the digits in `共20题`, because a CJK font
+ * switches to a Latin one for them and that ends a text item. That difference alone
+ * made a real web import produce three skill headings with no parts under them, so
+ * both flavours are read here and must give the same tree.
+ */
+const SYLLABUS_SPACED = [
+  "1． 听力",
+  "◎ 第一部分，共 20 题。考生做这一部分的题。",
+  "◎ 第二部分，共 25 题。考生做这一部分的题。",
+  "2． 阅读",
+  "◎ 第一部分，共 15 题。考生做这一部分的题。",
+  "3． 书写",
+  "◎ 第一部分，共 10 题。考生做这一部分的题。",
+].join("\n");
+
+/** Skill headings with no bullets under them: the failed import's own shape. */
+const SYLLABUS_HOLLOW = ["1． 听力", "2． 阅读", "3． 书写"].join("\n");
+
 const GRAMMAR = JSON.stringify([
   { 类别: "甲类", 类别名称: "甲一", 细目: "细目甲", 语法内容: "第一条" },
   { 类别: "甲类", 类别名称: "甲一", 细目: "", 语法内容: "第二条" },
@@ -193,6 +214,40 @@ describe("readHskImportFiles", () => {
       // the documents are somebody else's.
       expect(reading.files[0]?.summary).not.toContain("第一条");
       expect(reading.files[1]?.summary).not.toContain("Widget Care");
+    });
+  });
+
+  describe("across extraction flavours", () => {
+    it("classifies a pdf.js extraction of the syllabus as the structure", () => {
+      expect(classifyHskFile(SYLLABUS_SPACED)).toBe("SYLLABUS_STRUCTURE");
+    });
+
+    it("reads a pdf.js extraction to the same tree as a pypdf one", () => {
+      expect(
+        readHskImportFiles([file("syllabus.pdf", SYLLABUS_SPACED)]),
+      ).toEqual(readHskImportFiles([file("syllabus.pdf", SYLLABUS)]));
+    });
+
+    it("summarises a pdf.js extraction with its parts and items", () => {
+      const reading = readHskImportFiles([
+        file("syllabus.pdf", SYLLABUS_SPACED),
+      ]);
+
+      expect(reading.files[0]?.problem).toBeNull();
+      expect(reading.files[0]?.summary).toBe(
+        "3 skill section(s), 4 part(s), 70 items.",
+      );
+    });
+
+    it("refuses skill sections with no parts under them instead of importing them", () => {
+      // What the owner actually got before this check existed: three titled roots
+      // with no children and no weighting, reported as a successful import.
+      const reading = readHskImportFiles([
+        file("syllabus.pdf", SYLLABUS_HOLLOW, "SYLLABUS_STRUCTURE"),
+      ]);
+
+      expect(reading.files[0]?.problem).toMatch(/no part bullets/i);
+      expect(reading.roots).toEqual([]);
     });
   });
 

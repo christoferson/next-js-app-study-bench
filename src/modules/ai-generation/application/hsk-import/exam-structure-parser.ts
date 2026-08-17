@@ -1,4 +1,7 @@
-import { normalizeLigatures } from "@/shared/text-normalization";
+import {
+  normalizeCjkNumberSpacing,
+  normalizeLigatures,
+} from "@/shared/text-normalization";
 
 /**
  * Parser for the examination structure section of the HSK 5 syllabus, as
@@ -34,6 +37,12 @@ import { normalizeLigatures } from "@/shared/text-normalization";
  * - **The skill names recur** later in the document, in the invigilation script.
  *   A heading for a skill whose parts have already been read is ignored, so the
  *   later prose cannot append to or reset a section.
+ * - **Two extractions of the same page space the numbers differently.** `pypdf`
+ *   writes `共20题`; `pdf.js`, which is what the web upload path uses, writes
+ *   `共 20 题`. The lines are therefore run through
+ *   `normalizeCjkNumberSpacing` before anything is matched, and the patterns below
+ *   tolerate stray whitespace anyway — a count is the one thing in this document
+ *   that must not be lost to a space.
  *
  * The parser reads the item counts rather than trusting a table: the count in each
  * bullet is what the assertion below checks against the 100 items the examination
@@ -111,8 +120,16 @@ const SKILL_CODES: readonly {
   { kind: "WRITING", code: "书写" },
 ];
 
-/** The bullet that opens one part, with its ordinal and its item count. */
-const PART_BULLET = /^◎\s*(第([一二三四五六七八九十]+)部分)[，,]\s*共(\d+)题/;
+/**
+ * The bullet that opens one part, with its ordinal and its item count.
+ *
+ * Whitespace-tolerant at every join, as defence in depth behind
+ * `normalizeCjkNumberSpacing`: a count that a future extraction spaces some third
+ * way must still be read, because a bullet this fails to match is a part silently
+ * missing from the import rather than an error.
+ */
+const PART_BULLET =
+  /^◎\s*(第\s*([一二三四五六七八九十]+)\s*部分)\s*[，,]\s*共\s*(\d+)\s*题/;
 
 /** Chinese ordinals, in order, so 一 is 1 and 十 is 10. */
 const ORDINALS = "一二三四五六七八九十";
@@ -216,6 +233,15 @@ export function assertHskExamStructureSize(
       );
     }
 
+    // Explicitly before the count check, so the failure an extraction change
+    // actually produces — a heading found, no bullets under it — names itself
+    // instead of arriving as an off-by-two part count.
+    if (skill.parts.length === 0) {
+      throw new HskExamStructureParseError(
+        `The ${kind.toLowerCase()} section was found but no part bullets could be read from it. The extraction of this document may space its item counts differently than the parser expects.`,
+      );
+    }
+
     if (skill.parts.length !== expected) {
       throw new HskExamStructureParseError(
         `Expected ${expected} part(s) in the ${kind.toLowerCase()} section, but read ${skill.parts.length}.`,
@@ -234,6 +260,12 @@ export function assertHskExamStructureSize(
     }
   }
 
+  if (structure.totalItemCount <= 0) {
+    throw new HskExamStructureParseError(
+      "The parts add up to no items at all, so no item count could be read. The extraction of this document may space its item counts differently than the parser expects.",
+    );
+  }
+
   if (structure.totalItemCount !== expectations.totalItemCount) {
     throw new HskExamStructureParseError(
       `The parts add up to ${structure.totalItemCount} items, not the ${expectations.totalItemCount} the examination has.`,
@@ -250,7 +282,7 @@ export function assertHskExamStructureSize(
  */
 export function toStructureLines(text: string): readonly string[] {
   return (
-    normalizeLigatures(text)
+    normalizeCjkNumberSpacing(normalizeLigatures(text))
       // A form feed marks a page break and carries no content.
       .replace(/\f/g, "\n")
       .split(/\r?\n/)

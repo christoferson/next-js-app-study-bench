@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   findUnmappedRadicals,
+  normalizeCjkNumberSpacing,
   normalizeCjkRadicals,
   normalizeLigatures,
 } from "@/shared/text-normalization";
@@ -83,5 +84,63 @@ describe("findUnmappedRadicals", () => {
 
   it("reports nothing for ordinary text", () => {
     expect(findUnmappedRadicals("白天 white day")).toEqual([]);
+  });
+});
+
+describe("normalizeCjkNumberSpacing", () => {
+  it("closes both spaces around a number between CJK characters", () => {
+    expect(normalizeCjkNumberSpacing("共 20 题")).toBe("共20题");
+  });
+
+  it("closes the space before a number that a CJK character opens", () => {
+    expect(normalizeCjkNumberSpacing("约 30 分钟")).toBe("约30分钟");
+  });
+
+  it("closes every number in a run of them", () => {
+    expect(normalizeCjkNumberSpacing("第 1 到 45 题")).toBe("第1到45题");
+  });
+
+  it("leaves a number that no CJK character follows alone", () => {
+    expect(normalizeCjkNumberSpacing("词汇量 2500")).toBe("词汇量 2500");
+  });
+
+  it("leaves a number that no CJK character precedes alone", () => {
+    expect(normalizeCjkNumberSpacing("HSK 5 级")).toBe("HSK 5 级");
+  });
+
+  it("leaves a Latin sentence untouched", () => {
+    expect(normalizeCjkNumberSpacing("Domain 1: Design 22% of the exam")).toBe(
+      "Domain 1: Design 22% of the exam",
+    );
+  });
+
+  it("leaves the spacing of a Latin identifier untouched", () => {
+    expect(
+      normalizeCjkNumberSpacing("AWS Certified AI Practitioner 1 of 3"),
+    ).toBe("AWS Certified AI Practitioner 1 of 3");
+  });
+
+  it("leaves a number beside fullwidth punctuation alone", () => {
+    // A table row, not a sentence: a fullwidth parenthesis is not an ideograph, so
+    // the layout spacing this line depends on survives.
+    expect(normalizeCjkNumberSpacing("HSK（五级） 2500 C1")).toBe(
+      "HSK（五级） 2500 C1",
+    );
+  });
+
+  it("never repairs across a line break", () => {
+    // The opening ideograph is on the previous line, so this is a wrapped line
+    // rather than a spaced count and it is left exactly as extracted.
+    expect(normalizeCjkNumberSpacing("共\n20 题")).toBe("共\n20 题");
+  });
+
+  it("leaves a number that only a line break follows alone", () => {
+    // Conservative in both directions: the ideograph that would close the run is
+    // on the next line, so this stays as extracted rather than being guessed at.
+    expect(normalizeCjkNumberSpacing("共 20\n题")).toBe("共 20\n题");
+  });
+
+  it("leaves text that needs no repair unchanged", () => {
+    expect(normalizeCjkNumberSpacing("共20题。")).toBe("共20题。");
   });
 });

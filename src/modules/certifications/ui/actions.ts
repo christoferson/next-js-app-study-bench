@@ -219,3 +219,41 @@ export async function restoreObjectiveAction(form: FormData): Promise<void> {
 
   revalidatePath(trackPath(readString(form, "slug")));
 }
+
+/**
+ * The three bulk objective actions, each the per-objective control applied to a
+ * whole track. They are separate actions rather than one action with a mode
+ * field: the mode would be an external value to validate and a branch to test,
+ * where three named actions are three names the page can post to directly.
+ *
+ * Each revalidates the track page only. Bulk archiving changes what a session can
+ * draw on, but the dashboard shows no objective counts, so there is nothing stale
+ * there to refresh.
+ */
+export async function archiveAllObjectivesAction(
+  form: FormData,
+): Promise<void> {
+  await getCertificationFacade().archiveAllObjectives(
+    readString(form, "certificationId"),
+  );
+
+  revalidatePath(trackPath(readString(form, "slug")));
+}
+
+export async function restoreAllObjectivesAction(
+  form: FormData,
+): Promise<void> {
+  await getCertificationFacade().restoreAllObjectives(
+    readString(form, "certificationId"),
+  );
+
+  revalidatePath(trackPath(readString(form, "slug")));
+}
+
+export async function deleteAllObjectivesAction(form: FormData): Promise<void> {
+  await getCertificationFacade().deleteAllObjectives(
+    readString(form, "certificationId"),
+  );
+
+  revalidatePath(trackPath(readString(form, "slug")));
+}

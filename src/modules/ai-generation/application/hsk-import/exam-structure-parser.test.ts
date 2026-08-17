@@ -28,6 +28,24 @@ function bullet(
   return `◎ 第${ordinal}部分，共${itemCount}题。${tail}`;
 }
 
+/**
+ * The same bullet as a `pdf.js` extraction writes it.
+ *
+ * The two extractions of a CJK page do not agree about spacing around a number:
+ * `pypdf` writes `共20题`, and `pdf.js` — which is what the web upload path uses via
+ * `unpdf` — puts a space either side of the digits, because the font switches for
+ * them and that ends a text item. This was a real import failure: the parser matched
+ * one flavour and not the other, so an uploaded syllabus produced three skill
+ * headings with no parts under them.
+ */
+function spacedBullet(
+  ordinal: string,
+  itemCount: number,
+  tail = DESCRIPTION,
+): string {
+  return `◎ 第${ordinal}部分，共 ${itemCount} 题。${tail}`;
+}
+
 const LISTENING = ["1． 听力", bullet("一", 20), bullet("二", 25)];
 const READING = [
   "2． 阅读",
@@ -47,6 +65,20 @@ function fixture(lines: readonly string[]): string {
 }
 
 const WHOLE = fixture([...LISTENING, ...READING, ...WRITING]);
+
+/** The whole document in the other extraction's spacing, and nothing else changed. */
+const WHOLE_SPACED = fixture([
+  "1． 听力",
+  spacedBullet("一", 20),
+  spacedBullet("二", 25),
+  "2． 阅读",
+  spacedBullet("一", 15),
+  spacedBullet("二", 10),
+  spacedBullet("三", 20),
+  "3． 书写",
+  spacedBullet("一", 8),
+  spacedBullet("二", 2),
+]);
 
 describe("parseHskExamStructure", () => {
   it("reads the three skill sections in document order", () => {
@@ -249,5 +281,97 @@ describe("assertHskExamStructureSize", () => {
         EXPECTATIONS,
       ),
     ).toThrow(/add up to 99 items, not the 100/u);
+  });
+
+  it("rejects a skill section that has no parts under it", () => {
+    // The exact shape the failed web import produced: three headings found, no
+    // bullets read. It must name itself rather than arrive as a part count.
+    expect(() =>
+      assertHskExamStructureSize(
+        parseHskExamStructure(fixture(["1． 听力", "2． 阅读", "3． 书写"])),
+        EXPECTATIONS,
+      ),
+    ).toThrow(/listening section was found but no part bullets/u);
+  });
+
+  it("rejects a structure whose parts state no items at all", () => {
+    expect(() =>
+      assertHskExamStructureSize(
+        {
+          skills: [
+            { kind: "LISTENING", code: "听力", parts: zeroParts(2) },
+            { kind: "READING", code: "阅读", parts: zeroParts(3) },
+            { kind: "WRITING", code: "书写", parts: zeroParts(2) },
+          ],
+          totalItemCount: 0,
+        },
+        EXPECTATIONS,
+      ),
+    ).toThrow(/add up to no items at all/u);
+  });
+});
+
+/** Parts that parsed but carry no count, for the zero-item assertion. */
+function zeroParts(count: number): readonly {
+  code: string;
+  position: number;
+  itemCount: number;
+  description: string;
+}[] {
+  return Array.from({ length: count }, (_unused, index) => ({
+    code: `第${ORDINALS_FOR_TEST[index] ?? "一"}部分`,
+    position: index + 1,
+    itemCount: 0,
+    description: DESCRIPTION,
+  }));
+}
+
+const ORDINALS_FOR_TEST = ["一", "二", "三"];
+
+/**
+ * The same document in both extractions' spacing.
+ *
+ * The point of this block is the last assertion: the two flavours must parse to the
+ * *identical* structure, not merely both parse. Anything less and the import would
+ * still depend on which library read the PDF.
+ */
+describe("parseHskExamStructure across extraction flavours", () => {
+  it("reads the parts of a pdf.js extraction that spaces its item counts", () => {
+    const structure = parseHskExamStructure(WHOLE_SPACED);
+
+    expect(structure.skills.map((skill) => skill.parts.length)).toEqual([
+      2, 3, 2,
+    ]);
+  });
+
+  it("reads the item counts a pdf.js extraction spaces apart", () => {
+    expect(parseHskExamStructure(WHOLE_SPACED).totalItemCount).toBe(100);
+  });
+
+  it("parses both extractions to the identical structure", () => {
+    expect(parseHskExamStructure(WHOLE_SPACED)).toEqual(
+      parseHskExamStructure(WHOLE),
+    );
+  });
+
+  it("accepts a pdf.js extraction against the examination's own counts", () => {
+    expect(() =>
+      assertHskExamStructureSize(
+        parseHskExamStructure(WHOLE_SPACED),
+        EXPECTATIONS,
+      ),
+    ).not.toThrow();
+  });
+
+  it("closes the spacing before a part bullet is matched", () => {
+    expect(toStructureLines("◎ 第一部分，共 20 题。")).toEqual([
+      "◎ 第一部分，共20题。",
+    ]);
+  });
+
+  it("leaves a Latin heading's spacing alone", () => {
+    expect(toStructureLines("HSK 5 syllabus, Domain 1: 22%")).toEqual([
+      "HSK 5 syllabus, Domain 1: 22%",
+    ]);
   });
 });

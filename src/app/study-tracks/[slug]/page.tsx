@@ -9,6 +9,7 @@ import {
   restoreCertificationAction,
 } from "@/modules/certifications/ui/actions";
 import { CertificationMeta } from "@/modules/certifications/ui/certification-meta";
+import { ObjectiveBulkActions } from "@/modules/certifications/ui/objective-bulk-actions";
 import { ObjectiveTree } from "@/modules/certifications/ui/objective-tree";
 import { OriginBadge } from "@/modules/certifications/ui/origin-badge";
 import { getQuestionBankFacade } from "@/modules/question-bank/composition";
@@ -120,6 +121,15 @@ export default async function StudyTrackPage({ params }: StudyTrackPageProps) {
           </div>
         </div>
         <ObjectiveTree slug={certification.slug} nodes={view.objectiveTree} />
+        {/* Below the tree, not beside "Add root objective" above it. Adding is what
+            the owner came here to do; acting on the whole outline is what they do
+            after reading it, and it belongs after the thing it would remove. */}
+        <ObjectiveBulkActions
+          slug={certification.slug}
+          certificationId={certification.id}
+          activeCount={view.activeObjectiveCount}
+          archivedCount={view.archivedObjectiveCount}
+        />
       </section>
 
       <section aria-labelledby="questions-heading" className="section">

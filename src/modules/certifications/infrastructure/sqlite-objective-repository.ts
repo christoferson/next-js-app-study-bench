@@ -108,6 +108,101 @@ export class SqliteObjectiveRepository implements ObjectiveRepository {
     this.setStatus(id, "ACTIVE", occurredAt);
   }
 
+  async archiveAllByCertification(
+    certificationId: CertificationId,
+    occurredAt: IsoTimestamp,
+  ): Promise<number> {
+    return this.setStatusOfAll(
+      certificationId,
+      "ARCHIVED",
+      "ACTIVE",
+      occurredAt,
+    );
+  }
+
+  async restoreAllByCertification(
+    certificationId: CertificationId,
+    occurredAt: IsoTimestamp,
+  ): Promise<number> {
+    return this.setStatusOfAll(
+      certificationId,
+      "ACTIVE",
+      "ARCHIVED",
+      occurredAt,
+    );
+  }
+
+  /**
+   * Every objective of one track, gone, with its mappings.
+   *
+   * The three link tables first. They CASCADE from the objective, so this is not
+   * what makes them go; it is here for the same reason the certification purge
+   * spells out `question_source_links` — the removal should say what it takes,
+   * rather than reading correctly only if you know which side of each link the
+   * cascade fires from. Deleting a link row never touches the question,
+   * flashcard, or source on the other side.
+   *
+   * Then the objectives themselves, children before parents, because
+   * `parent_objective_id` is RESTRICT. Repeated leaf deletion rather than a
+   * recursive depth ordering, matching `SqliteCertificationRepository.purge`:
+   * the loop is bounded by tree depth and needs no CTE.
+   */
+  async purgeAllByCertification(
+    certificationId: CertificationId,
+  ): Promise<number> {
+    const objectiveIds = `SELECT id FROM certification_objectives WHERE certification_id = :id`;
+
+    for (const table of [
+      "question_objective_links",
+      "flashcard_objective_links",
+      "source_objective_links",
+    ]) {
+      this.database
+        .prepare(`DELETE FROM ${table} WHERE objective_id IN (${objectiveIds})`)
+        .run({ id: certificationId });
+    }
+
+    const leaves = this.database.prepare(
+      `DELETE FROM certification_objectives
+       WHERE certification_id = :id
+         AND id NOT IN (
+           SELECT parent_objective_id FROM certification_objectives
+           WHERE certification_id = :id AND parent_objective_id IS NOT NULL
+         )`,
+    );
+    let purged = 0;
+    let deleted = 1;
+
+    while (deleted > 0) {
+      deleted = leaves.run({ id: certificationId }).changes;
+      purged += deleted;
+    }
+
+    return purged;
+  }
+
+  /**
+   * Moves every objective of one track from `from` to `to`.
+   *
+   * Filtered on the current status so an already-archived objective keeps its
+   * original `updated_at`: the timestamp records when the objective changed, and
+   * a bulk action that touched nothing should not restamp it.
+   */
+  private setStatusOfAll(
+    certificationId: CertificationId,
+    to: "ACTIVE" | "ARCHIVED",
+    from: "ACTIVE" | "ARCHIVED",
+    occurredAt: IsoTimestamp,
+  ): number {
+    return this.database
+      .prepare(
+        `UPDATE certification_objectives
+         SET status = ?, updated_at = ?
+         WHERE certification_id = ? AND status = ?`,
+      )
+      .run(to, occurredAt, certificationId, from).changes;
+  }
+
   private setStatus(
     id: ObjectiveId,
     status: "ACTIVE" | "ARCHIVED",

@@ -410,5 +410,129 @@ export function describeCertificationRepositoryContract(
         subject.objectives.archive("missing", LATER),
       ).rejects.toBeInstanceOf(ObjectiveNotFoundError);
     });
+
+    /**
+     * The whole-track objective operations. Adapter-observable because each is one
+     * statement over a set rather than a loop the facade could write itself.
+     */
+    describe("whole-track objective operations", () => {
+      /** Two roots and a child under the first, so parent order matters. */
+      async function seedTrack(): Promise<void> {
+        await subject.certifications.save(certificationFixture());
+        await subject.objectives.save(objectiveFixture({ id: "root" }));
+        await subject.objectives.save(
+          objectiveFixture({
+            id: "child",
+            parentObjectiveId: "root",
+            displayOrder: 1,
+          }),
+        );
+        await subject.objectives.save(
+          objectiveFixture({ id: "other", displayOrder: 2 }),
+        );
+      }
+
+      it("archives and restores every objective of one track", async () => {
+        await seedTrack();
+
+        await expect(
+          subject.objectives.archiveAllByCertification(
+            "certification-1",
+            LATER,
+          ),
+        ).resolves.toBe(3);
+        const archived =
+          await subject.objectives.listByCertification("certification-1");
+        expect(archived.map((entry) => entry.status)).toEqual([
+          "ARCHIVED",
+          "ARCHIVED",
+          "ARCHIVED",
+        ]);
+
+        await expect(
+          subject.objectives.restoreAllByCertification(
+            "certification-1",
+            LATER,
+          ),
+        ).resolves.toBe(3);
+        const restored =
+          await subject.objectives.listByCertification("certification-1");
+        expect(restored.every((entry) => entry.status === "ACTIVE")).toBe(true);
+      });
+
+      it("counts only the objectives a bulk status change moved", async () => {
+        await seedTrack();
+        await subject.objectives.archive("other", LATER);
+
+        await expect(
+          subject.objectives.archiveAllByCertification(
+            "certification-1",
+            LATER,
+          ),
+        ).resolves.toBe(2);
+        await expect(
+          subject.objectives.archiveAllByCertification(
+            "certification-1",
+            LATER,
+          ),
+        ).resolves.toBe(0);
+      });
+
+      it("purges every objective of one track, children before parents", async () => {
+        await seedTrack();
+        await subject.objectives.archive("child", LATER);
+
+        await expect(
+          subject.objectives.purgeAllByCertification("certification-1"),
+        ).resolves.toBe(3);
+        await expect(
+          subject.objectives.listByCertification("certification-1"),
+        ).resolves.toEqual([]);
+        // The track itself is not a dependent of its outline.
+        await expect(
+          subject.certifications.findById("certification-1"),
+        ).resolves.not.toBeNull();
+      });
+
+      it("leaves other tracks untouched by every whole-track operation", async () => {
+        await seedTrack();
+        await subject.certifications.save(
+          certificationFixture({ id: "certification-2", slug: "other-track" }),
+        );
+        await subject.objectives.save(
+          objectiveFixture({ id: "kept", certificationId: "certification-2" }),
+        );
+
+        await subject.objectives.archiveAllByCertification(
+          "certification-1",
+          LATER,
+        );
+        await subject.objectives.purgeAllByCertification("certification-1");
+
+        await expect(
+          subject.objectives.findById("kept"),
+        ).resolves.toMatchObject({ status: "ACTIVE" });
+      });
+
+      it("reports zero for a track with no objectives", async () => {
+        await subject.certifications.save(certificationFixture());
+
+        await expect(
+          subject.objectives.archiveAllByCertification(
+            "certification-1",
+            LATER,
+          ),
+        ).resolves.toBe(0);
+        await expect(
+          subject.objectives.restoreAllByCertification(
+            "certification-1",
+            LATER,
+          ),
+        ).resolves.toBe(0);
+        await expect(
+          subject.objectives.purgeAllByCertification("certification-1"),
+        ).resolves.toBe(0);
+      });
+    });
   });
 }

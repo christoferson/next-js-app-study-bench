@@ -65,6 +65,9 @@ vi.mock("@/modules/certifications/ui/actions", () => ({
   archiveObjectiveAction: vi.fn(),
   restoreObjectiveAction: vi.fn(),
   moveObjectiveAction: vi.fn(),
+  archiveAllObjectivesAction: vi.fn(),
+  restoreAllObjectivesAction: vi.fn(),
+  deleteAllObjectivesAction: vi.fn(),
 }));
 
 const OBJECTIVES = [
@@ -386,6 +389,83 @@ describe("Study-track detail page", () => {
       ).toBeNull();
       expect(
         screen.queryByRole("link", { name: "Enrich vocabulary with AI" }),
+      ).toBeNull();
+    });
+  });
+
+  /**
+   * The whole-outline controls, which are conditional on there being something for
+   * each of them to act on. Every assertion here is about what does *not* render,
+   * because that is the rule the section exists under: no dead bulk buttons.
+   */
+  describe("bulk objective actions", () => {
+    it("offers archive-all and permanent deletion for a populated outline", async () => {
+      stubDetail();
+
+      await renderTrackPage("demo-cloud-practitioner");
+
+      expect(
+        screen.getByRole("button", { name: "Archive all 2" }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Yes, delete all 2 objectives" }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByText(
+          /Delete all 2 objectives permanently\. Questions and cards lose their objective mappings\. This cannot be undone\./,
+        ),
+      ).toBeInTheDocument();
+    });
+
+    it("offers restore-all only when archived objectives exist", async () => {
+      stubDetail();
+
+      await renderTrackPage("demo-cloud-practitioner");
+
+      expect(screen.queryByRole("button", { name: /^Restore all/ })).toBeNull();
+    });
+
+    it("offers restore-all when some objectives are archived", async () => {
+      stubDetail({ activeObjectiveCount: 1, archivedObjectiveCount: 1 });
+
+      await renderTrackPage("demo-cloud-practitioner");
+
+      expect(
+        screen.getByRole("button", { name: "Restore all 1 archived" }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Archive all 1" }),
+      ).toBeInTheDocument();
+    });
+
+    it("drops archive-all when every objective is already archived", async () => {
+      stubDetail({ activeObjectiveCount: 0, archivedObjectiveCount: 2 });
+
+      await renderTrackPage("demo-cloud-practitioner");
+
+      expect(screen.queryByRole("button", { name: /^Archive all/ })).toBeNull();
+      expect(
+        screen.getByRole("button", { name: "Restore all 2 archived" }),
+      ).toBeInTheDocument();
+    });
+
+    it("renders no bulk controls for a track with no objectives", async () => {
+      stubDetail({
+        objectiveTree: [],
+        activeObjectiveCount: 0,
+        archivedObjectiveCount: 0,
+      });
+
+      await renderTrackPage("demo-cloud-practitioner");
+
+      expect(screen.getByText(/No objectives yet/)).toBeVisible();
+      expect(screen.queryByRole("button", { name: /^Archive all/ })).toBeNull();
+      expect(screen.queryByRole("button", { name: /^Restore all/ })).toBeNull();
+      expect(
+        screen.queryByText("Delete all objectives permanently"),
+      ).toBeNull();
+      expect(
+        screen.queryByRole("button", { name: /^Yes, delete all/ }),
       ).toBeNull();
     });
   });

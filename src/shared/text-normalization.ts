@@ -50,6 +50,53 @@ export function normalizeLigatures(text: string): string {
 }
 
 /**
+ * CJK ideographs: the only characters that anchor the spacing repair below.
+ *
+ * Deliberately ideographs only, not the CJK punctuation block. A fullwidth
+ * parenthesis or comma beside a number is page layout — `HSK（五级） 2500 C1` is a
+ * table row — and closing that gap would rewrite text no parser reads.
+ */
+const CJK_IDEOGRAPH = "\\u3400-\\u4dbf\\u4e00-\\u9fff";
+
+/** A space run that a CJK ideograph opens and a number-then-ideograph closes. */
+const SPACE_BEFORE_NUMBER = new RegExp(
+  `(?<=[${CJK_IDEOGRAPH}])[ \\t]+(?=\\d+[ \\t]*[${CJK_IDEOGRAPH}])`,
+  "g",
+);
+
+/** A space run between a number an ideograph opened and the ideograph closing it. */
+const SPACE_AFTER_NUMBER = new RegExp(
+  `(?<=[${CJK_IDEOGRAPH}]\\d{1,12})[ \\t]+(?=[${CJK_IDEOGRAPH}])`,
+  "g",
+);
+
+/**
+ * Closes the spaces a PDF extraction inserts around a number inside CJK text.
+ *
+ * Two extractions of the same syllabus page do not agree about this. `pypdf` gives
+ * `共20题`; `pdf.js` — which is what `unpdf` is — gives `共 20 题`, because it emits
+ * the text items the page draws and a CJK font switches to a Latin one for the
+ * digits, which puts an item boundary either side of them. Every parser that reads
+ * a stated count out of Chinese prose therefore matched one extraction and not the
+ * other, which is exactly how a syllabus import produced skill sections with no
+ * parts in them.
+ *
+ * The rule is scoped to an ideograph-number-ideograph run and nothing else:
+ *
+ * - `共 20 题` → `共20题`, `约 30 分钟` → `约30分钟`, `第 1 到 45 题` → `第1到45题`.
+ * - `HSK 5`, `Domain 1: 22%`, and any Latin sentence are untouched, because a space
+ *   is only closed when a CJK ideograph sits on the far side of the number as well.
+ * - `HSK（五级） 2500 C1` is untouched, because a fullwidth parenthesis is not an
+ *   ideograph and `C` is not one either.
+ *
+ * Newlines are never crossed: only spaces and tabs are matched, so a line that
+ * wrapped mid-sentence still wraps and the line-based parsers see the same lines.
+ */
+export function normalizeCjkNumberSpacing(text: string): string {
+  return text.replace(SPACE_BEFORE_NUMBER, "").replace(SPACE_AFTER_NUMBER, "");
+}
+
+/**
  * Extracted document text, tidied enough to send to a model.
  *
  * Three repairs, and each earns its place on real PDF output. Ligatures, for the

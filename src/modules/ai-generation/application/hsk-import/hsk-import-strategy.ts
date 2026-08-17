@@ -144,8 +144,15 @@ export function classifyHskFile(text: string): HskFileRole {
 /** A skill heading the structure parser anchors on. */
 const SKILL_HEADING = /(听力|阅读|书写)/;
 
-/** A part bullet, which is what distinguishes the structure section from prose. */
-const PART_BULLET = /◎\s*第[一二三四五六七八九十]+部分/;
+/**
+ * A part bullet, which is what distinguishes the structure section from prose.
+ *
+ * Whitespace-tolerant between the ordinal's characters for the same reason as the
+ * structure parser's own pattern: a PDF extraction may break a CJK run into items
+ * and insert spaces at the boundaries, and a file misclassified as unrecognised
+ * because of one is a file the owner has to set a role on by hand.
+ */
+const PART_BULLET = /◎\s*第\s*[一二三四五六七八九十]+\s*部分/;
 
 /** The theme notes' own two headings. */
 const THEME_HEADINGS = [
@@ -245,6 +252,25 @@ export function readHskImportFiles(
           if (structure.skills.length === 0) {
             throw new HskExamStructureParseError(
               "No examination sections could be read from this file.",
+            );
+          }
+
+          // Sections with no parts under them are the failure that a change in
+          // how the extraction spaces its item counts produces, and it is worse
+          // than reading nothing: the plan is three titled roots with no
+          // children and no weighting, which looks like a successful import on
+          // the confirm page. Level-independent, so it is checked here even
+          // though the level's own totals are not (see the header): every HSK
+          // paper divides each skill into parts.
+          if (structure.skills.some((skill) => skill.parts.length === 0)) {
+            throw new HskExamStructureParseError(
+              "An examination section was found with no part bullets under it, so this file would import as empty skill headings. The extraction of this document may space its item counts differently than the parser expects.",
+            );
+          }
+
+          if (structure.totalItemCount <= 0) {
+            throw new HskExamStructureParseError(
+              "No item counts could be read from this file's part bullets, so the imported skills would carry no weighting.",
             );
           }
 
